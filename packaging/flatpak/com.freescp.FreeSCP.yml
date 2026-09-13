@@ -1,0 +1,67 @@
+# FreeSCP Flatpak manifest (Rust rewrite)
+#
+# Builds the pure-Rust freescp-app (Slint UI) inside org.freedesktop.Sdk 24.08
+# with the rust-stable SDK extension. The legacy libssh2 module is gone: all
+# protocol backends are pure Rust (russh, suppaftp, reqwest+rustls), so no
+# C libraries need building. Cargo fetches crates over the network
+# (--share=network build-arg).
+
+app-id: org.freescp.FreeSCP
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: freescp-app
+rename-desktop-file: org.freescp.FreeSCP.desktop
+rename-icon: freescp
+copy-icon: true
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    # Cargo needs a writable home for registry/git checkouts.
+    CARGO_HOME: /run/build/freescp/cargo
+
+build-args:
+  - --share=network
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=ssh-auth
+  - --device=dri
+  - --filesystem=home
+  - --filesystem=xdg-run/gvfs
+  - --talk-name=org.freedesktop.secrets
+
+modules:
+  - name: freescp
+    buildsystem: simple
+    build-commands:
+      - cargo build --release -p freescp-app
+      - install -Dm755 target/release/freescp-app /app/bin/freescp-app
+      # Desktop entry points at the Rust binary (asset still says openscp_hello).
+      # flatpak-builder renames freescp.desktop -> org.freescp.FreeSCP.desktop
+      # via rename-desktop-file and patches Exec/Icon accordingly.
+      - |
+        sed 's#^Exec=.*#Exec=freescp-app#' assets/linux/freescp.desktop > freescp.desktop
+        install -Dm644 freescp.desktop /app/share/applications/freescp.desktop
+      - |
+        install -Dm644 assets/program/icon-freescp-256.png \
+          /app/share/icons/hicolor/256x256/apps/freescp.png
+      # About-dialog credits text: the app looks for docs/ABOUT_LIBRARIES_<LANG>.txt
+      # next to /app/bin/freescp-app and in /app (settings::docs_search_bases).
+      - |
+        install -d /app/docs
+        install -m644 docs/ABOUT_LIBRARIES_*.txt /app/docs/
+    sources:
+      - type: dir
+        path: ../..
+    cleanup:
+      - /include
+      - /lib/cmake
+      - /lib/pkgconfig
+      - "*.a"

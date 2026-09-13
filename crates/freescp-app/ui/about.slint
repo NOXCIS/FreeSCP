@@ -1,0 +1,147 @@
+// About dialog: port of ui/AboutDialog.cpp (app description, version info,
+// credits and the action buttons/links). The libraries text is trimmed from
+// docs/ABOUT_LIBRARIES_EN.txt for the Rust rewrite's dependency set.
+//
+// Public API (wired in src/main.rs::wire_about_dialog):
+//
+//   in-out property <string> libraries-text    // credits body (TextEdit)
+//   in      property <string> version-text     // "Version: <text>" line
+//   in      property <bool>   licenses-available // enables "Open Licenses Folder"
+//
+//   callback close-requested();               // Close button / window close
+//   callback copy-diagnostics-requested();    // "Copy diagnostics" button
+//   callback open-licenses-requested();       // "Open Licenses Folder" button
+//   callback report-issue-requested();        // "Report an issue" link
+//   callback author-link-requested();         // "Author: ..." link
+//
+// The elements below are named (`close-button := ...`) so UI tests can address
+// them via the Slint testing backend's `find_by_element_id`.
+//
+// NOTE: Window already provides a built-in `visible` property; it is not
+// re-declared here. Use `set_visible(...)` / `show()` / `hide()` from Rust.
+
+import { Button, TextEdit } from "std-widgets.slint";
+
+export component AboutDialog inherits Window {
+    title: @tr("About FreeSCP");
+    width: 640px;
+    height: 480px;
+
+    // Same text as docs/ABOUT_LIBRARIES_EN.txt and kept byte-identical to
+    // `settings::DEFAULT_LIBRARIES_TEXT` (a unit test asserts it): it is the
+    // final fallback for builds where neither the localized nor the generic
+    // ABOUT_LIBRARIES file can be found next to the executable.
+    in-out property <string> libraries-text:
+"Third-party libraries used by FreeSCP (Rust rewrite)\n(Operating system frameworks such as Security and AppKit on macOS, and the\nsystem Secret Service on Linux, are excluded.)\n\nGUI\n- Slint\n  Description: declarative GUI toolkit (windowing, widgets, gettext support).\n  License: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0\n  Site: https://slint.dev/\n  Copyright: SixtyFPS GmbH\n\nProtocol backends\n- russh\n  Description: asynchronous SSH client used by the SFTP/SCP transports.\n  License: Apache-2.0\n  Site: https://github.com/warp-tech/russh\n  Copyright: Eugene Retunsky and contributors\n- russh-sftp\n  Description: SFTP protocol implementation on top of russh.\n  License: Apache-2.0\n  Site: https://github.com/AspectUnk/russh-sftp\n  Copyright: The russh-sftp developers\n- suppaftp\n  Description: FTP/FTPS client library.\n  License: MIT OR Apache-2.0\n  Site: https://github.com/veeso/suppaftp\n  Copyright: Christian Visintin and contributors\n- reqwest\n  Description: HTTP client used by the WebDAV backend.\n  License: MIT OR Apache-2.0\n  Site: https://github.com/seanmonstar/reqwest\n  Copyright: Sean McArthur and contributors\n- quick-xml\n  Description: XML parser used for WebDAV PROPFIND responses.\n  License: MIT\n  Site: https://github.com/tafia/quick-xml\n  Copyright: The quick-xml developers\n- tokio-socks\n  Description: SOCKS5 proxy support for the protocol backends.\n  License: MIT\n  Site: https://github.com/sticnarf/tokio-socks\n  Copyright: The tokio-socks developers\n\nRuntime and plumbing\n- tokio / futures-util / async-trait\n  Description: asynchronous runtime, stream utilities, async trait support.\n  License: MIT (tokio); MIT OR Apache-2.0 (futures-util, async-trait)\n  Site: https://tokio.rs/ | https://github.com/rust-lang/futures-rs | https://github.com/dtolnay/async-trait\n  Copyright: Tokio Contributors, David Tolnay and the futures-rs developers\n- thiserror / anyhow\n  Description: error type derivation and error context handling.\n  License: MIT OR Apache-2.0\n  Site: https://github.com/dtolnay/thiserror | https://github.com/dtolnay/anyhow\n  Copyright: David Tolnay and contributors\n- tracing / tracing-subscriber\n  Description: structured logging and log filtering.\n  License: MIT\n  Site: https://github.com/tokio-rs/tracing\n  Copyright: Tokio Contributors\n- rand / sha2 / sha1 / hex / base64\n  Description: random numbers, hashing and encoding helpers.\n  License: MIT OR Apache-2.0\n  Site: https://github.com/rust-random/rand | https://github.com/RustCrypto/hashes | https://github.com/KokaKiwi/rust-hex | https://github.com/marshallpierce/rust-base64\n  Copyright: The Rand Project Developers, the RustCrypto Developers, KokaKiwi, Marshall Pierce and contributors\n\nConfiguration and filesystem\n- serde / serde_json / toml\n  Description: serialization and configuration parsing (preferences.toml,\n  sites.toml, known_hosts).\n  License: MIT OR Apache-2.0\n  Site: https://serde.rs/ | https://github.com/toml-rs/toml\n  Copyright: Erick Tryzelaar, David Tolnay and contributors\n- dirs\n  Description: platform config/data directory lookup.\n  License: MIT OR Apache-2.0\n  Site: https://github.com/soc/dirs-rs\n  Copyright: The dirs developers\n- walkdir / filetime\n  Description: recursive directory walking and local file timestamps.\n  License: Unlicense OR MIT (walkdir); MIT OR Apache-2.0 (filetime)\n  Site: https://github.com/BurntSushi/walkdir | https://github.com/alexcrichton/filetime\n  Copyright: Andrew Gallant, Alex Crichton and contributors\n- chrono\n  Description: date/time handling for timestamps and the transfer queue.\n  License: MIT OR Apache-2.0\n  Site: https://github.com/chronotope/chrono\n  Copyright: The chrono developers\n- regex\n  Description: regular expressions for filtering and search.\n  License: MIT OR Apache-2.0\n  Site: https://github.com/rust-lang/regex\n  Copyright: The Rust Project Developers\n\nDesktop integration\n- rfd\n  Description: native file and folder dialogs.\n  License: MIT\n  Site: https://github.com/PolyMeilex/rfd\n  Copyright: The rfd developers\n- arboard\n  Description: clipboard access (copied paths, diagnostics text).\n  License: MIT OR Apache-2.0\n  Site: https://github.com/1Password/arboard\n  Copyright: The arboard developers\n- mime_guess\n  Description: file-extension to MIME type mapping.\n  License: MIT\n  Site: https://github.com/abonander/mime_guess\n  Copyright: The mime_guess developers\n- sys-locale\n  Description: system language detection for the UI language default.\n  License: MIT OR Apache-2.0\n  Site: https://github.com/1Password/sys-locale\n  Copyright: The sys-locale developers\n- notify\n  Description: filesystem change notifications for local pane refresh.\n  License: CC0-1.0\n  Site: https://github.com/notify-rs/notify\n  Copyright: The notify developers\n- keyring\n  Description: Secret Service (Linux) credential storage.\n  License: MIT OR Apache-2.0\n  Site: https://github.com/hwchen/keyring-rs\n  Copyright: The keyring developers\n- security-framework (macOS only)\n  Description: macOS Keychain access.\n  License: MIT OR Apache-2.0\n  Site: https://github.com/kornelski/rust-security-framework\n  Copyright: The rust-security-framework developers\n\nNotes:\n- Specific versions may vary depending on platform/distribution.\n- Thanks to the authors and communities of each project for their work.\n- Full license texts are distributed with the sources of each crate\n  (crates.io) and in the projects' repositories.\n- The legacy Qt/C++ build of OpenSCP used Qt, libssh2, libcurl, tinyxml2,\n  OpenSSL and zlib; their credits and license texts remain in\n  docs/credits/CREDITS.md and docs/credits/LICENSES/.\n\nIcons: Tango Icon Theme (Public Domain)";
+    /// Set from Rust with the workspace version (C++ shows the same via
+    /// `QCoreApplication::applicationVersion()`).
+    in property <string> version-text: "0.9.0 (Rust rewrite)";
+    /// Whether [`find_licenses_dir`] found a folder; the button is disabled
+    /// when it did not, like the C++ dialog.
+    in property <bool> licenses-available: false;
+
+    callback close-requested();
+    callback copy-diagnostics-requested();
+    callback open-licenses-requested();
+    callback report-issue-requested();
+    callback author-link-requested();
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        // Top row: icon on the left, name/version/author on the right.
+        HorizontalLayout {
+            spacing: 16px;
+            Image {
+                source: @image-url("../../../assets/program/icon-freescp.svg");
+                width: 96px;
+                height: 96px;
+            }
+            VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: "FreeSCP";
+                    font-size: 28px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: @tr("Version") + ": " + root.version-text;
+                    font-size: 14px;
+                }
+                Text {
+                    text: @tr("A cross-platform SFTP/SCP/FTP/FTPS/WebDAV client.");
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: @tr("Author") + ": luiscuellar31";
+                    font-size: 14px;
+                    color: #2a6cdf;
+                    author-link := TouchArea {
+                        clicked => { root.author-link-requested(); }
+                        mouse-cursor: pointer;
+                    }
+                }
+            }
+        }
+
+        Text {
+            text: @tr("Used libraries:");
+            font-weight: 600;
+        }
+
+        TextEdit {
+            text <=> root.libraries-text;
+            read-only: true;
+        }
+
+        HorizontalLayout {
+            copy-diagnostics-button := Button {
+                property <string> tip: @tr("Copy version and environment details for support.");
+                text: @tr("Copy diagnostics");
+                clicked => {
+                    root.copy-diagnostics-requested();
+                }
+                Tooltip {
+                    text: @markdown("\{tip}");
+                }
+            }
+            open-licenses-button := Button {
+                enabled: root.licenses-available;
+                property <string> tip: root.licenses-available
+                    ? @tr("Open the folder that contains third-party licenses.")
+                    : @tr("License files are not available in this installation.");
+                text: @tr("Open Licenses Folder");
+                clicked => {
+                    root.open-licenses-requested();
+                }
+                Tooltip {
+                    text: @markdown("\{tip}");
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            close-button := Button {
+                text: @tr("Close");
+                clicked => {
+                    root.close-requested();
+                }
+            }
+        }
+
+        // Report-an-issue link (port of the Qt hyperlink label; opens the
+        // GitHub issues page in the default browser).
+        report-issue-link := TouchArea {
+            clicked => { root.report-issue-requested(); }
+            mouse-cursor: pointer;
+            Text {
+                text: @tr("Report an issue");
+                color: #2a6cdf;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

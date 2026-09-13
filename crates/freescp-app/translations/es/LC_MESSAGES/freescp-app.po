@@ -1,0 +1,3574 @@
+msgid ""
+msgstr ""
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Language: es\n"
+"X-Source-Language: en\n"
+"X-Qt-Contexts: true\n"
+
+msgctxt "AboutDialog"
+msgid "About FreeSCP"
+msgstr "Acerca de FreeSCP"
+
+#, qt-format
+msgctxt "AboutDialog"
+msgid "Author: <a href=\"%1\">%2</a>"
+msgstr "Autor: <a href=\"%1\">%2</a>"
+
+msgctxt "AboutDialog"
+msgid "Used libraries:"
+msgstr "Librerías utilizadas:"
+
+msgctxt "AboutDialog"
+msgid ""
+"No third-party license details were found in this installation.\n"
+"Use an official package for full license information."
+msgstr ""
+"No se encontraron detalles de licencias de terceros en esta instalación.\n"
+"Usa un paquete oficial para ver la información completa de licencias."
+
+msgctxt "AboutDialog"
+msgid "Open Licenses Folder"
+msgstr "Abrir carpeta de licencias"
+
+msgctxt "AboutDialog"
+msgid "Licenses folder not found"
+msgstr "Carpeta de licencias no encontrada"
+
+msgctxt "AboutDialog"
+msgid "No license files were found in this installation."
+msgstr "No se encontraron archivos de licencia en esta instalación."
+
+msgctxt "AboutDialog"
+msgid "Report an issue"
+msgstr "Informar de un error"
+
+msgctxt "AboutDialog"
+msgid "License files are not available in this installation."
+msgstr "Los archivos de licencia no están disponibles en esta instalación."
+
+msgctxt "AboutDialog"
+msgid "Open the folder that contains third-party licenses."
+msgstr "Abrir la carpeta que contiene las licencias de terceros."
+
+msgctxt "AboutDialog"
+msgid "Copy diagnostics"
+msgstr "Copiar diagnóstico"
+
+msgctxt "AboutDialog"
+msgid "Copy version and environment details for support."
+msgstr "Copiar versión y detalles del entorno para soporte."
+
+msgctxt "AboutDialog"
+msgid "Diagnostics unavailable"
+msgstr "Diagnóstico no disponible"
+
+msgctxt "AboutDialog"
+msgid "Could not access the system clipboard."
+msgstr "No se pudo acceder al portapapeles del sistema."
+
+msgctxt "AboutDialog"
+msgid "Diagnostics copied"
+msgstr "Diagnóstico copiado"
+
+msgctxt "AboutDialog"
+msgid "Diagnostic information was copied to your clipboard."
+msgstr "La información de diagnóstico se copió al portapapeles."
+
+msgctxt "AboutDialog"
+msgid "Version"
+msgstr "Versión"
+
+msgctxt "AboutDialog"
+msgid "Author"
+msgstr "Autor"
+
+msgctxt "AboutDialog"
+msgid "A cross-platform SFTP/SCP/FTP/FTPS/WebDAV client."
+msgstr "Un cliente SFTP/SCP/FTP/FTPS/WebDAV multiplataforma."
+
+msgctxt "ConnectionDialog"
+msgid "My server"
+msgstr "Mi servidor"
+
+msgctxt "ConnectionDialog"
+msgid "sftp.example.com"
+msgstr "sftp.ejemplo.com"
+
+msgctxt "ConnectionDialog"
+msgid "user"
+msgstr "usuario"
+
+msgctxt "ConnectionDialog"
+msgid "optional"
+msgstr "opcional"
+
+msgctxt "ConnectionDialog"
+msgid "~/.ssh/id_ed25519"
+msgstr "~/.ssh/id_ed25519"
+
+msgctxt "ConnectionDialog"
+msgid "Show"
+msgstr "Mostrar"
+
+msgctxt "ConnectionDialog"
+msgid "Hide"
+msgstr "Ocultar"
+
+msgctxt "ConnectionDialog"
+msgid "Choose…"
+msgstr "Elegir…"
+
+msgctxt "ConnectionDialog"
+msgid "Site name:"
+msgstr "Nombre del sitio:"
+
+msgctxt "ConnectionDialog"
+msgid "Save to saved sites"
+msgstr "Guardar en sitios guardados"
+
+msgctxt "ConnectionDialog"
+msgid "Host / Port:"
+msgstr "Host / Puerto:"
+
+msgctxt "ConnectionDialog"
+msgid "User:"
+msgstr "Usuario:"
+
+msgctxt "ConnectionDialog"
+msgid "Password:"
+msgstr "Contraseña:"
+
+msgctxt "ConnectionDialog"
+msgid "Private key path:"
+msgstr "Ruta clave privada:"
+
+msgctxt "ConnectionDialog"
+msgid "Key passphrase:"
+msgstr "Passphrase clave:"
+
+msgctxt "ConnectionDialog"
+msgid "~/.ssh/known_hosts"
+msgstr "~/.ssh/known_hosts"
+
+msgctxt "ConnectionDialog"
+msgid "Strict"
+msgstr "Estricto"
+
+msgctxt "ConnectionDialog"
+msgid "Accept new (TOFU)"
+msgstr "Aceptar nuevo (TOFU)"
+
+msgctxt "ConnectionDialog"
+msgid "No verification (double confirmation, expires in 15 min)"
+msgstr "Sin verificación (doble confirmación, expira en 15 min)"
+
+msgctxt "ConnectionDialog"
+msgid "known_hosts:"
+msgstr "known_hosts:"
+
+msgctxt "ConnectionDialog"
+msgid "Policy:"
+msgstr "Política:"
+
+msgctxt "ConnectionDialog"
+msgid "Select known_hosts"
+msgstr "Selecciona known_hosts"
+
+msgctxt "ConnectionDialog"
+msgid "Select private key"
+msgstr "Selecciona clave privada"
+
+msgctxt "ConnectionDialog"
+msgid "Use SSH jump host (bastion)"
+msgstr "Usar host de salto SSH (bastión)"
+
+msgctxt "ConnectionDialog"
+msgid "proxy.example.com"
+msgstr "proxy.ejemplo.com"
+
+msgctxt "ConnectionDialog"
+msgid "bastion.example.com"
+msgstr "bastion.ejemplo.com"
+
+msgctxt "ConnectionDialog"
+msgid "SSH jump host is currently unavailable on Windows."
+msgstr "El host de salto SSH no está disponible actualmente en Windows."
+
+msgctxt "ConnectionDialog"
+msgid "Direct (no proxy)"
+msgstr "Directo (sin proxy)"
+
+msgctxt "ConnectionDialog"
+msgid "SOCKS5"
+msgstr "SOCKS5"
+
+msgctxt "ConnectionDialog"
+msgid "HTTP CONNECT"
+msgstr "HTTP CONNECT"
+
+msgctxt "ConnectionDialog"
+msgid "Save passwords/passphrases"
+msgstr "Guardar contraseñas/passphrases"
+
+msgctxt "ConnectionDialog"
+msgid "Proxy:"
+msgstr "Proxy:"
+
+msgctxt "ConnectionDialog"
+msgid "Proxy host / port:"
+msgstr "Host proxy / Puerto:"
+
+msgctxt "ConnectionDialog"
+msgid "Proxy user:"
+msgstr "Usuario proxy:"
+
+msgctxt "ConnectionDialog"
+msgid "Proxy password:"
+msgstr "Contraseña del proxy:"
+
+msgctxt "ConnectionDialog"
+msgid "Jump host / port:"
+msgstr "Host de salto / Puerto:"
+
+msgctxt "ConnectionDialog"
+msgid "Jump user:"
+msgstr "Usuario de salto:"
+
+msgctxt "ConnectionDialog"
+msgid "Jump private key:"
+msgstr "Clave privada de salto:"
+
+msgctxt "ConnectionDialog"
+msgid "Optional (recommended)"
+msgstr "Opcional (recomendado)"
+
+msgctxt "ConnectionDialog"
+msgid "Required (strict)"
+msgstr "Requerido (estricto)"
+
+msgctxt "ConnectionDialog"
+msgid "Off (not recommended)"
+msgstr "Desactivado (no recomendado)"
+
+msgctxt "ConnectionDialog"
+msgid "Checksum verification for resume and final transfer validation."
+msgstr ""
+"Verificación de checksum para reanudar y validar la transferencia final."
+
+msgctxt "ConnectionDialog"
+msgid "Integrity:"
+msgstr "Integridad:"
+
+msgctxt "ConnectionDialog"
+msgid "Verify FTPS server certificate (recommended)"
+msgstr "Verificar certificado del servidor FTPS (recomendado)"
+
+msgctxt "ConnectionDialog"
+msgid "System CA bundle"
+msgstr "Bundle de CA del sistema"
+
+msgctxt "ConnectionDialog"
+msgid "FTPS CA bundle:"
+msgstr "Bundle CA de FTPS:"
+
+msgctxt "ConnectionDialog"
+msgid "Select FTPS CA bundle"
+msgstr "Selecciona bundle CA para FTPS"
+
+msgctxt "ConnectionDialog"
+msgid "Select jump private key"
+msgstr "Selecciona clave privada de salto"
+
+msgctxt "ConnectionDialog"
+msgid "Connect"
+msgstr "Conectar"
+
+msgctxt "ConnectionDialog"
+msgid "SFTP"
+msgstr "SFTP"
+
+msgctxt "ConnectionDialog"
+msgid "SCP"
+msgstr "SCP"
+
+msgctxt "ConnectionDialog"
+msgid "FTP"
+msgstr "FTP"
+
+msgctxt "ConnectionDialog"
+msgid "FTPS"
+msgstr "FTPS"
+
+msgctxt "ConnectionDialog"
+msgid "Server port for the selected protocol"
+msgstr "Puerto del servidor para el protocolo seleccionado"
+
+msgctxt "ConnectionDialog"
+msgid "Protocol:"
+msgstr "Protocolo:"
+
+msgctxt "ConnectionDialog"
+msgid "SCP mode:"
+msgstr "Modo SCP:"
+
+msgctxt "ConnectionDialog"
+msgid "Automatic (SCP with SFTP fallback)"
+msgstr "Automático (SCP con fallback a SFTP)"
+
+msgctxt "ConnectionDialog"
+msgid "SCP only (disable SFTP fallback)"
+msgstr "Solo SCP (desactivar fallback a SFTP)"
+
+msgctxt "ConnectionDialog"
+msgid "scp.example.com"
+msgstr "scp.example.com"
+
+msgctxt "ConnectionDialog"
+msgid "ftp.example.com"
+msgstr "ftp.example.com"
+
+msgctxt "ConnectionDialog"
+msgid "ftps.example.com"
+msgstr "ftps.example.com"
+
+msgctxt "ConnectionDialog"
+msgid "webdav.example.com"
+msgstr "webdav.example.com"
+
+msgctxt "ConnectionDialog"
+msgid "Not available for the selected protocol."
+msgstr "No disponible para el protocolo seleccionado."
+
+msgctxt "DragAwareTreeView"
+msgid "Preparation in progress; please wait."
+msgstr "Preparación en curso; espera a que termine."
+
+#, qt-format
+msgctxt "DragAwareTreeView"
+msgid "Staging kept at: <a href=\"%1\">%2</a>"
+msgstr "Staging conservado en: <a href=\"%1\">%2</a>"
+
+msgctxt "DragAwareTreeView"
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgctxt "DragAwareTreeView"
+msgid "Preparing files…"
+msgstr "Preparando archivos…"
+
+msgctxt "DragAwareTreeView"
+msgid "Confirm staging"
+msgstr "Confirmar staging"
+
+#, qt-format
+msgctxt "DragAwareTreeView"
+msgid "~%1 (some unknown)"
+msgstr "~%1 (algunos desconocidos)"
+
+#, qt-format
+msgctxt "DragAwareTreeView"
+msgid "You are about to prepare %1 items%2. Continue?"
+msgstr "Vas a preparar %1 elementos%2. ¿Continuar?"
+
+msgctxt "DragAwareTreeView"
+msgid "Continue"
+msgstr "Continuar"
+
+msgctxt "DragAwareTreeView"
+msgid "Still preparing files for drag-out. Wait or cancel?"
+msgstr "Aún preparando archivos para el arrastre. ¿Esperar o cancelar?"
+
+msgctxt "DragAwareTreeView"
+msgid "Wait"
+msgstr "Esperar"
+
+#, qt-format
+msgctxt "DragAwareTreeView"
+msgid "%1 of %2 files failed. Staging at:"
+msgstr "%1 de %2 archivos fallaron. Staging en:"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Could not copy file: %1"
+msgstr "No se pudo copiar archivo: %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Could not create destination folder: %1"
+msgstr "No se pudo crear carpeta destino: %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Could not create destination subfolder: %1"
+msgstr "No se pudo crear subcarpeta destino: %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Failed to copy: %1"
+msgstr "Falló al copiar: %1"
+
+msgctxt "MainWindow"
+msgid "Source entry is neither file nor folder."
+msgstr "Entrada de origen ni archivo ni carpeta."
+
+msgctxt "MainWindow"
+msgid "Invalid name: cannot be '.' or '..'."
+msgstr "Nombre inválido: no puede ser '.' ni '..'."
+
+msgctxt "MainWindow"
+msgid "Invalid name: cannot contain separators ('/' or '\\\\')."
+msgstr "Nombre inválido: no puede contener separadores ('/' o '\\\\')."
+
+msgctxt "MainWindow"
+msgid "Invalid name: cannot contain control characters."
+msgstr "Nombre inválido: no puede tener caracteres de control."
+
+msgctxt "MainWindow"
+msgid "Permission denied."
+msgstr "Permiso denegado."
+
+msgctxt "MainWindow"
+msgid "Location is read-only."
+msgstr "Ubicación en modo solo lectura."
+
+msgctxt "MainWindow"
+msgid "File or folder does not exist."
+msgstr "No existe el archivo o carpeta."
+
+msgctxt "MainWindow"
+msgid "Connection timed out."
+msgstr "Tiempo de espera agotado."
+
+msgctxt "MainWindow"
+msgid "Could not resolve the server hostname."
+msgstr "No se pudo resolver el nombre del servidor."
+
+msgctxt "MainWindow"
+msgid "Connection refused by the server."
+msgstr "Conexión rechazada por el servidor."
+
+msgctxt "MainWindow"
+msgid "Network unavailable or host unreachable."
+msgstr "Red no disponible o host inalcanzable."
+
+msgctxt "MainWindow"
+msgid "Authentication failed."
+msgstr "Autenticación fallida."
+
+msgctxt "MainWindow"
+msgid "OpenSSH client was not found in PATH."
+msgstr "No se encontró el cliente OpenSSH en PATH."
+
+msgctxt "MainWindow"
+msgid "Session is missing host or username information."
+msgstr "Faltan datos de host o usuario en la sesión."
+
+msgctxt "MainWindow"
+msgid "Could not locate osascript."
+msgstr "No se pudo encontrar osascript."
+
+msgctxt "MainWindow"
+msgid "Could not launch Terminal.app."
+msgstr "No se pudo abrir Terminal.app."
+
+msgctxt "MainWindow"
+msgid "No compatible terminal emulator was found."
+msgstr "No se encontró un emulador de terminal compatible."
+
+msgctxt "MainWindow"
+msgid "Open in terminal action is not supported on this platform."
+msgstr "La acción de abrir en terminal no es compatible en esta plataforma."
+
+msgctxt "MainWindow"
+msgid "Up"
+msgstr "Arriba"
+
+msgctxt "MainWindow"
+msgid "Home"
+msgstr "Inicio"
+
+msgctxt "MainWindow"
+msgid "Open left folder"
+msgstr "Abrir carpeta izquierda"
+
+msgctxt "MainWindow"
+msgid "Copy"
+msgstr "Copiar"
+
+msgctxt "MainWindow"
+msgid "Move"
+msgstr "Mover"
+
+msgctxt "MainWindow"
+msgid "Delete"
+msgstr "Eliminar"
+
+msgctxt "MainWindow"
+msgid "Copy to left panel"
+msgstr "Copiar al panel izquierdo"
+
+msgctxt "MainWindow"
+msgid "Move to left panel"
+msgstr "Mover al panel izquierdo"
+
+msgctxt "MainWindow"
+msgid "New folder"
+msgstr "Nueva carpeta"
+
+msgctxt "MainWindow"
+msgid "Rename"
+msgstr "Renombrar"
+
+msgctxt "MainWindow"
+msgid "New file"
+msgstr "Nuevo archivo"
+
+msgctxt "MainWindow"
+msgid "Open right folder"
+msgstr "Abrir carpeta derecha"
+
+msgctxt "MainWindow"
+msgid "Open in terminal"
+msgstr "Abrir en terminal"
+
+msgctxt "MainWindow"
+msgid "The right panel must be connected as remote."
+msgstr "El panel derecho debe estar conectado como remoto."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not prepare the terminal command.\n"
+"%1"
+msgstr ""
+"No se pudo preparar el comando de terminal.\n"
+"%1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Opening remote terminal at %1"
+msgstr "Abriendo terminal remota en %1"
+
+msgctxt "MainWindow"
+msgid " (password may be requested by OpenSSH for security)"
+msgstr " (OpenSSH puede solicitar contraseña por seguridad)"
+
+msgctxt "MainWindow"
+msgid " (interactive login required)"
+msgstr " (se requiere inicio de sesión interactivo)"
+
+msgctxt "MainWindow"
+msgid " (auto-fallback to SFTP CLI enabled)"
+msgstr " (fallback automático a SFTP CLI habilitado)"
+
+msgctxt "MainWindow"
+msgid "FreeSCP: SSH shell was not available. Falling back to SFTP CLI."
+msgstr ""
+"FreeSCP: El shell SSH no estaba disponible. Se aplicará fallback a SFTP CLI."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not open a remote terminal.\n"
+"%1"
+msgstr ""
+"No se pudo abrir una terminal remota.\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid ""
+"This protocol works in transfer-only mode.\n"
+"Use the remote path above as the target folder for uploads.\n"
+"For downloads, choose a remote file path explicitly."
+msgstr ""
+"Este protocolo funciona en modo solo transferencia.\n"
+"Usa la ruta remota de arriba como carpeta de destino para subidas.\n"
+"Para descargas, elige una ruta remota de archivo explícitamente."
+
+msgctxt "MainWindow"
+msgid ""
+"This protocol works in transfer-only mode.\n"
+"Uploads use the remote folder path above.\n"
+"Downloads require entering a remote file path."
+msgstr ""
+"Este protocolo funciona en modo solo transferencia.\n"
+"Las subidas usan la ruta de carpeta remota de arriba.\n"
+"Las descargas requieren introducir una ruta remota de archivo."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Skipped folders in transfer-only mode: %1"
+msgstr "Carpetas omitidas en modo solo transferencia: %1"
+
+msgctxt "MainWindow"
+msgid "Transfer-only mode currently supports uploading files only."
+msgstr "El modo solo transferencia actualmente solo admite subir archivos."
+
+msgctxt "MainWindow"
+msgid "Refresh is not available in transfer-only mode."
+msgstr "Actualizar no está disponible en modo solo transferencia."
+
+msgctxt "MainWindow"
+msgid "Search items"
+msgstr "Buscar elementos"
+
+msgctxt "MainWindow"
+msgid "Local panel"
+msgstr "Panel local"
+
+msgctxt "MainWindow"
+msgid "Local panel - left"
+msgstr "Panel local - izquierdo"
+
+msgctxt "MainWindow"
+msgid "Local panel - right"
+msgstr "Panel local - derecho"
+
+msgctxt "MainWindow"
+msgid "Remote panel"
+msgstr "Panel remoto"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Search items (%1)"
+msgstr "Buscar elementos (%1)"
+
+msgctxt "MainWindow"
+msgid ""
+"Pattern accepts wildcard (*, ?) or regex.\n"
+"Examples: *report*, report, ^report_.*\\.pdf$"
+msgstr ""
+"El patrón acepta comodines (*, ?) o regex.\n"
+"Ejemplos: *report*, report, ^report_.*\\.pdf$"
+
+msgctxt "MainWindow"
+msgid "e.g. *report*"
+msgstr "p. ej. *report*"
+
+msgctxt "MainWindow"
+msgid "Search recursively in subfolders"
+msgstr "Buscar recursivamente en subcarpetas"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Search results (%1)"
+msgstr "Resultados de búsqueda (%1)"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Base: %1\n"
+"Matches: %2"
+msgstr ""
+"Base: %1\n"
+"Coincidencias: %2"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Scan errors: %1"
+msgstr "Errores de escaneo: %1"
+
+msgctxt "MainWindow"
+msgid "Search canceled by user."
+msgstr "Búsqueda cancelada por el usuario."
+
+msgctxt "MainWindow"
+msgid "Results truncated to safety limit."
+msgstr "Resultados recortados por límite de seguridad."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Searching recursively in %1..."
+msgstr "Buscando recursivamente en %1..."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Scanning %1"
+msgstr "Escaneando %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Search canceled in %1."
+msgstr "Búsqueda cancelada en %1."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "No recursive matches found in %1."
+msgstr "No se encontraron coincidencias recursivas en %1."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Folders with errors: %1"
+msgstr "Carpetas con errores: %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Found %1 recursive match(es) in %2."
+msgstr "Se encontraron %1 coincidencias recursivas en %2."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Results limited to %1."
+msgstr "Resultados limitados a %1."
+
+msgctxt "MainWindow"
+msgid "(Canceled)"
+msgstr "(Cancelado)"
+
+msgctxt "MainWindow"
+msgid "Invalid folder"
+msgstr "Carpeta inválida"
+
+msgctxt "MainWindow"
+msgid "The current folder does not exist."
+msgstr "La carpeta actual no existe."
+
+msgctxt "MainWindow"
+msgid "Refresh"
+msgstr "Actualizar"
+
+msgctxt "MainWindow"
+msgid "Download"
+msgstr "Descarga"
+
+msgctxt "MainWindow"
+msgid "Upload…"
+msgstr "Subir…"
+
+msgctxt "MainWindow"
+msgid "Select items to download"
+msgstr "Selecciona elementos para descargar"
+
+msgctxt "MainWindow"
+msgid "Disconnect"
+msgstr "Desconectar"
+
+msgctxt "MainWindow"
+msgid "Connect"
+msgstr "Conectar"
+
+msgctxt "MainWindow"
+msgid "Saved sites"
+msgstr "Sitios guardados"
+
+msgctxt "MainWindow"
+msgid "Transfers"
+msgstr "Transferencias"
+
+msgctxt "MainWindow"
+msgid "History"
+msgstr "Historial"
+
+msgctxt "MainWindow"
+msgid "Open selected"
+msgstr "Abrir seleccionado"
+
+msgctxt "MainWindow"
+msgid "Recent local paths"
+msgstr "Rutas locales recientes"
+
+msgctxt "MainWindow"
+msgid "Recent remote paths"
+msgstr "Rutas remotas recientes"
+
+msgctxt "MainWindow"
+msgid "Recent servers"
+msgstr "Servidores recientes"
+
+msgctxt "MainWindow"
+msgid "Connect to a remote server to open remote path history."
+msgstr ""
+"Conéctate a un servidor remoto para abrir el historial de rutas remotas."
+
+msgctxt "MainWindow"
+msgid "Disconnect the current remote session before opening another server."
+msgstr "Desconecta la sesión remota actual antes de abrir otro servidor."
+
+msgctxt "MainWindow"
+msgid "No recent history"
+msgstr "No hay historial reciente"
+
+msgctxt "MainWindow"
+msgid "Clear history"
+msgstr "Borrar historial"
+
+msgctxt "MainWindow"
+msgid "Remove all recent paths and servers from history?"
+msgstr "¿Eliminar del historial todas las rutas y servidores recientes?"
+
+msgctxt "MainWindow"
+msgid "History cleared"
+msgstr "Historial borrado"
+
+msgctxt "MainWindow"
+msgid "Full screen"
+msgstr "Pantalla completa"
+
+msgctxt "MainWindow"
+msgid "About FreeSCP"
+msgstr "Acerca de FreeSCP"
+
+msgctxt "MainWindow"
+msgid "Settings"
+msgstr "Ajustes"
+
+msgctxt "MainWindow"
+msgid "FreeSCP"
+msgstr "FreeSCP"
+
+msgctxt "MainWindow"
+msgid "Settings…"
+msgstr "Ajustes…"
+
+msgctxt "MainWindow"
+msgid "Quit"
+msgstr "Salir"
+
+msgctxt "MainWindow"
+msgid "File"
+msgstr "Archivo"
+
+msgctxt "MainWindow"
+msgid "Help"
+msgstr "Ayuda"
+
+msgctxt "MainWindow"
+msgid "Report a bug"
+msgstr "Informar un error"
+
+msgctxt "MainWindow"
+msgid "Ready"
+msgstr "Listo"
+
+msgctxt "MainWindow"
+msgid "Type: HttpConnect"
+msgstr "Tipo: HttpConnect"
+
+msgctxt "MainWindow"
+msgid "Active connection method for this session"
+msgstr "Método de conexión activo para esta sesión"
+
+msgctxt "MainWindow"
+msgid "Session: 000:00:00"
+msgstr "Sesión: 000:00:00"
+
+msgctxt "MainWindow"
+msgid "Elapsed time for the current connection session"
+msgstr "Tiempo transcurrido de la sesión de conexión actual"
+
+msgctxt "MainWindow"
+msgid "Unknown"
+msgstr "Desconocido"
+
+msgctxt "MainWindow"
+msgid "None"
+msgstr "Ninguno"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Type: %1"
+msgstr "Tipo: %1"
+
+msgctxt "MainWindow"
+msgid "Session: --:--:--"
+msgstr "Sesión: --:--:--"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Session: %1"
+msgstr "Sesión: %1"
+
+msgctxt "MainWindow"
+msgid "FreeSCP — local/local (click Connect for remote)"
+msgstr "FreeSCP — local/local (clic en Conectar para remoto)"
+
+msgctxt "MainWindow"
+msgid "Warning: unencrypted secrets storage active (fallback)"
+msgstr "Advertencia: almacenamiento de secretos sin cifrar activado (fallback)"
+
+msgctxt "MainWindow"
+msgid ""
+"You are using unencrypted credentials storage enabled via environment "
+"variable. Disable FREESCP_ENABLE_INSECURE_FALLBACK to hide this warning."
+msgstr ""
+"Estás usando un almacenamiento de credenciales sin cifrar activado por "
+"variable de entorno. Desactiva FREESCP_ENABLE_INSECURE_FALLBACK para ocultar "
+"este aviso."
+
+msgctxt "MainWindow"
+msgid "Select left folder"
+msgstr "Selecciona carpeta izquierda"
+
+msgctxt "MainWindow"
+msgid "Select right folder"
+msgstr "Selecciona carpeta derecha"
+
+msgctxt "MainWindow"
+msgid "Left: "
+msgstr "Izquierda: "
+
+msgctxt "MainWindow"
+msgid "Invalid path"
+msgstr "Ruta inválida"
+
+msgctxt "MainWindow"
+msgid "Folder does not exist."
+msgstr "La carpeta no existe."
+
+msgctxt "MainWindow"
+msgid "Right: "
+msgstr "Derecha: "
+
+msgctxt "MainWindow"
+msgid "No selection available."
+msgstr "No hay selección disponible."
+
+msgctxt "MainWindow"
+msgid "No entries selected in the left panel."
+msgstr "No hay entradas seleccionadas en el panel izquierdo."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Queued: %1 uploads"
+msgstr "Encolados: %1 subidas"
+
+msgctxt "MainWindow"
+msgid "Invalid destination"
+msgstr "Destino inválido"
+
+msgctxt "MainWindow"
+msgid "Destination folder does not exist."
+msgstr "La carpeta de destino no existe."
+
+msgctxt "MainWindow"
+msgid "Conflict"
+msgstr "Conflicto"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"“%1” already exists at destination.\n"
+"Overwrite?"
+msgstr ""
+"«%1» ya existe en destino.\n"
+"¿Sobrescribir?"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Copied: %1  |  Failed: %2  |  Skipped: %3"
+msgstr "Copiados: %1  |  Fallidos: %2  |  Saltados: %3"
+
+msgctxt "MainWindow"
+msgid "Last error: "
+msgstr "Último error: "
+
+msgctxt "MainWindow"
+msgid "Confirm move"
+msgstr "Confirmar mover"
+
+msgctxt "MainWindow"
+msgid ""
+"This will upload to the server and delete the local source.\n"
+"Continue?"
+msgstr ""
+"Esto subirá al servidor y eliminará el origen local.\n"
+"¿Deseas continuar?"
+
+msgctxt "MainWindow"
+msgid "Could not delete source: "
+msgstr "No se pudo borrar origen: "
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Queued: %1 uploads (move)"
+msgstr "Encolados: %1 subidas (mover)"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Moved OK: %1 (empty folders)"
+msgstr "Movidos OK: %1 (carpetas vacías)"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Could not prepare items to move: %1"
+msgstr "No se pudieron preparar elementos para mover: %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Moved OK: %1  |  Failed: %2  |  Skipped: %3"
+msgstr "Movidos OK: %1  |  Fallidos: %2  |  Omitidos: %3"
+
+msgctxt "MainWindow"
+msgid ""
+"This will copy and then delete the source.\n"
+"Continue?"
+msgstr ""
+"Esto copiará y luego eliminará el origen.\n"
+"¿Deseas continuar?"
+
+msgctxt "MainWindow"
+msgid "Confirm delete"
+msgstr "Confirmar borrado"
+
+msgctxt "MainWindow"
+msgid ""
+"This will permanently delete the selected items in the left panel.\n"
+"Continue?"
+msgstr ""
+"Esto eliminará permanentemente los elementos seleccionados en el panel "
+"izquierdo.\n"
+"¿Deseas continuar?"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Deleted: %1  |  Failed: %2"
+msgstr "Borrados: %1  |  Fallidos: %2"
+
+msgctxt "MainWindow"
+msgid "Disconnected"
+msgstr "Desconectado"
+
+msgctxt "MainWindow"
+msgid "FreeSCP — local/local"
+msgstr "FreeSCP — local/local"
+
+msgctxt "MainWindow"
+msgid "Critical security risk"
+msgstr "Riesgo crítico de seguridad"
+
+msgctxt "MainWindow"
+msgid ""
+"You are about to connect using the \"No verification\" policy.\n"
+"This allows MITM attacks and server impersonation.\n"
+"\n"
+"Do you want to continue at your own risk?"
+msgstr ""
+"Estás a punto de conectar con la política \"Sin verificación\".\n"
+"Esto permite ataques MITM y suplantación del servidor.\n"
+"\n"
+"¿Deseas continuar bajo tu responsabilidad?"
+
+msgctxt "MainWindow"
+msgid "Additional confirmation required"
+msgstr "Confirmación adicional requerida"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "To confirm, type exactly %1"
+msgstr "Para confirmar, escribe exactamente %1"
+
+msgctxt "MainWindow"
+msgid "Connection canceled"
+msgstr "Conexión cancelada"
+
+msgctxt "MainWindow"
+msgid "Risk confirmation was not completed correctly."
+msgstr "No se confirmó el riesgo de forma válida."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Temporary \"no verification\" exception active until %1"
+msgstr "Excepción temporal de \"sin verificación\" activa hasta %1"
+
+msgctxt "MainWindow"
+msgid "Risk: host key not verified in this session"
+msgstr "Riesgo: host key sin verificación en esta sesión"
+
+msgctxt "MainWindow"
+msgid "The current session does not validate host key; MITM risk exists."
+msgstr "La sesión actual no valida host key; existe riesgo de MITM."
+
+msgctxt "MainWindow"
+msgid "Opening preference"
+msgstr "Preferencia de apertura"
+
+msgctxt "MainWindow"
+msgid "How do you want to open this file?"
+msgstr "¿Cómo deseas abrir este archivo?"
+
+msgctxt "MainWindow"
+msgid "Open file"
+msgstr "Abrir archivo"
+
+msgctxt "MainWindow"
+msgid "Show folder"
+msgstr "Mostrar carpeta"
+
+msgctxt "MainWindow"
+msgid "Remote error"
+msgstr "Error remoto"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not open the remote folder.\n"
+"%1"
+msgstr ""
+"No se pudo abrir la carpeta remota.\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid "Failed to read remote contents."
+msgstr "Error al leer contenido remoto."
+
+msgctxt "MainWindow"
+msgid "Invalid name"
+msgstr "Nombre inválido"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Queued: %1 downloads"
+msgstr "Encolados: %1 descargas"
+
+msgctxt "MainWindow"
+msgid "Download already queued"
+msgstr "Descarga ya encolada"
+
+msgctxt "MainWindow"
+msgid "Downloaded: "
+msgstr "Descargado: "
+
+msgctxt "MainWindow"
+msgid "The right panel is not remote."
+msgstr "El panel derecho no es remoto."
+
+msgctxt "MainWindow"
+msgid "Select destination folder (local)"
+msgstr "Selecciona carpeta de destino (local)"
+
+msgctxt "MainWindow"
+msgid "Nothing to download."
+msgstr "Nada para descargar."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Skipped invalid: %1"
+msgstr "Omitidos inválidos: %1"
+
+msgctxt "MainWindow"
+msgid "The destination folder (left panel) does not exist."
+msgstr "La carpeta de destino (panel izquierdo) no existe."
+
+msgctxt "MainWindow"
+msgid "No selection."
+msgstr "No hay selección."
+
+msgctxt "MainWindow"
+msgid "Nothing selected."
+msgstr "Nada seleccionado."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Queued: %1 downloads (move)"
+msgstr "Encolados: %1 descargas (mover)"
+
+msgctxt "MainWindow"
+msgid "Upload"
+msgstr "Subida"
+
+msgctxt "MainWindow"
+msgid "The right panel is not remote or there is no active session."
+msgstr "El panel derecho no es remoto o no hay sesión activa."
+
+msgctxt "MainWindow"
+msgid "Select files or folders to upload"
+msgstr "Selecciona archivos o carpetas a subir"
+
+msgctxt "MainWindow"
+msgid "Nothing to upload."
+msgstr "Nada para subir."
+
+msgctxt "MainWindow"
+msgid "Name:"
+msgstr "Nombre:"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not create the remote folder.\n"
+"%1"
+msgstr ""
+"No se pudo crear la carpeta remota.\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid "Local"
+msgstr "Local"
+
+msgctxt "MainWindow"
+msgid "Could not create folder."
+msgstr "No se pudo crear carpeta."
+
+msgctxt "MainWindow"
+msgid "File exists"
+msgstr "Archivo existe"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"«%1» already exists.\n"
+"Overwrite?"
+msgstr ""
+"«%1» ya existe.\n"
+"¿Sobrescribir?"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not check whether the remote file already exists.\n"
+"%1"
+msgstr ""
+"No se pudo comprobar si el archivo remoto ya existe.\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid "Temporary"
+msgstr "Temporal"
+
+msgctxt "MainWindow"
+msgid "Could not create a temporary file."
+msgstr "No se pudo crear un archivo temporal."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not upload the temporary file to the server.\n"
+"%1"
+msgstr ""
+"No se pudo subir el archivo temporal al servidor.\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid "File created: "
+msgstr "Archivo creado: "
+
+msgctxt "MainWindow"
+msgid "Could not create file."
+msgstr "No se pudo crear archivo."
+
+msgctxt "MainWindow"
+msgid "Select exactly one item."
+msgstr "Selecciona exactamente un elemento."
+
+msgctxt "MainWindow"
+msgid "New name:"
+msgstr "Nuevo nombre:"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not rename the remote item.\n"
+"%1"
+msgstr ""
+"No se pudo renombrar en remoto.\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid "Could not rename."
+msgstr "No se pudo renombrar."
+
+msgctxt "MainWindow"
+msgid ""
+"This will permanently delete items on the remote server.\n"
+"Continue?"
+msgstr ""
+"Esto eliminará permanentemente en el servidor remoto.\n"
+"¿Continuar?"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Deleted OK: %1  |  Failed: %2"
+msgstr "Borrados OK: %1  |  Fallidos: %2"
+
+msgctxt "MainWindow"
+msgid ""
+"This will permanently delete on local disk.\n"
+"Continue?"
+msgstr ""
+"Esto eliminará permanentemente en el disco local.\n"
+"¿Continuar?"
+
+msgctxt "MainWindow"
+msgid "Change permissions…"
+msgstr "Cambiar permisos…"
+
+msgctxt "MainWindow"
+msgid "Copy to right panel"
+msgstr "Copiar al panel derecho"
+
+msgctxt "MainWindow"
+msgid "Move to right panel"
+msgstr "Mover al panel derecho"
+
+msgctxt "MainWindow"
+msgid "Permissions"
+msgstr "Permisos"
+
+msgctxt "MainWindow"
+msgid "Select only one item."
+msgstr "Selecciona solo un elemento."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not read permissions.\n"
+"%1"
+msgstr ""
+"No se pudieron leer los permisos.\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid "Error reading remote information."
+msgstr "Error al leer información remota."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not apply permissions to \"%1\".\n"
+"%2"
+msgstr ""
+"No se pudieron aplicar permisos en \"%1\".\n"
+"%2"
+
+msgctxt "MainWindow"
+msgid "Error applying changes."
+msgstr "Error al aplicar cambios."
+
+msgctxt "MainWindow"
+msgid "Permissions updated"
+msgstr "Permisos actualizados"
+
+msgctxt "MainWindow"
+msgid "Confirm SSH fingerprint"
+msgstr "Confirmar huella SSH"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Connect to %1\n"
+"Algorithm: %2\n"
+"Fingerprint: %3\n"
+"\n"
+"Trust and save to known_hosts?"
+msgstr ""
+"Conectar a %1\n"
+"Algoritmo: %2\n"
+"Huella: %3\n"
+"\n"
+"¿Confiar y guardar en known_hosts?"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Connect to %1\n"
+"Algorithm: %2\n"
+"Fingerprint: %3\n"
+"\n"
+"Fingerprint cannot be saved. Connection allowed only this time."
+msgstr ""
+"Conectar a %1\n"
+"Algoritmo: %2\n"
+"Huella: %3\n"
+"\n"
+"No se podrá guardar la huella. Conexión solo por esta vez."
+
+msgctxt "MainWindow"
+msgid "Trust"
+msgstr "Confiar"
+
+msgctxt "MainWindow"
+msgid "Connect without saving"
+msgstr "Conectar sin guardar"
+
+msgctxt "MainWindow"
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgctxt "MainWindow"
+msgid "Could not save fingerprint; allowing one-time connection"
+msgstr "No se pudo guardar la huella, conexión permitida solo esta vez"
+
+msgctxt "MainWindow"
+msgid "Connection cancelled: fingerprint not accepted"
+msgstr "Conexión cancelada: huella no aceptada"
+
+msgctxt "MainWindow"
+msgid "Additional confirmation"
+msgstr "Confirmación adicional"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not save the fingerprint. Connect only this time without saving?\n"
+"\n"
+"Host: %1\n"
+"Algorithm: %2\n"
+"Fingerprint: %3"
+msgstr ""
+"No se pudo guardar la huella. ¿Conectar solo esta vez sin guardar?\n"
+"\n"
+"Host: %1\n"
+"Algoritmo: %2\n"
+"Huella: %3"
+
+msgctxt "MainWindow"
+msgid "One-time connection without saving confirmed by user"
+msgstr "Conexión sin guardar confirmada por el usuario"
+
+msgctxt "MainWindow"
+msgid "Connection cancelled after save failure"
+msgstr "Conexión cancelada tras fallo de guardado"
+
+msgctxt "MainWindow"
+msgid "Remote directory is read-only; cannot upload here"
+msgstr "Directorio remoto en solo lectura; no se puede subir aquí"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Queued: %1 uploads (DND)"
+msgstr "Encolados: %1 subidas (DND)"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Copied: %1  |  Failed: %2"
+msgstr "Copiados: %1  |  Fallidos: %2"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Queued: %1 downloads (DND)"
+msgstr "Encolados: %1 descargas (DND)"
+
+msgctxt "MainWindow"
+msgid "A connection is already in progress"
+msgstr "Ya hay una conexión en progreso"
+
+msgctxt "MainWindow"
+msgid "Connection canceled: no-verification policy not confirmed"
+msgstr "Conexión cancelada: política sin verificación no confirmada"
+
+msgctxt "MainWindow"
+msgid "Connecting…"
+msgstr "Conectando…"
+
+msgctxt "MainWindow"
+msgid "Canceling connection…"
+msgstr "Cancelando conexión…"
+
+msgctxt "MainWindow"
+msgid "Password required"
+msgstr "Contraseña requerida"
+
+msgctxt "MainWindow"
+msgid "Verification code required"
+msgstr "Código de verificación requerido"
+
+msgctxt "MainWindow"
+msgid "Information required"
+msgstr "Información requerida"
+
+msgctxt "MainWindow"
+msgid "Connection error"
+msgstr "Error de conexión"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not connect to the server.\n"
+"%1"
+msgstr ""
+"No fue posible conectar con el servidor.\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid "Check host, port, and credentials."
+msgstr "Revisa host, puerto y credenciales."
+
+msgctxt "MainWindow"
+msgid "Connected. Site saved."
+msgstr "Conectado. Sitio guardado."
+
+msgctxt "MainWindow"
+msgid "Connected. Site already exists."
+msgstr "Conectado. Sitio ya existente."
+
+msgctxt "MainWindow"
+msgid "Site saved."
+msgstr "Sitio guardado."
+
+msgctxt "MainWindow"
+msgid "Site already exists."
+msgstr "Sitio ya existente."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Password: %1"
+msgstr "Contraseña: %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Passphrase: %1"
+msgstr "Passphrase: %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"The site was saved, but some credentials could not be saved:\n"
+"%1"
+msgstr ""
+"El sitio se guardó, pero no fue posible guardar algunas credenciales:\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid "Please wait while active transfers are canceled"
+msgstr "Espera mientras se cancelan las transferencias activas"
+
+msgctxt "MainWindow"
+msgid "Disconnecting… waiting for active transfers to stop"
+msgstr "Desconectando… esperando a que se detengan las transferencias activas"
+
+msgctxt "MainWindow"
+msgid "Disconnect timeout reached; forcing local mode while cleanup continues"
+msgstr ""
+"Se alcanzó el tiempo límite de desconexión; forzando modo local mientras la "
+"limpieza continúa"
+
+msgctxt "MainWindow"
+msgid "Background transfer cleanup finished"
+msgstr "Limpieza de transferencias en segundo plano finalizada"
+
+msgctxt "MainWindow"
+msgid "Disconnected (transfer cleanup still finishing in background)"
+msgstr ""
+"Desconectado (la limpieza de transferencias sigue finalizando en segundo "
+"plano)"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Please wait: previous transfer cleanup is still running (%1s)"
+msgstr ""
+"Espera: la limpieza de transferencias anterior sigue en ejecución (%1s)"
+
+msgctxt "MainWindow"
+msgid "Connected. Site and credentials saved."
+msgstr "Conectado. Sitio y credenciales guardados."
+
+msgctxt "MainWindow"
+msgid "Connected. Credentials updated."
+msgstr "Conectado. Credenciales actualizadas."
+
+msgctxt "MainWindow"
+msgid "Site and credentials saved."
+msgstr "Sitio y credenciales guardados."
+
+msgctxt "MainWindow"
+msgid "Credentials updated."
+msgstr "Credenciales actualizadas."
+
+msgctxt "MainWindow"
+msgid "Error listing remote"
+msgstr "Error al listar remoto"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not open the initial remote folder.\n"
+"%1"
+msgstr ""
+"No se pudo abrir la carpeta remota inicial.\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid "Not available in remote mode"
+msgstr "No disponible en modo remoto"
+
+msgctxt "MainWindow"
+msgid "Moving selected items..."
+msgstr "Moviendo elementos seleccionados..."
+
+msgctxt "MainWindow"
+msgid "Copying selected items..."
+msgstr "Copiando elementos seleccionados..."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Could not delete source: %1"
+msgstr "No se pudo eliminar el origen: %1"
+
+msgctxt "MainWindow"
+msgid "Missing session options for remote scan."
+msgstr "Faltan opciones de sesión para el escaneo remoto."
+
+msgctxt "MainWindow"
+msgid "A remote scan is already in progress"
+msgstr "Ya hay un escaneo remoto en curso"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Nothing queued. Skipped invalid: %1"
+msgstr "No se encoló nada. Inválidos omitidos: %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not start remote scan.\n"
+"%1"
+msgstr ""
+"No se pudo iniciar el escaneo remoto.\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid "Preparing remote download queue..."
+msgstr "Preparando cola de descarga remota..."
+
+msgctxt "MainWindow"
+msgid "Preparing queue"
+msgstr "Preparando cola"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Scanning remote folders... %1 folders, %2 files found"
+msgstr "Escaneando carpetas remotas... %1 carpetas, %2 archivos encontrados"
+
+msgctxt "MainWindow"
+msgid "Remote scan canceled"
+msgstr "Escaneo remoto cancelado"
+
+msgctxt "MainWindow"
+msgid "Remote scan finished, but the session is no longer active"
+msgstr "El escaneo remoto terminó, pero la sesión ya no está activa"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Folders not listed: %1"
+msgstr "Carpetas no listadas: %1"
+
+msgctxt "MainWindow"
+msgid "Window layout restored to defaults"
+msgstr "Diseño de ventana restaurado a valores predeterminados"
+
+msgctxt "MainWindow"
+msgid "Invalid pattern"
+msgstr "Patrón inválido"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"The pattern is not valid.\n"
+"%1"
+msgstr ""
+"El patrón no es válido.\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid "Unknown regex error."
+msgstr "Error de regex desconocido."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Found %1 match(es) in %2."
+msgstr "Se encontraron %1 coincidencia(s) en %2."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "No matches found in %1."
+msgstr "No se encontraron coincidencias en %1."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Upload completed: %1"
+msgstr "Subida completada: %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Download completed: %1"
+msgstr "Descarga completada: %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "%1 transfers completed"
+msgstr "%1 transferencias completadas"
+
+msgctxt "MainWindow"
+msgid "Invalid transport configuration"
+msgstr "Configuración de transporte inválida"
+
+msgctxt "MainWindow"
+msgid ""
+"Proxy and SSH jump host cannot be used together in the same connection.\n"
+"Choose only one transport method."
+msgstr ""
+"El proxy y el host de salto SSH no pueden usarse juntos en la misma "
+"conexión.\n"
+"Elige solo un método de transporte."
+
+msgctxt "MainWindow"
+msgid "Connection canceled: invalid transport configuration"
+msgstr "Conexión cancelada: configuración de transporte inválida"
+
+msgctxt "MainWindow"
+msgid "Unsupported transport"
+msgstr "Transporte no compatible"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "SSH jump host is not available for %1."
+msgstr "El host de salto SSH no está disponible para %1."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Connection canceled: SSH jump host is not supported for %1"
+msgstr "Conexión cancelada: el host de salto SSH no es compatible para %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Proxy settings are not available for %1."
+msgstr "La configuración de proxy no está disponible para %1."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Connection canceled: proxy is not supported for %1"
+msgstr "Conexión cancelada: el proxy no es compatible para %1"
+
+msgctxt "MainWindow"
+msgid "SSH jump host is currently unavailable on Windows."
+msgstr "El host de salto SSH no está disponible actualmente en Windows."
+
+msgctxt "MainWindow"
+msgid "Connection canceled: SSH jump host is unsupported on Windows"
+msgstr "Conexión cancelada: el host de salto SSH no es compatible en Windows"
+
+msgctxt "MainWindow"
+msgid ""
+"Proxy and SSH jump host cannot be used together in the same connection.\n"
+"Edit the site and keep only one transport."
+msgstr ""
+"El proxy y el host de salto SSH no pueden usarse juntos en la misma "
+"conexión.\n"
+"Edita el sitio y deja solo un transporte."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Proxy password: %1"
+msgstr "Contraseña del proxy: %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"Could not refresh the remote folder.\n"
+"%1"
+msgstr ""
+"No se pudo actualizar la carpeta remota.\n"
+"%1"
+
+msgctxt "MainWindow"
+msgid ""
+"Drop ignored: remote-origin drag cannot be dropped back into the same remote "
+"panel"
+msgstr ""
+"Soltado ignorado: el arrastre de origen remoto no puede soltarse de nuevo en "
+"el mismo panel remoto"
+
+msgctxt "MainWindow"
+msgid "No active remote session to reconnect."
+msgstr "No hay sesión remota activa para reconectar."
+
+msgctxt "MainWindow"
+msgid "Connection state is changing; reconnect skipped."
+msgstr "El estado de la conexión está cambiando; se omitió la reconexión."
+
+msgctxt "MainWindow"
+msgid "Reconnect already in progress."
+msgstr "Ya hay una reconexión en progreso."
+
+msgctxt "MainWindow"
+msgid "Remote session became stale. Reconnecting…"
+msgstr "La sesión remota quedó obsoleta. Reconectando…"
+
+msgctxt "MainWindow"
+msgid "Reconnected transport, but remote panel restore failed."
+msgstr "Se reconectó el transporte, pero falló restaurar el panel remoto."
+
+msgctxt "MainWindow"
+msgid "Remote session reconnected"
+msgstr "Sesión remota reconectada"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Recovered remote session while trying to %1"
+msgstr "Se recuperó la sesión remota al intentar %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"The remote session failed while trying to %1.\n"
+"FreeSCP will disconnect to avoid inconsistent operations.\n"
+"%2"
+msgstr ""
+"La sesión remota falló al intentar %1.\n"
+"FreeSCP se desconectará para evitar operaciones inconsistentes.\n"
+"%2"
+
+msgctxt "MainWindow"
+msgid "validate the remote session"
+msgstr "validar la sesión remota"
+
+msgctxt "MainWindow"
+msgid "periodic"
+msgstr "periódica"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "resume (%1s)"
+msgstr "reanudación (%1s)"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Remote session validated (%1)"
+msgstr "Sesión remota validada (%1)"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid ""
+"The remote session no longer responds (%1).\n"
+"FreeSCP will disconnect to avoid inconsistent operations.\n"
+"%2"
+msgstr ""
+"La sesión remota dejó de responder (%1).\n"
+"FreeSCP se desconectará para evitar operaciones inconsistentes.\n"
+"%2"
+
+msgctxt "MainWindow"
+msgid "create a remote folder"
+msgstr "crear una carpeta remota"
+
+msgctxt "MainWindow"
+msgid "check remote item existence"
+msgstr "comprobar existencia del elemento remoto"
+
+msgctxt "MainWindow"
+msgid "create a remote file"
+msgstr "crear un archivo remoto"
+
+msgctxt "MainWindow"
+msgid "rename a remote item"
+msgstr "renombrar un elemento remoto"
+
+msgctxt "MainWindow"
+msgid "delete remote items"
+msgstr "eliminar elementos remotos"
+
+msgctxt "MainWindow"
+msgid "read remote permissions"
+msgstr "leer permisos remotos"
+
+msgctxt "MainWindow"
+msgid "change remote permissions"
+msgstr "cambiar permisos remotos"
+
+msgctxt "MainWindow"
+msgid "Connection lost"
+msgstr "Conexión perdida"
+
+msgctxt "MainWindow"
+msgid "Transport error."
+msgstr "Error de transporte."
+
+msgctxt "MainWindow"
+msgid "Proxy command requested without proxy settings."
+msgstr "Se solicitó un comando de proxy sin configuración de proxy."
+
+msgctxt "MainWindow"
+msgid "Proxy host/port is missing for terminal command."
+msgstr "Falta el host/puerto del proxy para el comando de terminal."
+
+msgctxt "MainWindow"
+msgid "Proxy authentication requires a username."
+msgstr "La autenticación del proxy requiere un nombre de usuario."
+
+msgctxt "MainWindow"
+msgid ""
+"Proxy authentication in terminal mode requires 'ncat' (with --proxy-auth "
+"support)."
+msgstr ""
+"La autenticación del proxy en modo terminal requiere 'ncat' (con soporte de "
+"--proxy-auth)."
+
+msgctxt "MainWindow"
+msgid "Unsupported proxy type for terminal command."
+msgstr "Tipo de proxy no compatible para el comando de terminal."
+
+msgctxt "MainWindow"
+msgid "Could not find a proxy helper for terminal mode (tried: nc, ncat)."
+msgstr ""
+"No se encontró un helper de proxy para el modo terminal (se intentó: nc, "
+"ncat)."
+
+msgctxt "MainWindow"
+msgid ""
+"Proxy and SSH jump host cannot be used together in the same terminal command."
+msgstr ""
+"El proxy y el host de salto SSH no se pueden usar juntos en el mismo comando "
+"de terminal."
+
+msgctxt "MainWindow"
+msgid "Could not build proxy command for terminal mode."
+msgstr "No se pudo construir el comando de proxy para el modo terminal."
+
+msgctxt "MainWindow"
+msgid "OpenSSH sftp client was not found in PATH."
+msgstr "No se encontró el cliente sftp de OpenSSH en PATH."
+
+msgctxt "MainWindow"
+msgid "Unknown error."
+msgstr "Error desconocido."
+
+msgctxt "MainWindow"
+msgid "Remote"
+msgstr "Remoto"
+
+msgctxt "MainWindow"
+msgid "No active remote session."
+msgstr "No hay sesión remota activa."
+
+msgctxt "MainWindow"
+msgid "An active remote session already exists"
+msgstr "Ya existe una sesión remota activa"
+
+msgctxt "MainWindow"
+msgid "Protocol not available"
+msgstr "Protocolo no disponible"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "%1 support is not implemented yet."
+msgstr "El soporte para %1 aún no está implementado."
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Connection canceled: unsupported protocol %1"
+msgstr "Conexión cancelada: protocolo no compatible %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Connected (%1) to %2"
+msgstr "Conectado (%1) a %2"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "FreeSCP — local/remote (%1)"
+msgstr "FreeSCP — local/remoto (%1)"
+
+msgctxt "MainWindow"
+msgid "Upload local files…"
+msgstr "Subir archivos locales…"
+
+msgctxt "MainWindow"
+msgid "Download remote file…"
+msgstr "Descargar archivo remoto…"
+
+msgctxt "MainWindow"
+msgid "/remote/folder"
+msgstr "/remoto/carpeta"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Remote path: %1"
+msgstr "Ruta remota: %1"
+
+#, qt-format
+msgctxt "MainWindow"
+msgid "Remote file path (absolute or relative to %1):"
+msgstr "Ruta del archivo remoto (absoluta o relativa a %1):"
+
+msgctxt "MainWindow"
+msgid "Enter a valid remote file path."
+msgstr "Introduce una ruta de archivo remoto válida."
+
+msgctxt "MainWindow"
+msgid "Select files to upload"
+msgstr "Selecciona archivos para subir"
+
+msgctxt "MainWindow"
+msgid "Connect to a server"
+msgstr "Conectar a un servidor"
+
+msgctxt "MainWindow"
+msgid "Disconnect from the server"
+msgstr "Desconectar del servidor"
+
+msgctxt "MainWindow"
+msgid "Upload (F8)"
+msgstr "Subir (F8)"
+
+msgctxt "MainWindow"
+msgid "Download (F7)"
+msgstr "Descargar (F7)"
+
+msgctxt "MainWindow"
+msgid "Copy F5"
+msgstr "Copiar F5"
+
+msgctxt "MainWindow"
+msgid "Copy to the other panel (F5)"
+msgstr "Copiar al otro panel (F5)"
+
+msgctxt "MainWindow"
+msgid "Move F6"
+msgstr "Mover F6"
+
+msgctxt "MainWindow"
+msgid "Move to the other panel (F6)"
+msgstr "Mover al otro panel (F6)"
+
+msgctxt "MainWindow"
+msgid "Connection history"
+msgstr "Historial de conexiones"
+
+msgctxt "MainWindow"
+msgid "Transfer queue (F12)"
+msgstr "Cola de transferencias (F12)"
+
+msgctxt "MainWindow"
+msgid "Rename (F2)"
+msgstr "Renombrar (F2)"
+
+msgctxt "MainWindow"
+msgid "New file (F10)"
+msgstr "Nuevo archivo (F10)"
+
+msgctxt "MainWindow"
+msgid "New folder (F9)"
+msgstr "Nueva carpeta (F9)"
+
+msgctxt "MainWindow"
+msgid "Kind"
+msgstr "Tipo"
+
+msgctxt "MainWindow"
+msgid "Date Modified"
+msgstr "Fecha de modificación"
+
+msgctxt "MainWindow"
+msgid "(empty folder)"
+msgstr "(carpeta vacía)"
+
+msgctxt "MainWindow"
+msgid "No entries selected in the right panel."
+msgstr "No hay entradas seleccionadas en el panel derecho."
+
+msgctxt "MainWindow"
+msgid "Permissions are not supported for the active protocol."
+msgstr "Los permisos no son compatibles con el protocolo activo."
+
+msgctxt "MainWindow"
+msgid "Already connected"
+msgstr "Ya está conectado"
+
+msgctxt "MainWindow"
+msgid "Connection in progress"
+msgstr "Conexión en curso"
+
+msgctxt "MainWindow"
+msgid "Disconnect the current session before starting a new connection."
+msgstr "Desconecte la sesión actual antes de iniciar una nueva conexión."
+
+msgctxt "MainWindow"
+msgid "Wait for the current connection attempt to finish or cancel it first."
+msgstr ""
+"Espere a que termine el intento de conexión actual o cancélelo primero."
+
+msgctxt "PermissionsDialog"
+msgid "Change permissions"
+msgstr "Cambiar permisos"
+
+msgctxt "PermissionsDialog"
+msgid "User"
+msgstr "Usuario"
+
+msgctxt "PermissionsDialog"
+msgid "Group"
+msgstr "Grupo"
+
+msgctxt "PermissionsDialog"
+msgid "Others"
+msgstr "Otros"
+
+msgctxt "PermissionsDialog"
+msgid "Read"
+msgstr "Leer"
+
+msgctxt "PermissionsDialog"
+msgid "Write"
+msgstr "Escribir"
+
+msgctxt "PermissionsDialog"
+msgid "Execute"
+msgstr "Ejecutar"
+
+msgctxt "PermissionsDialog"
+msgid "Preset"
+msgstr "Preset"
+
+msgctxt "PermissionsDialog"
+msgid "Custom"
+msgstr "Personalizado"
+
+msgctxt "PermissionsDialog"
+msgid "File (644)"
+msgstr "Archivo (644)"
+
+msgctxt "PermissionsDialog"
+msgid "Executable file (755)"
+msgstr "Archivo ejecutable (755)"
+
+msgctxt "PermissionsDialog"
+msgid "Private (600)"
+msgstr "Privado (600)"
+
+msgctxt "PermissionsDialog"
+msgid "Private directory (700)"
+msgstr "Directorio privado (700)"
+
+msgctxt "PermissionsDialog"
+msgid "Shared (664)"
+msgstr "Compartido (664)"
+
+msgctxt "PermissionsDialog"
+msgid "Shared directory (775)"
+msgstr "Directorio compartido (775)"
+
+msgctxt "PermissionsDialog"
+msgid "Apply recursively to subfolders"
+msgstr "Aplicar recursivo a subcarpetas"
+
+#, qt-format
+msgctxt "PermissionsDialog"
+msgid "Octal mode: %1"
+msgstr "Modo octal: %1"
+
+msgctxt "QObject"
+msgid "New site"
+msgstr "Nuevo sitio"
+
+msgctxt "QObject"
+msgid "stored"
+msgstr "guardado"
+
+msgctxt "QObject"
+msgid "unavailable"
+msgstr "no disponible"
+
+msgctxt "QObject"
+msgid "permission denied"
+msgstr "permiso denegado"
+
+msgctxt "QObject"
+msgid "backend error"
+msgstr "error del backend"
+
+msgctxt "QObject"
+msgid "error"
+msgstr "error"
+
+msgctxt "QObject"
+msgid "unknown"
+msgstr "desconocido"
+
+msgctxt "QObject"
+msgid "Credentials not saved"
+msgstr "Credenciales no guardadas"
+
+#, qt-format
+msgctxt "QObject"
+msgid ""
+"Could not save one or more credentials in the secure backend:\n"
+"%1"
+msgstr ""
+"No se pudieron guardar una o más credenciales en el backend seguro:\n"
+"%1"
+
+msgctxt "QObject"
+msgid "Duplicate name"
+msgstr "Nombre duplicado"
+
+#, qt-format
+msgctxt "QObject"
+msgid "A site named \"%1\" already exists. Use a different name."
+msgstr "Ya existe un sitio con el nombre \"%1\". Usa un nombre distinto."
+
+msgctxt "QObject"
+msgid "Name required"
+msgstr "Nombre requerido"
+
+msgctxt "QObject"
+msgid "Enter a site name to save this connection."
+msgstr "Escribe un nombre de sitio para guardar esta conexión."
+
+msgctxt "QObject"
+msgid "Password"
+msgstr "Contraseña"
+
+msgctxt "QObject"
+msgid "Key passphrase"
+msgstr "Passphrase de clave"
+
+msgctxt "QObject"
+msgid "Proxy password"
+msgstr "Contraseña del proxy"
+
+msgctxt "QObject"
+msgid "Yes"
+msgstr "Sí"
+
+msgctxt "QObject"
+msgid "No"
+msgstr "No"
+
+msgctxt "RemoteModel"
+msgid "Folder"
+msgstr "Carpeta"
+
+msgctxt "RemoteModel"
+msgid "Size: unknown (not provided by the server)"
+msgstr "Tamaño: desconocido (no informado por el servidor)"
+
+msgctxt "RemoteModel"
+msgid "File"
+msgstr "Archivo"
+
+msgctxt "RemoteModel"
+msgid "Name"
+msgstr "Nombre"
+
+msgctxt "RemoteModel"
+msgid "Size"
+msgstr "Tamaño"
+
+msgctxt "RemoteModel"
+msgid "Date"
+msgstr "Fecha"
+
+msgctxt "RemoteModel"
+msgid "Permissions"
+msgstr "Permisos"
+
+msgctxt "RemoteModel"
+msgid "Enumeration error"
+msgstr "Error de enumeración"
+
+msgctxt "RemoteModel"
+msgid "Partial enumeration with errors"
+msgstr "Enumeración parcial con errores"
+
+msgctxt "RemoteModel"
+msgid "Missing session options for remote listing"
+msgstr "Faltan opciones de sesión para el listado remoto"
+
+msgctxt "RemoteModel"
+msgid "No remote client available"
+msgstr "No hay cliente remoto disponible"
+
+msgctxt "SettingsDialog"
+msgid "Settings"
+msgstr "Ajustes"
+
+msgctxt "SettingsDialog"
+msgid "General"
+msgstr "General"
+
+msgctxt "SettingsDialog"
+msgid "Shortcuts"
+msgstr "Atajos"
+
+msgctxt "SettingsDialog"
+msgid ""
+"Select an action and press the new key combination directly in the field."
+msgstr ""
+"Selecciona una acción y presiona la nueva combinación de teclas directamente "
+"en el campo."
+
+msgctxt "SettingsDialog"
+msgid "Language:"
+msgstr "Idioma:"
+
+msgctxt "SettingsDialog"
+msgid "Spanish"
+msgstr "Español"
+
+msgctxt "SettingsDialog"
+msgid "English"
+msgstr "Inglés"
+
+msgctxt "SettingsDialog"
+msgid "Open with:"
+msgstr "Apertura con:"
+
+msgctxt "SettingsDialog"
+msgid "Double click"
+msgstr "Doble clic"
+
+msgctxt "SettingsDialog"
+msgid "Single click"
+msgstr "Un clic"
+
+msgctxt "SettingsDialog"
+msgid "On file open:"
+msgstr "Al abrir archivos:"
+
+msgctxt "SettingsDialog"
+msgid "Always ask"
+msgstr "Preguntar siempre"
+
+msgctxt "SettingsDialog"
+msgid "Show folder"
+msgstr "Mostrar carpeta"
+
+msgctxt "SettingsDialog"
+msgid "Open file"
+msgstr "Abrir archivo"
+
+msgctxt "SettingsDialog"
+msgid "Show hidden files"
+msgstr "Mostrar archivos ocultos"
+
+msgctxt "SettingsDialog"
+msgid "Open Site Manager on startup"
+msgstr "Abrir Gestor de Sitios al iniciar"
+
+msgctxt "SettingsDialog"
+msgid "Open Site Manager on disconnect"
+msgstr "Abrir Gestor de Sitios al desconectar"
+
+msgctxt "SettingsDialog"
+msgid "Open queue when enqueuing transfers"
+msgstr "Abrir cola al encolar transferencias"
+
+msgctxt "SettingsDialog"
+msgid "Transfers shortcut:"
+msgstr "Atajo de Transferencias:"
+
+msgctxt "SettingsDialog"
+msgid "History shortcut:"
+msgstr "Atajo de Historial:"
+
+msgctxt "SettingsDialog"
+msgid "Choose…"
+msgstr "Elegir…"
+
+msgctxt "SettingsDialog"
+msgid "Download folder:"
+msgstr "Carpeta descargas:"
+
+msgctxt "SettingsDialog"
+msgid "Select download folder"
+msgstr "Selecciona carpeta de descargas"
+
+msgctxt "SettingsDialog"
+msgid "Restore default sizes"
+msgstr "Restaurar tamaños predeterminados"
+
+msgctxt "SettingsDialog"
+msgid "Window layout:"
+msgstr "Diseño de ventana:"
+
+msgctxt "SettingsDialog"
+msgid "Restore layout"
+msgstr "Restaurar diseño"
+
+msgctxt "SettingsDialog"
+msgid "Restore the main window layout and column sizes to their defaults?"
+msgstr ""
+"¿Restaurar el diseño de la ventana principal y los tamaños de columna a sus "
+"valores predeterminados?"
+
+msgctxt "SettingsDialog"
+msgid "Default layout restored."
+msgstr "Diseño predeterminado restaurado."
+
+msgctxt "SettingsDialog"
+msgid "Default layout will be used the next time the app starts."
+msgstr "El diseño predeterminado se usará la próxima vez que se inicie la app."
+
+msgctxt "SettingsDialog"
+msgid "Transfers"
+msgstr "Transferencias"
+
+msgctxt "SettingsDialog"
+msgid "Maximum number of concurrent transfers."
+msgstr "Cantidad máxima de transferencias simultáneas."
+
+msgctxt "SettingsDialog"
+msgid "Parallel tasks:"
+msgstr "Simultáneas:"
+
+msgctxt "SettingsDialog"
+msgid "0 = no global speed limit."
+msgstr "0 = sin límite global de velocidad."
+
+msgctxt "SettingsDialog"
+msgid "Default global limit:"
+msgstr "Límite global por defecto:"
+
+msgctxt "SettingsDialog"
+msgid "Off"
+msgstr "Desactivado"
+
+msgctxt "SettingsDialog"
+msgid "Completed"
+msgstr "Completadas"
+
+msgctxt "SettingsDialog"
+msgid "Failed/Canceled"
+msgstr "Fallidas/Canceladas"
+
+msgctxt "SettingsDialog"
+msgid "All finished"
+msgstr "Todas finalizadas"
+
+msgctxt "SettingsDialog"
+msgid "Queue auto-clear default:"
+msgstr "Auto-limpieza de cola por defecto:"
+
+msgctxt "SettingsDialog"
+msgid "Queue auto-clear after:"
+msgstr "Auto-limpiar cola después de:"
+
+msgctxt "SettingsDialog"
+msgid "Sites"
+msgstr "Sitios"
+
+msgctxt "SettingsDialog"
+msgid "SFTP"
+msgstr "SFTP"
+
+msgctxt "SettingsDialog"
+msgid "SCP"
+msgstr "SCP"
+
+msgctxt "SettingsDialog"
+msgid "FTP"
+msgstr "FTP"
+
+msgctxt "SettingsDialog"
+msgid "Default protocol:"
+msgstr "Protocolo predeterminado:"
+
+msgctxt "SettingsDialog"
+msgid "When deleting a site, also remove its stored credentials."
+msgstr "Al eliminar un sitio, borrar también sus credenciales guardadas."
+
+msgctxt "SettingsDialog"
+msgid "Default SCP mode:"
+msgstr "Modo SCP predeterminado:"
+
+msgctxt "SettingsDialog"
+msgid "Automatic (SCP with SFTP fallback)"
+msgstr "Automático (SCP con fallback a SFTP)"
+
+msgctxt "SettingsDialog"
+msgid "SCP only (disable SFTP fallback)"
+msgstr "Solo SCP (desactivar fallback a SFTP)"
+
+msgctxt "SettingsDialog"
+msgid "Security"
+msgstr "Seguridad"
+
+msgctxt "SettingsDialog"
+msgid "Strict"
+msgstr "Estricta"
+
+msgctxt "SettingsDialog"
+msgid "Accept new (TOFU)"
+msgstr "Aceptar nuevas (TOFU)"
+
+msgctxt "SettingsDialog"
+msgid "No verification (double confirmation, expires in 15 min)"
+msgstr "Sin verificación (doble confirmación, expira en 15 min)"
+
+msgctxt "SettingsDialog"
+msgid "Default known_hosts policy:"
+msgstr "Política known_hosts predeterminada:"
+
+msgctxt "SettingsDialog"
+msgid "Optional (recommended)"
+msgstr "Opcional (recomendado)"
+
+msgctxt "SettingsDialog"
+msgid "Required (strict)"
+msgstr "Requerida (estricta)"
+
+msgctxt "SettingsDialog"
+msgid "Off (not recommended)"
+msgstr "Desactivada (no recomendado)"
+
+msgctxt "SettingsDialog"
+msgid "Default integrity policy:"
+msgstr "Política de integridad predeterminada:"
+
+msgctxt "SettingsDialog"
+msgid "Verify FTPS server certificate by default (recommended)."
+msgstr "Verificar por defecto el certificado del servidor FTPS (recomendado)."
+
+msgctxt "SettingsDialog"
+msgid "System CA bundle"
+msgstr "Bundle de CA del sistema"
+
+msgctxt "SettingsDialog"
+msgid "Default FTPS CA bundle:"
+msgstr "Bundle CA FTPS predeterminado:"
+
+msgctxt "SettingsDialog"
+msgid "Select FTPS CA bundle"
+msgstr "Selecciona bundle CA para FTPS"
+
+msgctxt "SettingsDialog"
+msgid "Hash hostnames in known_hosts (recommended)."
+msgstr "Guardar hostnames en known_hosts como hash (recomendado)."
+
+msgctxt "SettingsDialog"
+msgid "Show fingerprint in HEX (colon) format (visual only)."
+msgstr "Mostrar huella en HEX colonado (solo visual)."
+
+msgctxt "SettingsDialog"
+msgid ""
+"Force interactive login when using Open in terminal (disable key/agent auth)."
+msgstr ""
+"Forzar inicio de sesión interactivo al usar Open in terminal (desactiva "
+"autenticación por clave/agente)."
+
+msgctxt "SettingsDialog"
+msgid "Enable automatic SFTP CLI fallback when using Open in terminal."
+msgstr "Activar fallback automático a CLI SFTP al usar Open in terminal."
+
+msgctxt "SettingsDialog"
+msgid "Use stricter Keychain accessibility (this device only)."
+msgstr ""
+"Usar accesibilidad de llavero más restrictiva (solo en este dispositivo)."
+
+msgctxt "SettingsDialog"
+msgid "Allow insecure credentials fallback (not recommended)."
+msgstr "Permitir fallback inseguro de credenciales (no recomendado)."
+
+msgctxt "SettingsDialog"
+msgid " min"
+msgstr " min"
+
+msgctxt "SettingsDialog"
+msgid ""
+"Duration of the temporary exception for no host-key verification policy."
+msgstr ""
+"Duración de la excepción temporal para la política sin verificación de host "
+"key."
+
+msgctxt "SettingsDialog"
+msgid "No-verification TTL:"
+msgstr "TTL sin verificación:"
+
+msgctxt "SettingsDialog"
+msgid "Network"
+msgstr "Red"
+
+msgctxt "SettingsDialog"
+msgid " s"
+msgstr " s"
+
+msgctxt "SettingsDialog"
+msgid "Session health check interval:"
+msgstr "Intervalo de verificación de sesión:"
+
+msgctxt "SettingsDialog"
+msgid "Remote writeability cache TTL:"
+msgstr "TTL de caché de escritura remota:"
+
+msgctxt "SettingsDialog"
+msgid "Staging and drag-out"
+msgstr "Staging y arrastre"
+
+msgctxt "SettingsDialog"
+msgid "Staging folder:"
+msgstr "Carpeta de staging:"
+
+msgctxt "SettingsDialog"
+msgid "Select staging folder"
+msgstr "Selecciona carpeta de staging"
+
+msgctxt "SettingsDialog"
+msgid "Auto-clean staging after successful drag-out (recommended)."
+msgstr ""
+"Eliminar automáticamente la carpeta staging tras completar el arrastre "
+"(recomendado)."
+
+msgctxt "SettingsDialog"
+msgid " days"
+msgstr " días"
+
+msgctxt "SettingsDialog"
+msgid "Startup cleanup retention:"
+msgstr "Retención de limpieza al iniciar:"
+
+msgctxt "SettingsDialog"
+msgid " ms"
+msgstr " ms"
+
+msgctxt "SettingsDialog"
+msgid "Time before showing the Wait/Cancel dialog."
+msgstr "Tiempo antes de mostrar el diálogo Esperar/Cancelar."
+
+msgctxt "SettingsDialog"
+msgid "Preparation timeout:"
+msgstr "Timeout preparación:"
+
+msgctxt "SettingsDialog"
+msgid "Item count threshold to request confirmation for large batches."
+msgstr "Cantidad de elementos para pedir confirmación en lotes grandes."
+
+msgctxt "SettingsDialog"
+msgid "Confirm from items:"
+msgstr "Confirmar desde elementos:"
+
+msgctxt "SettingsDialog"
+msgid " MiB"
+msgstr " MiB"
+
+msgctxt "SettingsDialog"
+msgid "Estimated size threshold to request confirmation for large batches."
+msgstr "Tamaño estimado para pedir confirmación en lotes grandes."
+
+msgctxt "SettingsDialog"
+msgid "Confirm from size:"
+msgstr "Confirmar desde tamaño:"
+
+msgctxt "SettingsDialog"
+msgid "Limit for recursive folder drag-out to avoid deep trees and loops."
+msgstr ""
+"Límite para arrastre recursivo y evitar árboles muy profundos y bucles."
+
+msgctxt "SettingsDialog"
+msgid "Recommended: 32"
+msgstr "Recomendado: 32"
+
+msgctxt "SettingsDialog"
+msgid "Maximum depth:"
+msgstr "Profundidad máxima:"
+
+msgctxt "SettingsDialog"
+msgid "Close"
+msgstr "Cerrar"
+
+msgctxt "SettingsDialog"
+msgid "Apply"
+msgstr "Aplicar"
+
+msgctxt "SettingsDialog"
+msgid "Enable insecure fallback"
+msgstr "Activar fallback inseguro"
+
+msgctxt "SettingsDialog"
+msgid ""
+"This stores credentials unencrypted on disk using QSettings.\n"
+"On Linux, it is recommended to install and use libsecret/Secret Service for "
+"better security.\n"
+"\n"
+"Do you still want to enable insecure fallback?"
+msgstr ""
+"Esto almacenará credenciales sin cifrar en el disco usando QSettings.\n"
+"En Linux, se recomienda instalar y usar libsecret/Secret Service para mayor "
+"seguridad.\n"
+"\n"
+"¿Deseas activar el fallback inseguro igualmente?"
+
+msgctxt "SettingsDialog"
+msgid "Language"
+msgstr "Idioma"
+
+msgctxt "SettingsDialog"
+msgid "Language changes take effect after restart."
+msgstr "El cambio de idioma se aplicará al reiniciar."
+
+msgctxt "SettingsDialog"
+msgid "French"
+msgstr "Francés"
+
+msgctxt "SettingsDialog"
+msgid "Portuguese"
+msgstr "Portugués"
+
+msgctxt "SettingsDialog"
+msgid "FTPS"
+msgstr "FTPS"
+
+msgctxt "SettingsDialog"
+msgid "days"
+msgstr "días"
+
+msgctxt "SettingsDialog"
+msgid "min"
+msgstr "min"
+
+msgctxt "SettingsDialog"
+msgid "ms"
+msgstr "ms"
+
+msgctxt "SettingsDialog"
+msgid "s"
+msgstr "s"
+
+msgctxt "SiteManagerDialog"
+msgid "Site Manager"
+msgstr "Gestor de sitios"
+
+msgctxt "SiteManagerDialog"
+msgid "Name"
+msgstr "Nombre"
+
+msgctxt "SiteManagerDialog"
+msgid "Host"
+msgstr "Host"
+
+msgctxt "SiteManagerDialog"
+msgid "User"
+msgstr "Usuario"
+
+msgctxt "SiteManagerDialog"
+msgid "Add"
+msgstr "Añadir"
+
+msgctxt "SiteManagerDialog"
+msgid "Edit"
+msgstr "Editar"
+
+msgctxt "SiteManagerDialog"
+msgid "Delete"
+msgstr "Eliminar"
+
+msgctxt "SiteManagerDialog"
+msgid "Connect"
+msgstr "Conectar"
+
+msgctxt "SiteManagerDialog"
+msgid "Import SSH config"
+msgstr "Importar config SSH"
+
+msgctxt "SiteManagerDialog"
+msgid "~/.ssh/config was not found."
+msgstr "No se encontró ~/.ssh/config."
+
+msgctxt "SiteManagerDialog"
+msgid "No importable Host entries were found in ~/.ssh/config."
+msgstr "No se encontraron entradas Host importables en ~/.ssh/config."
+
+#, qt-format
+msgctxt "SiteManagerDialog"
+msgid "Imported %1 site(s) from the SSH configuration."
+msgstr "Se importaron %1 sitio(s) de la configuración SSH."
+
+#, qt-format
+msgctxt "SiteManagerDialog"
+msgid "Imported %1 site(s) from the SSH configuration; %2 already existed."
+msgstr "Se importaron %1 sitio(s) de la configuración SSH; %2 ya existían."
+
+msgctxt "SiteManagerDialog"
+msgid "Close"
+msgstr "Cerrar"
+
+msgctxt "SiteManagerDialog"
+msgid "Add site"
+msgstr "Añadir sitio"
+
+msgctxt "SiteManagerDialog"
+msgid "Password"
+msgstr "Contraseña"
+
+msgctxt "SiteManagerDialog"
+msgid "Key passphrase"
+msgstr "Passphrase de clave"
+
+msgctxt "SiteManagerDialog"
+msgid "Edit site"
+msgstr "Editar sitio"
+
+msgctxt "SiteManagerDialog"
+msgid "Proxy password"
+msgstr "Contraseña del proxy"
+
+msgctxt "SiteManagerDialog"
+msgid "Protocol"
+msgstr "Protocolo"
+
+msgctxt "SiteManagerDialog"
+msgid "HTTP (insecure)"
+msgstr "HTTP (no seguro)"
+
+msgctxt "SiteManagerDialog"
+msgid "HTTPS (recommended)"
+msgstr "HTTPS (recomendado)"
+
+msgctxt "SiteManagerDialog"
+msgid "Save"
+msgstr "Guardar"
+
+msgctxt "SiteManagerDialog"
+msgid "WebDAV scheme:"
+msgstr "Esquema WebDAV:"
+
+msgctxt "SiteManagerDialog"
+msgid "Verify WebDAV server certificate (recommended)"
+msgstr "Verificar certificado del servidor WebDAV (recomendado)"
+
+msgctxt "SiteManagerDialog"
+msgid "WebDAV CA bundle:"
+msgstr "Bundle CA de WebDAV:"
+
+#, qt-format
+msgctxt "SiteManagerDialog"
+msgid ""
+"Could not save site \"%1\".\n"
+"%2"
+msgstr ""
+"No se pudo guardar el sitio «%1».\n"
+"%2"
+
+msgctxt "TransferManager"
+msgid "Conflict"
+msgstr "Conflicto"
+
+#, qt-format
+msgctxt "TransferManager"
+msgid ""
+"«%1» already exists.\n"
+"Local: %2\n"
+"Remote: %3"
+msgstr ""
+"«%1» ya existe.\n"
+"Local: %2\n"
+"Remoto: %3"
+
+msgctxt "TransferManager"
+msgid "Resume"
+msgstr "Reanudar"
+
+msgctxt "TransferManager"
+msgid "Overwrite"
+msgstr "Sobrescribir"
+
+msgctxt "TransferManager"
+msgid "Skip"
+msgstr "Omitir"
+
+msgctxt "TransferManager"
+msgid ""
+"Integrity mismatch detected: local and remote checksums differ. Transfer was "
+"stopped to prevent corrupted data."
+msgstr ""
+"Se detectó un desajuste de integridad: los checksums local y remoto "
+"difieren. La transferencia se detuvo para evitar datos corruptos."
+
+msgctxt "TransferManager"
+msgid ""
+"Resume integrity mismatch detected between local and remote partial data. "
+"Transfer was stopped."
+msgstr ""
+"Se detectó un desajuste de integridad al reanudar entre los datos parciales "
+"local y remoto. La transferencia se detuvo."
+
+msgctxt "TransferManager"
+msgid ""
+"Integrity verification is required but could not be completed. Transfer "
+"failed."
+msgstr ""
+"La verificación de integridad es obligatoria, pero no pudo completarse. La "
+"transferencia falló."
+
+msgctxt "TransferQueueDialog"
+msgid "Queued"
+msgstr "En cola"
+
+msgctxt "TransferQueueDialog"
+msgid "Running"
+msgstr "En progreso"
+
+msgctxt "TransferQueueDialog"
+msgid "Paused"
+msgstr "Pausado"
+
+msgctxt "TransferQueueDialog"
+msgid "Completed"
+msgstr "Completado"
+
+msgctxt "TransferQueueDialog"
+msgid "Error"
+msgstr "Error"
+
+msgctxt "TransferQueueDialog"
+msgid "Canceled"
+msgstr "Cancelado"
+
+msgctxt "TransferQueueDialog"
+msgid "Type"
+msgstr "Tipo"
+
+msgctxt "TransferQueueDialog"
+msgid "Source"
+msgstr "Origen"
+
+msgctxt "TransferQueueDialog"
+msgid "Destination"
+msgstr "Destino"
+
+msgctxt "TransferQueueDialog"
+msgid "Status"
+msgstr "Estado"
+
+msgctxt "TransferQueueDialog"
+msgid "Progress"
+msgstr "Progreso"
+
+msgctxt "TransferQueueDialog"
+msgid "Attempts"
+msgstr "Intentos"
+
+msgctxt "TransferQueueDialog"
+msgid "Upload"
+msgstr "Subida"
+
+msgctxt "TransferQueueDialog"
+msgid "Download"
+msgstr "Descarga"
+
+msgctxt "TransferQueueDialog"
+msgid "Transfer queue"
+msgstr "Cola de transferencias"
+
+msgctxt "TransferQueueDialog"
+msgid "Pause"
+msgstr "Pausar"
+
+msgctxt "TransferQueueDialog"
+msgid "Resume"
+msgstr "Reanudar"
+
+msgctxt "TransferQueueDialog"
+msgid "Retry"
+msgstr "Reintentar"
+
+msgctxt "TransferQueueDialog"
+msgid "Close"
+msgstr "Cerrar"
+
+msgctxt "TransferQueueDialog"
+msgid "Apply limit"
+msgstr "Aplicar vel."
+
+msgctxt "TransferQueueDialog"
+msgid "Speed:"
+msgstr "Velocidad:"
+
+msgctxt "TransferQueueDialog"
+msgid "Limit for task(s)"
+msgstr "Límite para tarea(s)"
+
+msgctxt "TransferQueueDialog"
+msgid "KB/s (0 = no limit)"
+msgstr "KB/s (0 = sin límite)"
+
+msgctxt "TransferQueueDialog"
+msgid "(unnamed)"
+msgstr "(sin nombre)"
+
+msgctxt "TransferQueueDialog"
+msgid "Name"
+msgstr "Nombre"
+
+msgctxt "TransferQueueDialog"
+msgid "Transferred"
+msgstr "Transferido"
+
+msgctxt "TransferQueueDialog"
+msgid "Speed"
+msgstr "Velocidad"
+
+msgctxt "TransferQueueDialog"
+msgid "ETA"
+msgstr "ETA"
+
+msgctxt "TransferQueueDialog"
+msgid "Show:"
+msgstr "Mostrar:"
+
+msgctxt "TransferQueueDialog"
+msgid "All"
+msgstr "Todo"
+
+msgctxt "TransferQueueDialog"
+msgid "Active"
+msgstr "Activas"
+
+msgctxt "TransferQueueDialog"
+msgid "Errors"
+msgstr "Errores"
+
+msgctxt "TransferQueueDialog"
+msgid "Total: 0"
+msgstr "Total: 0"
+
+msgctxt "TransferQueueDialog"
+msgid "Active: 0"
+msgstr "Activas: 0"
+
+msgctxt "TransferQueueDialog"
+msgid "Running: 0"
+msgstr "En progreso: 0"
+
+msgctxt "TransferQueueDialog"
+msgid "Paused: 0"
+msgstr "Pausadas: 0"
+
+msgctxt "TransferQueueDialog"
+msgid "Errors: 0"
+msgstr "Errores: 0"
+
+msgctxt "TransferQueueDialog"
+msgid "Completed: 0"
+msgstr "Completadas: 0"
+
+msgctxt "TransferQueueDialog"
+msgid "Canceled: 0"
+msgstr "Canceladas: 0"
+
+msgctxt "TransferQueueDialog"
+msgid "Global limit: off"
+msgstr "Límite global: sin límite"
+
+msgctxt "TransferQueueDialog"
+msgid "Pause selected"
+msgstr "Pausar selección"
+
+msgctxt "TransferQueueDialog"
+msgid "Resume selected"
+msgstr "Reanudar selección"
+
+msgctxt "TransferQueueDialog"
+msgid "Cancel selected"
+msgstr "Cancelar selección"
+
+msgctxt "TransferQueueDialog"
+msgid "Cancel all"
+msgstr "Cancelar todo"
+
+msgctxt "TransferQueueDialog"
+msgid "Clear completed"
+msgstr "Limpiar completadas"
+
+msgctxt "TransferQueueDialog"
+msgid "Clear failed/canceled"
+msgstr "Limpiar fallidas/canceladas"
+
+msgctxt "TransferQueueDialog"
+msgid "Pause all queued and running transfers"
+msgstr "Pausar todas las transferencias en cola y en progreso"
+
+msgctxt "TransferQueueDialog"
+msgid "Resume the paused queue and paused tasks"
+msgstr "Reanudar la cola pausada y las tareas pausadas"
+
+msgctxt "TransferQueueDialog"
+msgid "Pause the selected transfers"
+msgstr "Pausar transferencias seleccionadas"
+
+msgctxt "TransferQueueDialog"
+msgid "Resume the selected transfers"
+msgstr "Reanudar transferencias seleccionadas"
+
+msgctxt "TransferQueueDialog"
+msgid "Cancel the selected transfers"
+msgstr "Cancelar transferencias seleccionadas"
+
+msgctxt "TransferQueueDialog"
+msgid "Cancel all queued, running, and paused transfers"
+msgstr "Cancelar todas las transferencias en cola, en progreso y pausadas"
+
+msgctxt "TransferQueueDialog"
+msgid "Retry transfers with Error or Canceled status"
+msgstr "Reintentar transferencias con estado Error o Cancelado"
+
+msgctxt "TransferQueueDialog"
+msgid "Remove completed transfers from the list"
+msgstr "Quitar transferencias completadas de la lista"
+
+msgctxt "TransferQueueDialog"
+msgid "Remove failed and canceled transfers from the list"
+msgstr "Quitar transferencias fallidas y canceladas de la lista"
+
+msgctxt "TransferQueueDialog"
+msgid "Limit selected"
+msgstr "Limitar selección"
+
+msgctxt "TransferQueueDialog"
+msgid "Off"
+msgstr "Desactivado"
+
+msgctxt "TransferQueueDialog"
+msgid "Failed/Canceled"
+msgstr "Fallidas/Canceladas"
+
+msgctxt "TransferQueueDialog"
+msgid "All finished"
+msgstr "Todo finalizado"
+
+msgctxt "TransferQueueDialog"
+msgid " min"
+msgstr " min"
+
+msgctxt "TransferQueueDialog"
+msgid "Auto clear:"
+msgstr "Limpieza automática:"
+
+#, qt-format
+msgctxt "TransferQueueDialog"
+msgid "Total: %1"
+msgstr "Total: %1"
+
+#, qt-format
+msgctxt "TransferQueueDialog"
+msgid "Active: %1"
+msgstr "Activas: %1"
+
+#, qt-format
+msgctxt "TransferQueueDialog"
+msgid "Running: %1"
+msgstr "En progreso: %1"
+
+#, qt-format
+msgctxt "TransferQueueDialog"
+msgid "Paused: %1"
+msgstr "Pausadas: %1"
+
+#, qt-format
+msgctxt "TransferQueueDialog"
+msgid "Errors: %1"
+msgstr "Errores: %1"
+
+#, qt-format
+msgctxt "TransferQueueDialog"
+msgid "Completed: %1"
+msgstr "Completadas: %1"
+
+#, qt-format
+msgctxt "TransferQueueDialog"
+msgid "Canceled: %1"
+msgstr "Canceladas: %1"
+
+#, qt-format
+msgctxt "TransferQueueDialog"
+msgid "Global limit: %1 KB/s"
+msgstr "Límite global: %1 KB/s"
+
+msgctxt "TransferQueueDialog"
+msgid "Retry selected"
+msgstr "Reintentar selección"
+
+msgctxt "TransferQueueDialog"
+msgid "Open destination"
+msgstr "Abrir destino"
+
+msgctxt "TransferQueueDialog"
+msgid "Copy source path"
+msgstr "Copiar ruta de origen"
+
+msgctxt "TransferQueueDialog"
+msgid "Copy destination path"
+msgstr "Copiar ruta de destino"
+
+msgctxt "TransferQueueDialog"
+msgid "Clear finished"
+msgstr "Limpiar finalizadas"
+
+msgctxt "SearchDialog"
+msgid "Search"
+msgstr "Buscar"
+
+msgctxt "SearchDialog"
+msgid "Searching…"
+msgstr "Buscando…"
+
+msgctxt "SearchDialog"
+msgid "Pattern:"
+msgstr "Patrón:"
+
+msgctxt "SearchDialog"
+msgid "(no results)"
+msgstr "(sin resultados)"
+
+msgctxt "OverwriteDialog"
+msgid "Overwrite confirmation"
+msgstr "Confirmación de sobrescritura"
+
+msgctxt "OverwriteDialog"
+msgid "Overwrite all"
+msgstr "Sobrescribir todo"
+
+msgctxt "OverwriteDialog"
+msgid "Skip all"
+msgstr "Omitir todo"
+
+msgctxt "ShortcutRecorder"
+msgid "Press shortcut…"
+msgstr "Pulse el atajo…"
+
+msgctxt "ShortcutRecorder"
+msgid "Supported: {}"
+msgstr "Compatible: {}"
+
+msgctxt "ShortcutRecorder"
+msgid "Unsupported shortcut: {}"
+msgstr "Atajo no compatible: {}"
+
+#. Same source text as another catalog entry
+msgctxt "AboutDialog"
+msgid "Close"
+msgstr "Cerrar"
+
+#. Same source text as another catalog entry
+msgctxt "HistoryDialog"
+msgid "Clear history"
+msgstr "Borrar historial"
+
+#. Same source text as another catalog entry
+msgctxt "HistoryDialog"
+msgid "Close"
+msgstr "Cerrar"
+
+#. Same source text as another catalog entry
+msgctxt "HistoryDialog"
+msgid "History"
+msgstr "Historial"
+
+#. Same source text as another catalog entry
+msgctxt "HistoryDialog"
+msgid "No recent history"
+msgstr "No hay historial reciente"
+
+#. Same source text as another catalog entry
+msgctxt "HistoryDialog"
+msgid "Open selected"
+msgstr "Abrir seleccionado"
+
+#. Same source text as another catalog entry
+msgctxt "HistoryDialog"
+msgid "Recent local paths"
+msgstr "Rutas locales recientes"
+
+#. Same source text as another catalog entry
+msgctxt "HistoryDialog"
+msgid "Recent remote paths"
+msgstr "Rutas remotas recientes"
+
+#. Same source text as another catalog entry
+msgctxt "HistoryDialog"
+msgid "Recent servers"
+msgstr "Servidores recientes"
+
+#. Same source text as another catalog entry
+msgctxt "MainWindow"
+msgid "Change permissions"
+msgstr "Cambiar permisos"
+
+#. Same source text as another catalog entry
+msgctxt "MainWindow"
+msgid "Date"
+msgstr "Fecha"
+
+#. Same source text as another catalog entry
+msgctxt "MainWindow"
+msgid "Name"
+msgstr "Nombre"
+
+#. Same source text as another catalog entry
+msgctxt "MainWindow"
+msgid "Sites"
+msgstr "Sitios"
+
+#. Same source text as another catalog entry
+msgctxt "MainWindow"
+msgid "Size"
+msgstr "Tamaño"
+
+#. Same source text as another catalog entry
+msgctxt "OverwriteDialog"
+msgid "Overwrite"
+msgstr "Sobrescribir"
+
+#. Same source text as another catalog entry
+msgctxt "OverwriteDialog"
+msgid "Skip"
+msgstr "Omitir"
+
+#. Same source text as another catalog entry
+msgctxt "SearchDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#. Same source text as another catalog entry
+msgctxt "SearchDialog"
+msgid "Close"
+msgstr "Cerrar"
+
+#. Same source text as another catalog entry
+msgctxt "SearchDialog"
+msgid "Pattern accepts wildcard (*, ?) or regex.\n"
+"Examples: *report*, report, ^report_.*\\.pdf$"
+msgstr "El patrón acepta comodines (*, ?) o regex.\n"
+"Ejemplos: *report*, report, ^report_.*\\.pdf$"
+
+#. Same source text as another catalog entry
+msgctxt "SearchDialog"
+msgid "Search items"
+msgstr "Buscar elementos"
+
+#. Same source text as another catalog entry
+msgctxt "SearchDialog"
+msgid "Search recursively in subfolders"
+msgstr "Buscar recursivamente en subcarpetas"
+
+#. Same source text as another catalog entry
+msgctxt "SearchDialog"
+msgid "e.g. *report*"
+msgstr "p. ej. *report*"
+
+#. Same source text as another catalog entry
+msgctxt "SettingsDialog"
+msgid "Local"
+msgstr "Local"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Accept new (TOFU)"
+msgstr "Aceptar nuevas (TOFU)"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Automatic (SCP with SFTP fallback)"
+msgstr "Automático (SCP con fallback a SFTP)"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Choose…"
+msgstr "Elegir…"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Direct (no proxy)"
+msgstr "Directo (sin proxy)"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "FTPS CA bundle:"
+msgstr "Bundle CA de FTPS:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Hide"
+msgstr "Ocultar"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Host / Port:"
+msgstr "Host / Puerto:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Integrity:"
+msgstr "Integridad:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Jump host / port:"
+msgstr "Host de salto / Puerto:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Jump private key:"
+msgstr "Clave privada de salto:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Jump user:"
+msgstr "Usuario de salto:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Key passphrase:"
+msgstr "Passphrase clave:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "My server"
+msgstr "Mi servidor"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "No verification (double confirmation, expires in 15 min)"
+msgstr "Sin verificación (doble confirmación, expira en 15 min)"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Off (not recommended)"
+msgstr "Desactivada (no recomendado)"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Optional (recommended)"
+msgstr "Opcional (recomendado)"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Password:"
+msgstr "Contraseña:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Policy:"
+msgstr "Política:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Private key path:"
+msgstr "Ruta clave privada:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Protocol:"
+msgstr "Protocolo:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Proxy host / port:"
+msgstr "Host proxy / Puerto:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Proxy password:"
+msgstr "Contraseña del proxy:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Proxy user:"
+msgstr "Usuario proxy:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Proxy:"
+msgstr "Proxy:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Required (strict)"
+msgstr "Requerida (estricta)"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "SCP mode:"
+msgstr "Modo SCP:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "SCP only (disable SFTP fallback)"
+msgstr "Solo SCP (desactivar fallback a SFTP)"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Save passwords/passphrases"
+msgstr "Guardar contraseñas/passphrases"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Show"
+msgstr "Mostrar"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Site name:"
+msgstr "Nombre del sitio:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Strict"
+msgstr "Estricta"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "System CA bundle"
+msgstr "Bundle de CA del sistema"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Use SSH jump host (bastion)"
+msgstr "Usar host de salto SSH (bastión)"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "User:"
+msgstr "Usuario:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "Verify FTPS server certificate (recommended)"
+msgstr "Verificar certificado del servidor FTPS (recomendado)"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "bastion.example.com"
+msgstr "bastion.ejemplo.com"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "ftp.example.com"
+msgstr "ftp.example.com"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "ftps.example.com"
+msgstr "ftps.example.com"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "known_hosts:"
+msgstr "known_hosts:"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "optional"
+msgstr "opcional"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "proxy.example.com"
+msgstr "proxy.ejemplo.com"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "scp.example.com"
+msgstr "scp.example.com"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "sftp.example.com"
+msgstr "sftp.ejemplo.com"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "user"
+msgstr "usuario"
+
+#. Same source text as another catalog entry
+msgctxt "SiteManagerDialog"
+msgid "webdav.example.com"
+msgstr "webdav.example.com"

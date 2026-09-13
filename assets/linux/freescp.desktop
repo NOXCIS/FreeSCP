@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=FreeSCP
+GenericName=SFTP Client
+Comment=Two-panel SFTP client focused on simplicity and security
+Exec=freescp-app
+Icon=freescp
+Terminal=false
+Categories=Network;FileTransfer;Utility;
+Keywords=SFTP;SSH;File;Transfer;Client;
+StartupWMClass=FreeSCP

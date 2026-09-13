@@ -1,0 +1,1035 @@
+// Settings dialog: full port of ui/SettingsDialog.cpp sections (General,
+// Transfers, Sites, Security, Network, Local) onto Slint TabWidget pages.
+//
+// Every control is exposed as an in-out property so the Rust side
+// (see src/settings.rs, Preferences) can load/save without owning the UI.
+//
+// NOTE: Window already provides a built-in `visible` property; it is not
+// re-declared here. Use `set_visible(...)` / `show()` / `hide()` from Rust.
+
+import {
+    Button,
+    CheckBox,
+    ComboBox,
+    LineEdit,
+    Palette,
+    ScrollView,
+    SpinBox,
+    TabWidget,
+} from "std-widgets.slint";
+
+// ---------------------------------------------------------------------------
+// Keyboard shortcut recorder (port of QKeySequenceEdit)
+// ---------------------------------------------------------------------------
+//
+// The C++ dialog uses QKeySequenceEdit, which records the next chord typed
+// while the field has focus and renders it as QKeySequence::PortableText
+// ("Ctrl+Shift+T"). Slint cannot build `KeyBinding` elements from the runtime
+// candidate lists (`@keys(...)` requires compile-time constants), so the field
+// captures raw key events in a FocusScope and maps them to portable text
+// itself. The accepted chords mirror QUEUE_SHORTCUT_CANDIDATES and
+// HISTORY_SHORTCUT_CANDIDATES in crates/freescp-app/src/settings.rs; a Rust
+// unit test asserts that every candidate appears in this file so the two
+// cannot drift. An unsupported chord shows an inline warning and keeps the
+// previous value, like QKeySequenceEdit ignoring an unpreferred sequence.
+component ShortcutRecorder inherits Rectangle {
+    in-out property <string> value;
+    /// Comma-joined chords accepted by this field, shown as the hint line.
+    in property <string> supported-hint;
+    /// Selects the connection-history candidate set instead of the queue one.
+    in property <bool> history: false;
+
+    /// Last rejected chord ("" when there is none); readable from Rust for
+    /// tests, shown as the inline warning below the field.
+    out property <string> warning: "";
+
+    height: 46px;
+
+    // Qt portable text for the chords accepted by the two shortcut fields.
+    // Takes the key-event parts instead of a pre-built string: Slint 1.17's
+    // generated code moves a `string` local passed to a function, so reusing
+    // the chord afterwards (root.value = chord) would not compile.
+    pure function chord-supported(
+        meta: bool,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+        key: string,
+        history: bool,
+    ) -> bool {
+        let chord = chord-text(meta, ctrl, alt, shift, key);
+        if (history) {
+            return chord == "Ctrl+Shift+H" || chord == "Ctrl+H" || chord == "Ctrl+Alt+H";
+        }
+        return chord == "F12" || chord == "Ctrl+Shift+T" || chord == "Ctrl+Alt+T" || chord == "Ctrl+J";
+    }
+
+    // `KeyEvent.text` carries special keys as private-use code points, which
+    // the `Key` namespace names; regular keys arrive as text and are
+    // upper-cased so Ctrl+Shift+T matches "T" from any backend.
+    pure function key-name(text: string) -> string {
+        if (text == "") {
+            return "";
+        }
+        if (text == Key.F1) { return "F1"; }
+        if (text == Key.F2) { return "F2"; }
+        if (text == Key.F3) { return "F3"; }
+        if (text == Key.F4) { return "F4"; }
+        if (text == Key.F5) { return "F5"; }
+        if (text == Key.F6) { return "F6"; }
+        if (text == Key.F7) { return "F7"; }
+        if (text == Key.F8) { return "F8"; }
+        if (text == Key.F9) { return "F9"; }
+        if (text == Key.F10) { return "F10"; }
+        if (text == Key.F11) { return "F11"; }
+        if (text == Key.F12) { return "F12"; }
+        if (text == Key.Backspace) { return "Backspace"; }
+        if (text == Key.Tab) { return "Tab"; }
+        if (text == Key.Backtab) { return "Backtab"; }
+        if (text == Key.Return) { return "Return"; }
+        if (text == Key.Escape) { return "Esc"; }
+        if (text == Key.Delete) { return "Del"; }
+        if (text == Key.Space) { return "Space"; }
+        if (text == Key.UpArrow) { return "Up"; }
+        if (text == Key.DownArrow) { return "Down"; }
+        if (text == Key.LeftArrow) { return "Left"; }
+        if (text == Key.RightArrow) { return "Right"; }
+        if (text == Key.Home) { return "Home"; }
+        if (text == Key.End) { return "End"; }
+        if (text == Key.PageUp) { return "PgUp"; }
+        if (text == Key.PageDown) { return "PgDown"; }
+        if (text == Key.Insert) { return "Ins"; }
+        return text.to-uppercase();
+    }
+
+    // Modifier order follows Qt's portable text, which is also the canonical
+    // order `settings::normalized_shortcut` accepts. Qt renders Command/Meta
+    // as "Ctrl" on every platform (QKeySequence::PortableText), so meta and
+    // control fold into the same "Ctrl" token here.
+    pure function chord-text(meta: bool, ctrl: bool, alt: bool, shift: bool, key: string) -> string {
+        if (key == "") {
+            return "";
+        }
+        return ((meta || ctrl) ? "Ctrl+" : "") + (alt ? "Alt+" : "")
+            + (shift ? "Shift+" : "") + key;
+    }
+
+    VerticalLayout {
+        spacing: 2px;
+
+        Rectangle {
+            height: 30px;
+            border-width: 1px;
+            border-radius: 4px;
+            border-color: fs.has-focus ? Palette.accent-background : Palette.border;
+            background: Palette.control-background;
+
+            Text {
+                x: 8px;
+                y: 0;
+                width: parent.width - 16px;
+                height: parent.height;
+                vertical-alignment: center;
+                overflow: elide;
+                text: root.value == "" ? @tr("Press shortcut…") : root.value;
+                color: Palette.control-foreground;
+                opacity: root.value == "" ? 0.55 : 1.0;
+            }
+
+            fs := FocusScope {
+                key-pressed(event) => {
+                    // Modifier-only presses must not end the recording; keep
+                    // waiting for the actual key of the chord.
+                    if (event.text == Key.Shift || event.text == Key.ShiftR
+                        || event.text == Key.Control || event.text == Key.ControlR
+                        || event.text == Key.Alt || event.text == Key.AltGr
+                        || event.text == Key.Meta || event.text == Key.MetaR
+                        || event.text == Key.CapsLock) {
+                        return accept;
+                    }
+                    // Tab/Backtab keep their focus-navigation meaning.
+                    if (event.text == Key.Tab || event.text == Key.Backtab) {
+                        return reject;
+                    }
+                    if (event.text == Key.Escape) {
+                        root.warning = "";
+                        return accept;
+                    }
+                    let chord = root.chord-text(
+                        event.modifiers.meta,
+                        event.modifiers.control,
+                        event.modifiers.alt,
+                        event.modifiers.shift,
+                        root.key-name(event.text),
+                    );
+                    if (root.chord-supported(
+                        event.modifiers.meta,
+                        event.modifiers.control,
+                        event.modifiers.alt,
+                        event.modifiers.shift,
+                        root.key-name(event.text),
+                        root.history,
+                    )) {
+                        root.warning = "";
+                        root.value = chord;
+                    } else if (chord != "") {
+                        root.warning = chord;
+                    }
+                    return accept;
+                }
+
+                focus-lost(reason) => {
+                    root.warning = "";
+                }
+            }
+
+            TouchArea {
+                clicked => {
+                    fs.focus();
+                }
+            }
+        }
+
+        if (root.warning != "") : Text {
+            text: @tr("Unsupported shortcut: {}", root.warning);
+            color: #c0392b;
+            font-size: 11px;
+            overflow: elide;
+        }
+        if (root.warning == "" && fs.has-focus) : Text {
+            text: @tr("Supported: {}", root.supported-hint);
+            color: Palette.foreground;
+            opacity: 0.65;
+            font-size: 11px;
+            overflow: elide;
+        }
+    }
+}
+
+export component SettingsDialog inherits Window {
+    title: @tr("Settings");
+    width: 880px;
+    height: 660px;
+
+    // --- General (UI/* keys) ---
+    in-out property <string> language; // en | es | fr | pt
+    in-out property <bool> show-hidden;
+    in-out property <bool> single-click;
+    in-out property <string> open-behavior; // ask | reveal | open
+    in-out property <string> open-transfers-shortcut; // e.g. "F12"
+    in-out property <string> open-history-shortcut; // e.g. "Ctrl+Shift+H"
+    in-out property <bool> show-queue-on-enqueue;
+    in-out property <bool> open-site-manager-on-startup;
+    in-out property <bool> open-site-manager-on-disconnect;
+
+    // --- Sites (Sites/* + Protocol/* keys) ---
+    in-out property <bool> delete-secrets-on-remove;
+    in-out property <string> default-protocol; // storage name
+    in-out property <string> default-scp-mode; // auto | scp-only
+
+    // --- Security (Security/* + Terminal/* keys) ---
+    in-out property <int> default-known-hosts-policy; // 0 strict, 1 accept-new, 2 off
+    in-out property <int> default-integrity-policy; // 0 off, 1 optional, 2 required
+    in-out property <bool> ftps-verify-peer-default;
+    in-out property <string> ftps-ca-cert-path-default;
+    in-out property <bool> known-hosts-hashed;
+    in-out property <bool> fp-hex;
+    in-out property <bool> terminal-force-interactive-login;
+    in-out property <bool> terminal-enable-sftp-cli-fallback;
+    in-out property <int> no-host-verification-ttl-min; // 1..=120
+    in-out property <bool> enable-insecure-secret-fallback;
+    in-out property <bool> mac-keychain-restrictive;
+    // Platform gate: Qt compiles the Keychain checkbox on Apple builds only
+    // and the insecure-fallback checkbox everywhere else (SettingsDialog.cpp).
+    in-out property <bool> is-macos: false;
+    // Mirrors the C++ build-time gate that skips creating the
+    // insecure-fallback checkbox when a secure backend is compiled in; set
+    // from `settings::insecure_fallback_available()`.
+    in-out property <bool> insecure-fallback-available: true;
+    // Chords accepted by the two shortcut recorders (hint line under the
+    // field), from `settings::queue_shortcut_hint()` / `history_shortcut_hint()`.
+    in property <string> transfers-shortcut-hint;
+    in property <string> history-shortcut-hint;
+
+    // --- Transfers (Transfer/* keys) ---
+    in-out property <int> max-concurrent; // 1..=8
+    in-out property <int> global-speed-kbps; // 0 = unlimited
+    in-out property <int> default-queue-auto-clear-mode; // 0 off, 1 completed, 2 failed/canceled, 3 all finished
+    in-out property <int> default-queue-auto-clear-minutes; // 1..=1440
+
+    // --- Network (Network/* keys) ---
+    in-out property <int> session-health-interval-sec; // 60..=86400
+    in-out property <int> remote-writeability-ttl-ms; // 1000..=120000
+
+    // --- Local / staging (UI/defaultDownloadDir + Advanced/* keys) ---
+    in-out property <string> default-download-dir;
+    in-out property <string> staging-root;
+    in-out property <bool> auto-clean-staging;
+    in-out property <int> staging-retention-days; // 1..=365
+    in-out property <int> staging-prep-timeout-ms; // 250..=60000
+    in-out property <int> staging-confirm-items; // 50..=100000
+    in-out property <int> staging-confirm-mib; // 128..=65536
+    in-out property <int> max-folder-depth; // 4..=256
+
+    // Port of SettingsDialog::updateApplyFromControls: true while the dialog
+    // values differ from the preferences it was loaded with. Recomputed by
+    // the Rust side when a field raises `field-edited`; drives the Apply
+    // button.
+    in-out property <bool> dirty: false;
+
+    callback apply-requested();
+    callback close-requested();
+    callback reset-layout-requested();
+    callback browse-download-dir-requested();
+    callback browse-staging-dir-requested();
+    callback browse-ftps-ca-requested();
+    callback insecure-fallback-toggled();
+    callback field-edited();
+
+    // Port of bindDirtyFlag in SettingsDialog.cpp: every editable field
+    // notifies Rust, which compares the dialog against the loaded
+    // preferences and updates `dirty`. (Slint defers `changed` callbacks to
+    // the next event-loop pass, so a write-only Slint flag would misfire on
+    // programmatic loads; the Rust-side comparison is the exact port of
+    // updateApplyFromControls and also handles reverting an edit.)
+    changed language => { root.field-edited(); }
+    changed show-hidden => { root.field-edited(); }
+    changed single-click => { root.field-edited(); }
+    changed open-behavior => { root.field-edited(); }
+    changed open-transfers-shortcut => { root.field-edited(); }
+    changed open-history-shortcut => { root.field-edited(); }
+    changed show-queue-on-enqueue => { root.field-edited(); }
+    changed open-site-manager-on-startup => { root.field-edited(); }
+    changed open-site-manager-on-disconnect => { root.field-edited(); }
+    changed delete-secrets-on-remove => { root.field-edited(); }
+    changed default-protocol => { root.field-edited(); }
+    changed default-scp-mode => { root.field-edited(); }
+    changed default-known-hosts-policy => { root.field-edited(); }
+    changed default-integrity-policy => { root.field-edited(); }
+    changed ftps-verify-peer-default => { root.field-edited(); }
+    changed ftps-ca-cert-path-default => { root.field-edited(); }
+    changed known-hosts-hashed => { root.field-edited(); }
+    changed fp-hex => { root.field-edited(); }
+    changed terminal-force-interactive-login => { root.field-edited(); }
+    changed terminal-enable-sftp-cli-fallback => { root.field-edited(); }
+    changed no-host-verification-ttl-min => { root.field-edited(); }
+    changed enable-insecure-secret-fallback => { root.field-edited(); }
+    changed mac-keychain-restrictive => { root.field-edited(); }
+    changed max-concurrent => { root.field-edited(); }
+    changed global-speed-kbps => { root.field-edited(); }
+    changed default-queue-auto-clear-mode => { root.field-edited(); }
+    changed default-queue-auto-clear-minutes => { root.field-edited(); }
+    changed session-health-interval-sec => { root.field-edited(); }
+    changed remote-writeability-ttl-ms => { root.field-edited(); }
+    changed default-download-dir => { root.field-edited(); }
+    changed staging-root => { root.field-edited(); }
+    changed auto-clean-staging => { root.field-edited(); }
+    changed staging-retention-days => { root.field-edited(); }
+    changed staging-prep-timeout-ms => { root.field-edited(); }
+    changed staging-confirm-items => { root.field-edited(); }
+    changed staging-confirm-mib => { root.field-edited(); }
+    changed max-folder-depth => { root.field-edited(); }
+
+    pure function language-label(code: string) -> string {
+        if code == "es" {
+            return "Español";
+        }
+        if code == "fr" {
+            return "Français";
+        }
+        if code == "pt" {
+            return "Português";
+        }
+        return "English";
+    }
+
+    pure function language-code(label: string) -> string {
+        if label == "Español" {
+            return "es";
+        }
+        if label == "Français" {
+            return "fr";
+        }
+        if label == "Português" {
+            return "pt";
+        }
+        return "en";
+    }
+
+    pure function open-behavior-label(code: string) -> string {
+        if code == "reveal" {
+            return @tr("Show folder");
+        }
+        if code == "open" {
+            return @tr("Open file");
+        }
+        return @tr("Always ask");
+    }
+
+    pure function open-behavior-code(label: string) -> string {
+        if label == @tr("Show folder") {
+            return "reveal";
+        }
+        if label == @tr("Open file") {
+            return "open";
+        }
+        return "ask";
+    }
+
+    pure function protocol-label(storage: string) -> string {
+        if storage == "scp" {
+            return "SCP";
+        }
+        if storage == "ftp" {
+            return "FTP";
+        }
+        if storage == "ftps" {
+            return "FTPS";
+        }
+        if storage == "webdav" {
+            return "WebDAV";
+        }
+        return "SFTP";
+    }
+
+    pure function protocol-storage-name(label: string) -> string {
+        if label == "SCP" {
+            return "scp";
+        }
+        if label == "FTP" {
+            return "ftp";
+        }
+        if label == "FTPS" {
+            return "ftps";
+        }
+        if label == "WebDAV" {
+            return "webdav";
+        }
+        return "sftp";
+    }
+
+    pure function kh-policy-label(value: int) -> string {
+        if value == 1 {
+            return @tr("Accept new (TOFU)");
+        }
+        if value == 2 {
+            return @tr("No verification (double confirmation, expires in 15 min)");
+        }
+        return @tr("Strict");
+    }
+
+    pure function kh-policy-index(label: string) -> int {
+        if label == @tr("Accept new (TOFU)") {
+            return 1;
+        }
+        if label == @tr("No verification (double confirmation, expires in 15 min)") {
+            return 2;
+        }
+        return 0;
+    }
+
+    pure function integrity-label(value: int) -> string {
+        if value == 0 {
+            return @tr("Off (not recommended)");
+        }
+        if value == 2 {
+            return @tr("Required (strict)");
+        }
+        return @tr("Optional (recommended)");
+    }
+
+    pure function integrity-index(label: string) -> int {
+        if label == @tr("Off (not recommended)") {
+            return 0;
+        }
+        if label == @tr("Required (strict)") {
+            return 2;
+        }
+        return 1;
+    }
+
+    pure function queue-clear-label(value: int) -> string {
+        if value == 1 {
+            return @tr("Completed");
+        }
+        if value == 2 {
+            return @tr("Failed/Canceled");
+        }
+        if value == 3 {
+            return @tr("All finished");
+        }
+        return @tr("Off");
+    }
+
+    pure function queue-clear-index(label: string) -> int {
+        if label == @tr("Completed") {
+            return 1;
+        }
+        if label == @tr("Failed/Canceled") {
+            return 2;
+        }
+        if label == @tr("All finished") {
+            return 3;
+        }
+        return 0;
+    }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 10px;
+
+        TabWidget {
+            Tab {
+                title: @tr("General");
+                ScrollView {
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Language:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            ComboBox {
+                                model: ["English", "Español", "Français", "Português"];
+                                current-value: root.language-label(root.language);
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    root.language = root.language-code(value);
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Open with:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            ComboBox {
+                                model: [@tr("Double click"), @tr("Single click")];
+                                current-value: root.single-click ? @tr("Single click") : @tr("Double click");
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    root.single-click = value == @tr("Single click");
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("On file open:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            ComboBox {
+                                model: [@tr("Always ask"), @tr("Show folder"), @tr("Open file")];
+                                current-value: root.open-behavior-label(root.open-behavior);
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    root.open-behavior = root.open-behavior-code(value);
+                                }
+                            }
+                        }
+                        CheckBox {
+                            text: @tr("Show hidden files");
+                            checked <=> root.show-hidden;
+                        }
+                        CheckBox {
+                            text: @tr("Open Site Manager on startup");
+                            checked <=> root.open-site-manager-on-startup;
+                        }
+                        CheckBox {
+                            text: @tr("Open Site Manager on disconnect");
+                            checked <=> root.open-site-manager-on-disconnect;
+                        }
+                        CheckBox {
+                            text: @tr("Open queue when enqueuing transfers");
+                            checked <=> root.show-queue-on-enqueue;
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Transfers shortcut:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            ShortcutRecorder {
+                                value <=> root.open-transfers-shortcut;
+                                supported-hint: root.transfers-shortcut-hint;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("History shortcut:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            ShortcutRecorder {
+                                value <=> root.open-history-shortcut;
+                                supported-hint: root.history-shortcut-hint;
+                                history: true;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Window layout:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            Button {
+                                text: @tr("Restore default sizes");
+                                clicked => {
+                                    root.reset-layout-requested();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: @tr("Transfers");
+                ScrollView {
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Parallel tasks:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            SpinBox {
+                                minimum: 1;
+                                maximum: 8;
+                                value <=> root.max-concurrent;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Default global limit:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            SpinBox {
+                                minimum: 0;
+                                maximum: 1000000;
+                                value <=> root.global-speed-kbps;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: "KB/s";
+                                vertical-alignment: center;
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Queue auto-clear default:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            ComboBox {
+                                model: [
+                                    @tr("Off"),
+                                    @tr("Completed"),
+                                    @tr("Failed/Canceled"),
+                                    @tr("All finished"),
+                                ];
+                                current-value: root.queue-clear-label(root.default-queue-auto-clear-mode);
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    root.default-queue-auto-clear-mode = root.queue-clear-index(value);
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Queue auto-clear after:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            SpinBox {
+                                minimum: 1;
+                                maximum: 1440;
+                                enabled: root.default-queue-auto-clear-mode != 0;
+                                value <=> root.default-queue-auto-clear-minutes;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: @tr("min");
+                                vertical-alignment: center;
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Default integrity policy:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            ComboBox {
+                                model: [
+                                    @tr("Off (not recommended)"),
+                                    @tr("Optional (recommended)"),
+                                    @tr("Required (strict)"),
+                                ];
+                                current-value: root.integrity-label(root.default-integrity-policy);
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    root.default-integrity-policy = root.integrity-index(value);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: @tr("Sites");
+                ScrollView {
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Default protocol:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            ComboBox {
+                                model: ["SFTP", "SCP", "FTP", "FTPS", "WebDAV"];
+                                current-value: root.protocol-label(root.default-protocol);
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    root.default-protocol = root.protocol-storage-name(value);
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Default SCP mode:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            ComboBox {
+                                model: [
+                                    @tr("Automatic (SCP with SFTP fallback)"),
+                                    @tr("SCP only (disable SFTP fallback)"),
+                                ];
+                                current-value: root.default-scp-mode == "scp-only"
+                                    ? @tr("SCP only (disable SFTP fallback)")
+                                    : @tr("Automatic (SCP with SFTP fallback)");
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    root.default-scp-mode = value == @tr("SCP only (disable SFTP fallback)")
+                                        ? "scp-only"
+                                        : "auto";
+                                }
+                            }
+                        }
+                        CheckBox {
+                            text: @tr("When deleting a site, also remove its stored credentials.");
+                            checked <=> root.delete-secrets-on-remove;
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: @tr("Security");
+                ScrollView {
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Default known_hosts policy:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            ComboBox {
+                                model: [
+                                    @tr("Strict"),
+                                    @tr("Accept new (TOFU)"),
+                                    @tr("No verification (double confirmation, expires in 15 min)"),
+                                ];
+                                current-value: root.kh-policy-label(root.default-known-hosts-policy);
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    root.default-known-hosts-policy = root.kh-policy-index(value);
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("No-verification TTL:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            SpinBox {
+                                minimum: 1;
+                                maximum: 120;
+                                value <=> root.no-host-verification-ttl-min;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: @tr("min");
+                                vertical-alignment: center;
+                            }
+                        }
+                        CheckBox {
+                            text: @tr("Verify FTPS server certificate by default (recommended).");
+                            checked <=> root.ftps-verify-peer-default;
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Default FTPS CA bundle:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            LineEdit {
+                                text <=> root.ftps-ca-cert-path-default;
+                                placeholder-text: @tr("System CA bundle");
+                                horizontal-stretch: 1;
+                            }
+                            Button {
+                                text: @tr("Choose…");
+                                clicked => {
+                                    root.browse-ftps-ca-requested();
+                                }
+                            }
+                        }
+                        CheckBox {
+                            text: @tr("Hash hostnames in known_hosts (recommended).");
+                            checked <=> root.known-hosts-hashed;
+                        }
+                        CheckBox {
+                            text: @tr("Show fingerprint in HEX (colon) format (visual only).");
+                            checked <=> root.fp-hex;
+                        }
+                        CheckBox {
+                            text: @tr("Force interactive login when using Open in terminal (disable key/agent auth).");
+                            checked <=> root.terminal-force-interactive-login;
+                        }
+                        CheckBox {
+                            text: @tr("Enable automatic SFTP CLI fallback when using Open in terminal.");
+                            checked <=> root.terminal-enable-sftp-cli-fallback;
+                        }
+                        CheckBox {
+                            text: @tr("Allow insecure credentials fallback (not recommended).");
+                            checked <=> root.enable-insecure-secret-fallback;
+                            // Hidden when a secure backend is compiled in,
+                            // like the C++ build that never creates the
+                            // checkbox (the property keeps its loaded value).
+                            visible: !root.is-macos && root.insecure-fallback-available;
+                            // User-interaction only (like QCheckBox::toggled);
+                            // programmatic set_checked does not re-fire it.
+                            toggled => {
+                                root.insecure-fallback-toggled();
+                            }
+                        }
+                        CheckBox {
+                            text: @tr("Use stricter Keychain accessibility (this device only).");
+                            checked <=> root.mac-keychain-restrictive;
+                            visible: root.is-macos;
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: @tr("Network");
+                ScrollView {
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Session health check interval:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            SpinBox {
+                                minimum: 60;
+                                maximum: 86400;
+                                value <=> root.session-health-interval-sec;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: @tr("s");
+                                vertical-alignment: center;
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Remote writeability cache TTL:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            SpinBox {
+                                minimum: 1000;
+                                maximum: 120000;
+                                value <=> root.remote-writeability-ttl-ms;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: @tr("ms");
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: @tr("Local");
+                ScrollView {
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Download folder:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            LineEdit {
+                                text <=> root.default-download-dir;
+                                horizontal-stretch: 1;
+                            }
+                            Button {
+                                text: @tr("Choose…");
+                                clicked => {
+                                    root.browse-download-dir-requested();
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Staging folder:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            LineEdit {
+                                text <=> root.staging-root;
+                                horizontal-stretch: 1;
+                            }
+                            Button {
+                                text: @tr("Choose…");
+                                clicked => {
+                                    root.browse-staging-dir-requested();
+                                }
+                            }
+                        }
+                        CheckBox {
+                            text: @tr("Auto-clean staging after successful drag-out (recommended).");
+                            checked <=> root.auto-clean-staging;
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Startup cleanup retention:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            SpinBox {
+                                minimum: 1;
+                                maximum: 365;
+                                value <=> root.staging-retention-days;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: @tr("days");
+                                vertical-alignment: center;
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Preparation timeout:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            SpinBox {
+                                minimum: 250;
+                                maximum: 60000;
+                                value <=> root.staging-prep-timeout-ms;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: @tr("ms");
+                                vertical-alignment: center;
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Confirm from items:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            SpinBox {
+                                minimum: 50;
+                                maximum: 100000;
+                                value <=> root.staging-confirm-items;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Confirm from size:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            SpinBox {
+                                minimum: 128;
+                                maximum: 65536;
+                                value <=> root.staging-confirm-mib;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: "MiB";
+                                vertical-alignment: center;
+                            }
+                        }
+                        HorizontalLayout {
+                            Text {
+                                text: @tr("Maximum depth:");
+                                width: 220px;
+                                vertical-alignment: center;
+                            }
+                            SpinBox {
+                                minimum: 4;
+                                maximum: 256;
+                                value <=> root.max-folder-depth;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: @tr("Recommended: 32");
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: @tr("Close");
+                clicked => {
+                    root.close-requested();
+                }
+            }
+            Button {
+                text: @tr("Apply");
+                primary: true;
+                enabled: root.dirty;
+                clicked => {
+                    root.apply-requested();
+                }
+            }
+        }
+    }
+}

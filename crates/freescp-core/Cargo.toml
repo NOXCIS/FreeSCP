@@ -1,0 +1,30 @@
+[package]
+name = "freescp-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure-Rust protocol backends for FreeSCP (SFTP/SCP/FTP/FTPS/WebDAV)"
+
+[dependencies]
+tokio.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+serde.workspace = true
+chrono.workspace = true
+russh.workspace = true
+russh-sftp.workspace = true
+suppaftp.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+quick-xml.workspace = true
+tokio-socks.workspace = true
+sha2.workspace = true
+sha1.workspace = true
+rand.workspace = true
+hex.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

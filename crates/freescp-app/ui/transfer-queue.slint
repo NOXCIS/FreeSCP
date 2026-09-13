@@ -1,0 +1,515 @@
+// Transfer queue dialog — port of ui/TransferQueueDialog.cpp.
+//
+// Owned by the transfers workstream. Rows are snapshots pushed from Rust
+// (TransferManager) via the `rows` property; per-row cancel/selection and
+// footer actions bubble up through callbacks. Column order matches the C++
+// table: Name, Status, Progress, Transferred, Speed, ETA, Type, Source,
+// Destination, Attempts, Error — with Source/Destination splitting the
+// remaining flexible width.
+//
+// Layout note (Slint 1.x): there is no custom-cell TableView element — only
+// the text-only StandardTableView, which cannot bind to `[QueueRow]` — so
+// the table is hand-built like the main window's file lists: a header row
+// plus a virtualized `ListView` whose rows share the column geometry
+// defined below. Selection is stored per-row in `QueueRow.selected` and
+// toggled by Rust (the row click callbacks forward the event).
+//
+// The dialog is modeless: Rust hides the window on close
+// (CloseRequestResponse::HideWindow) instead of destroying it, so no
+// close-event handler is declared here.
+
+import { Button, ComboBox, ListView, SpinBox } from "std-widgets.slint";
+
+// One row of the per-row context menu (TouchArea so disabled rows do not
+// fire `clicked` at all, like a disabled QAction).
+component QueueMenuRow inherits TouchArea {
+    in property <string> text;
+    height: 24px;
+    mouse-cursor: MouseCursor.pointer;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover && root.enabled ? #3a3a44 : #00000000;
+        border-radius: 4px;
+    }
+    Text {
+        text: root.text;
+        x: 8px;
+        y: 0px;
+        width: parent.width - 16px;
+        height: parent.height;
+        vertical-alignment: center;
+        overflow: elide;
+        color: root.enabled ? #e6e6e9 : #6f6f77;
+        font-size: 12px;
+    }
+}
+
+export struct QueueRow {
+    id: int,
+    direction: string, // "Upload" | "Download"
+    name: string,      // file name (C++ displayNameForTask)
+    source: string,
+    dest: string,
+    progress: float,       // 0..1
+    transferred: string,   // "12.3 MB / 45.6 MB"
+    speed: string,         // "1.2 MB/s" or ""
+    eta: string,           // "00:42" or ""
+    attempts: string,      // "2/3"
+    error: string,
+    state: string,         // Queued | Running | Paused | Completed | Error | Canceled
+    selected: bool,
+}
+
+export component TransferQueueDialog inherits Window {
+    title: "Transfer queue";
+    preferred-width: 1120px;
+    preferred-height: 560px;
+    min-width: 900px;
+    min-height: 420px;
+
+    in-out property <[QueueRow]> rows;
+    in-out property <string> status-line;
+    // 0 = All, 1 = Active, 2 = Errors, 3 = Completed, 4 = Canceled.
+    in-out property <int> filter;
+    // Speed/auto-clear row state (KB/s; mode 0 Off, 1 Completed,
+    // 2 Failed/Canceled, 3 All finished; minutes 1..=1440).
+    in-out property <int> speed-value;
+    in-out property <int> auto-clear-mode;
+    in-out property <int> auto-clear-minutes;
+    // Button eligibility, computed from the task counts in `refresh_dialog`
+    // (C++ setEnabled calls in TransferQueueDialog::updateCounts).
+    in property <bool> can-pause-all: false;
+    in property <bool> can-resume-all: false;
+    in property <bool> can-pause-selected: false;
+    in property <bool> can-resume-selected: false;
+    in property <bool> can-cancel-all: false;
+    in property <bool> can-cancel-selected: false;
+    in property <bool> can-limit-selected: false;
+    in property <bool> can-retry-selected: false;
+    in property <bool> can-open-destination-selected: false;
+    in property <bool> can-retry: false;
+    in property <bool> can-clear-completed: false;
+    in property <bool> can-clear-failed-cancelled: false;
+
+    callback cancel-requested(int);
+    // row id + multi-select flag (Ctrl/Cmd held).
+    callback row-clicked(int, bool);
+    callback row-context-requested(int);
+    callback pause-all();
+    callback resume-all();
+    callback retry-all();
+    callback cancel-all();
+    callback pause-selected();
+    callback resume-selected();
+    callback cancel-selected();
+    callback retry-selected();
+    callback limit-selected();
+    callback open-destination-selected();
+    callback copy-source-selected();
+    callback copy-dest-selected();
+    callback clear-completed();
+    callback clear-failed-cancelled();
+    callback clear-finished();
+    callback apply-speed-limit(int);
+    callback auto-clear-changed();
+    callback filter-changed();
+    callback close-requested();
+
+    // ---- Column geometry (fixed widths; Source/Destination flex) ----------
+    property <length> col-name-w: 130px;
+    property <length> col-status-w: 84px;
+    property <length> col-progress-w: 170px;
+    property <length> col-transferred-w: 110px;
+    property <length> col-speed-w: 70px;
+    property <length> col-eta-w: 60px;
+    property <length> col-type-w: 76px;
+    property <length> col-attempts-w: 56px;
+    property <length> col-error-w: 130px;
+    property <length> col-fixed-w:
+        root.col-name-w + root.col-status-w + root.col-progress-w
+        + root.col-transferred-w + root.col-speed-w + root.col-eta-w
+        + root.col-type-w + root.col-attempts-w + root.col-error-w;
+
+    pure function flex-w(w: length) -> length {
+        max(70px, (w - root.col-fixed-w) / 2 - 2px);
+    }
+    pure function status-x() -> length { root.col-name-w; }
+    pure function progress-x() -> length { root.status-x() + root.col-status-w; }
+    pure function transferred-x() -> length { root.progress-x() + root.col-progress-w; }
+    pure function speed-x() -> length { root.transferred-x() + root.col-transferred-w; }
+    pure function eta-x() -> length { root.speed-x() + root.col-speed-w; }
+    pure function type-x() -> length { root.eta-x() + root.col-eta-w; }
+    pure function source-x(w: length) -> length { root.type-x() + root.col-type-w; }
+    pure function dest-x(w: length) -> length { root.source-x(w) + root.flex-w(w); }
+    pure function attempts-x(w: length) -> length { root.dest-x(w) + root.flex-w(w); }
+    pure function error-x(w: length) -> length { root.attempts-x(w) + root.col-attempts-w; }
+
+    // Esc hides the modeless dialog, like QDialog's default reject().
+    // KeyBinding requires a FocusScope ancestor for the layout.
+    FocusScope {
+        // FocusScope is not a layout: without explicit bounds neither it nor
+        // its child layout fills the window (see main-window.slint).
+        width: parent.width;
+        height: parent.height;
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => { root.close-requested(); }
+        }
+        VerticalLayout {
+        padding: 8px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            spacing: 4px;
+            Text { text: "Show:"; vertical-alignment: center; }
+            Button { text: "All"; checkable: true; checked: root.filter == 0; clicked => { root.filter = 0; root.filter-changed(); } }
+            Button { text: "Active"; checkable: true; checked: root.filter == 1; clicked => { root.filter = 1; root.filter-changed(); } }
+            Button { text: "Errors"; checkable: true; checked: root.filter == 2; clicked => { root.filter = 2; root.filter-changed(); } }
+            Button { text: "Completed"; checkable: true; checked: root.filter == 3; clicked => { root.filter = 3; root.filter-changed(); } }
+            Button { text: "Canceled"; checkable: true; checked: root.filter == 4; clicked => { root.filter = 4; root.filter-changed(); } }
+        }
+
+        // Header row; x positions must match the row template below.
+        header := Rectangle {
+            height: 24px;
+            background: #313136;
+            Text { text: "Name"; x: 0px; width: root.col-name-w; height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
+            Text { text: "Status"; x: root.status-x(); width: root.col-status-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
+            Text { text: "Progress"; x: root.progress-x(); width: root.col-progress-w; height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
+            Text { text: "Transferred"; x: root.transferred-x(); width: root.col-transferred-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
+            Text { text: "Speed"; x: root.speed-x(); width: root.col-speed-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
+            Text { text: "ETA"; x: root.eta-x(); width: root.col-eta-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
+            Text { text: "Type"; x: root.type-x(); width: root.col-type-w; height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
+            Text { text: "Source"; x: root.source-x(parent.width); width: root.flex-w(parent.width); height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
+            Text { text: "Destination"; x: root.dest-x(parent.width); width: root.flex-w(parent.width); height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
+            Text { text: "Attempts"; x: root.attempts-x(parent.width); width: root.col-attempts-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
+            Text { text: "Error"; x: root.error-x(parent.width); width: root.col-error-w; height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
+        }
+
+        ListView {
+            vertical-stretch: 1;
+            for row[i] in root.rows : Rectangle {
+                width: 100%;
+                height: 38px;
+                background: row.selected ? #3a4a5f
+                    : (mod(i, 2) == 0 ? #2c2c31 : #2d2d32);
+
+                row-area := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    // `clicked` carries no pointer event in Slint 1.17, so
+                    // selection uses the raw up event (modifiers included).
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left) {
+                            // Cmd-click multi-selects on Apple platforms, like
+                            // Qt's ExtendedSelection (Ctrl elsewhere).
+                            root.row-clicked(row.id, event.modifiers.control || event.modifiers.meta);
+                        }
+                        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                            root.row-context-requested(row.id);
+                            row-popup.show();
+                        }
+                    }
+                    row-popup := PopupWindow {
+                        close-policy: close-on-click-outside;
+                        x: 6px;
+                        y: 26px;
+                        width: 220px;
+                        height: row-menu-layout.preferred-height;
+                        Rectangle {
+                            width: 100%;
+                            height: 100%;
+                            background: #2d2d32;
+                            border-width: 1px;
+                            border-color: #3c3c42;
+                            border-radius: 4px;
+                            row-menu-layout := VerticalLayout {
+                                padding: 4px;
+                                QueueMenuRow {
+                                    text: "Pause selected";
+                                    enabled: root.can-pause-selected;
+                                    clicked => { row-popup.close(); root.pause-selected(); }
+                                }
+                                QueueMenuRow {
+                                    text: "Resume selected";
+                                    enabled: root.can-resume-selected;
+                                    clicked => { row-popup.close(); root.resume-selected(); }
+                                }
+                                QueueMenuRow {
+                                    text: "Limit selected";
+                                    enabled: root.can-limit-selected;
+                                    clicked => { row-popup.close(); root.limit-selected(); }
+                                }
+                                QueueMenuRow {
+                                    text: "Cancel selected";
+                                    enabled: root.can-cancel-selected;
+                                    clicked => { row-popup.close(); root.cancel-selected(); }
+                                }
+                                QueueMenuRow {
+                                    text: "Retry selected";
+                                    enabled: root.can-retry-selected;
+                                    clicked => { row-popup.close(); root.retry-selected(); }
+                                }
+                                Rectangle { height: 1px; background: #3c3c42; }
+                                QueueMenuRow {
+                                    text: "Open destination";
+                                    enabled: root.can-open-destination-selected;
+                                    clicked => { row-popup.close(); root.open-destination-selected(); }
+                                }
+                                QueueMenuRow {
+                                    text: "Copy source path";
+                                    clicked => { row-popup.close(); root.copy-source-selected(); }
+                                }
+                                QueueMenuRow {
+                                    text: "Copy destination path";
+                                    clicked => { row-popup.close(); root.copy-dest-selected(); }
+                                }
+                                Rectangle { height: 1px; background: #3c3c42; }
+                                QueueMenuRow {
+                                    text: "Clear finished";
+                                    clicked => { row-popup.close(); root.clear-finished(); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: row.name;
+                    x: 0px;
+                    y: 0px;
+                    width: root.col-name-w;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: #e6e6e9;
+                    font-size: 12px;
+                }
+                Text {
+                    text: row.state;
+                    x: root.status-x();
+                    y: 0px;
+                    width: root.col-status-w;
+                    height: parent.height;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: #e6e6e9;
+                    font-size: 12px;
+                }
+
+                // Progress: plain fill Rectangle (the std-widgets ProgressBar
+                // is designed for taller containers), with a percent caption.
+                Rectangle {
+                    x: root.progress-x();
+                    y: 12px;
+                    width: root.col-progress-w - 8px;
+                    height: 6px;
+                    clip: true;
+                    background: #3c3c42;
+                    border-radius: 3px;
+                    Rectangle {
+                        width: parent.width * clamp(row.progress, 0.0, 1.0);
+                        height: 100%;
+                        background: #4a90d9;
+                        border-radius: 3px;
+                    }
+                }
+                Text {
+                    text: round(row.progress * 100) + "%";
+                    x: root.progress-x();
+                    y: 22px;
+                    width: root.col-progress-w - 8px;
+                    height: 14px;
+                    horizontal-alignment: right;
+                    color: #9a9aa2;
+                    font-size: 10px;
+                }
+
+                Text {
+                    text: row.transferred;
+                    x: root.transferred-x();
+                    y: 0px;
+                    width: root.col-transferred-w;
+                    height: parent.height;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: #9a9aa2;
+                    font-size: 11px;
+                }
+                Text {
+                    text: row.speed;
+                    x: root.speed-x();
+                    y: 0px;
+                    width: root.col-speed-w;
+                    height: parent.height;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: #9a9aa2;
+                    font-size: 11px;
+                }
+                Text {
+                    text: row.eta;
+                    x: root.eta-x();
+                    y: 0px;
+                    width: root.col-eta-w;
+                    height: parent.height;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: #9a9aa2;
+                    font-size: 11px;
+                }
+
+                // Type: direction icon + label.
+                Image {
+                    x: root.type-x() + 6px;
+                    y: (parent.height - self.height) / 2;
+                    width: 16px;
+                    height: 16px;
+                    source: row.direction == "Upload"
+                        ? @image-url("../../../assets/icons/action-upload.svg")
+                        : @image-url("../../../assets/icons/action-download.svg");
+                }
+                Text {
+                    text: row.direction;
+                    x: root.type-x() + 26px;
+                    y: 0px;
+                    width: root.col-type-w - 26px;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: #e6e6e9;
+                    font-size: 12px;
+                }
+
+                Text {
+                    text: row.source;
+                    x: root.source-x(parent.width);
+                    y: 0px;
+                    width: root.flex-w(parent.width);
+                    height: parent.height;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: #e6e6e9;
+                    font-size: 12px;
+                    Tooltip { text: @markdown("\{row.source}"); }
+                }
+                Text {
+                    text: row.dest;
+                    x: root.dest-x(parent.width);
+                    y: 0px;
+                    width: root.flex-w(parent.width);
+                    height: parent.height;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: #e6e6e9;
+                    font-size: 12px;
+                    Tooltip { text: @markdown("\{row.dest}"); }
+                }
+                Text {
+                    text: row.attempts;
+                    x: root.attempts-x(parent.width);
+                    y: 0px;
+                    width: root.col-attempts-w;
+                    height: parent.height;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    color: #9a9aa2;
+                    font-size: 11px;
+                }
+                Text {
+                    text: row.error;
+                    x: root.error-x(parent.width);
+                    y: 0px;
+                    width: root.col-error-w;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: #d98a8a;
+                    font-size: 11px;
+                    Tooltip { text: @markdown("\{row.error}"); }
+                }
+
+                Button {
+                    text: "✕";
+                    // No per-row cancel in the C++ dialog; terminal rows have
+                    // nothing to cancel, so the button stays hidden there.
+                    visible: row.state != "Completed" && row.state != "Error" && row.state != "Canceled";
+                    x: parent.width - 34px;
+                    y: (parent.height - self.height) / 2;
+                    width: 26px;
+                    height: 22px;
+                    clicked => { root.cancel-requested(row.id); }
+                }
+            }
+        }
+
+        // Footer controls: status line + actions (C++ row 4).
+        HorizontalLayout {
+            spacing: 4px;
+            Text {
+                text: root.status-line;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            Button { text: "Pause"; enabled: root.can-pause-all; clicked => { root.pause-all(); } }
+            Button { text: "Resume"; enabled: root.can-resume-all; clicked => { root.resume-all(); } }
+            Button { text: "Pause selected"; enabled: root.can-pause-selected; clicked => { root.pause-selected(); } }
+            Button { text: "Resume selected"; enabled: root.can-resume-selected; clicked => { root.resume-selected(); } }
+            Button { text: "Cancel all"; enabled: root.can-cancel-all; clicked => { root.cancel-all(); } }
+            Button { text: "Cancel selected"; enabled: root.can-cancel-selected; clicked => { root.cancel-selected(); } }
+            Button { text: "Retry"; enabled: root.can-retry; clicked => { root.retry-all(); } }
+            Button { text: "Clear completed"; enabled: root.can-clear-completed; clicked => { root.clear-completed(); } }
+            Button { text: "Clear failed/canceled"; enabled: root.can-clear-failed-cancelled; clicked => { root.clear-failed-cancelled(); } }
+            Button { text: "Close"; clicked => { root.close-requested(); } }
+        }
+
+        // Footer row 2: speed limits + auto clear (C++ row 5).
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: "Speed:"; vertical-alignment: center; }
+            SpinBox {
+                minimum: 0;
+                maximum: 1000000;
+                value <=> root.speed-value;
+            }
+            Text { text: "KB/s (0 = no limit)"; vertical-alignment: center; color: #9a9aa2; font-size: 11px; }
+            Button {
+                text: "Apply limit";
+                clicked => { root.apply-speed-limit(root.speed-value); }
+            }
+            Button {
+                text: "Limit selected";
+                clicked => { root.limit-selected(); }
+            }
+            Rectangle { width: 16px; } // spacer
+            Text { text: "Auto clear:"; vertical-alignment: center; }
+            ComboBox {
+                model: ["Off", "Completed", "Failed/Canceled", "All finished"];
+                current-index <=> root.auto-clear-mode;
+                selected(value) => {
+                    root.auto-clear-mode = value == "Completed" ? 1
+                        : (value == "Failed/Canceled" ? 2
+                        : (value == "All finished" ? 3 : 0));
+                    root.auto-clear-changed();
+                }
+            }
+            SpinBox {
+                minimum: 1;
+                maximum: 1440;
+                enabled: root.auto-clear-mode != 0;
+                value <=> root.auto-clear-minutes;
+                edited(value) => { root.auto-clear-changed(); }
+            }
+            Text { text: "min"; vertical-alignment: center; }
+        }
+        }
+    }
+}
+
+// One row of the per-row context menu.

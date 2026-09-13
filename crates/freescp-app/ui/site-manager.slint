@@ -1,0 +1,1007 @@
+// Site Manager dialog: list of saved sites (CRUD) with an inline editor.
+// Rust port of ui/SiteManagerDialog.cpp (QTableWidget + ConnectionDialog).
+//
+// NOTE: Window already provides a built-in `visible` property, so it is NOT
+// re-declared here (re-declaring it would be a compile error). Rust code can
+// call `set_visible(...)`, `show()`, or `hide()` on the component handle.
+
+import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, SpinBox } from "std-widgets.slint";
+import { Palette } from "std-widgets.slint";
+
+// One row of the site table (subset of SessionOptions for display).
+export struct SiteRow {
+    id: string,
+    name: string,
+    protocol: string,
+    host: string,
+    username: string,
+}
+
+export component SiteManagerDialog inherits Window {
+    title: @tr("Site Manager");
+    width: 760px;
+    height: 540px;
+
+    // Table model (set from Rust, see src/site_manager.rs).
+    in-out property <[SiteRow]> rows;
+
+    // Inline editor visibility.
+    in-out property <bool> editor-visible;
+
+    // Inline editor fields (mirroring the SessionOptions essentials).
+    in-out property <string> editor-name;
+    in-out property <string> editor-protocol; // storage name: sftp/scp/ftp/ftps/webdav
+    in-out property <string> editor-host;
+    in-out property <int> editor-port;
+    in-out property <string> editor-username;
+    in-out property <string> editor-password;
+    in-out property <string> editor-key-path;
+    in-out property <string> editor-key-passphrase;
+    in-out property <bool> editor-save-credentials: true;
+    in-out property <string> editor-scp-mode: "auto"; // auto | scp-only
+    in-out property <string> editor-webdav-scheme: "https"; // https | http
+    in-out property <int> editor-known-hosts-policy; // 0 strict, 1 accept-new, 2 off
+    in-out property <string> editor-known-hosts-path;
+    in-out property <int> editor-integrity-policy; // 0 off, 1 optional, 2 required
+    in-out property <bool> editor-ftps-verify-peer;
+    in-out property <string> editor-ftps-ca-cert;
+    in-out property <bool> editor-webdav-verify-peer: true;
+    in-out property <string> editor-webdav-ca-cert;
+    in-out property <int> editor-proxy-type; // 0 none, 1 socks5, 2 http-connect
+    in-out property <string> editor-proxy-host;
+    in-out property <int> editor-proxy-port;
+    in-out property <string> editor-proxy-username;
+    in-out property <string> editor-proxy-password;
+    in-out property <string> editor-jump-host;
+    in-out property <int> editor-jump-port: 22;
+    in-out property <bool> editor-jump-enabled;
+    in-out property <string> editor-jump-username;
+    in-out property <string> editor-jump-key-path;
+    // true while adding a new site, false while editing an existing one
+    // (drives the "Add site"/"Edit site" heading).
+    in-out property <bool> editor-mode-is-add: true;
+    // SFTP/SCP share the SSH-specific rows (key path, known_hosts, jump).
+    property <bool> editor-is-ssh: root.editor-protocol == "sftp" || root.editor-protocol == "scp";
+    // Stable UUID of the site being edited; empty while adding.
+    in-out property <string> editing-site-id;
+    // Sort state shown in the header glyphs (kept in sync by Rust).
+    in-out property <int> sort-column: 0;
+    in-out property <bool> sort-ascending: true;
+
+    // Show/hide toggles for the three credential fields (Qt passToggle /
+    // keyPassToggle / proxyPassToggle in ConnectionDialog.cpp).
+    property <bool> show-password: false;
+    property <bool> show-key-passphrase: false;
+    property <bool> show-proxy-password: false;
+
+    // Selection state (kept in-out so Rust can restore/reselect; -1 = none).
+    in-out property <int> current-row: -1;
+    property <int> last-click-row: -1;
+    property <bool> has-selection: root.current-row >= 0 && root.current-row < root.rows.length;
+
+    callback new-requested();
+    callback edit-requested(string);
+    callback delete-requested(string);
+    callback connect-requested(string);
+    // Fired on every row click; the Rust side runs the 400 ms double-click
+    // detection (the timer-based detection below hit a Slint 1.17 codegen
+    // bug where a Timer referenced from a `for` delegate generated
+    // `_self.timer0.restart()` on the delegate component, which has no
+    // timer). The Rust handler re-emits `connect-site-requested` on a
+    // double click.
+    callback site-clicked(int);
+    // Fired only on row double-click (alias of connect-requested, kept separate
+    // so the main-window workstream can wire double-click independently).
+    callback connect-site-requested(string);
+    callback close-requested();
+    // Import the concrete Host aliases from ~/.ssh/config as saved sites
+    // (Rust-only feature; the C++ Site Manager had no import).
+    callback import-ssh-config-requested();
+    callback save-requested();
+    callback editor-cancel-requested();
+    // "Choose…" file browse buttons (field: private-key/known-hosts/ftps-ca/webdav-ca/jump-key).
+    callback browse-path-requested(string);
+    // Fired when the user picks another protocol (Rust resets the port).
+    callback protocol-changed();
+    // Fired when the user picks another proxy type (Rust applies the
+    // jump-host exclusion and the default proxy port, like
+    // ConnectionDialog's proxyType_ currentIndexChanged handler).
+    callback proxy-type-changed();
+    // Fired when the user toggles the jump-host checkbox (Rust resets the
+    // proxy to "Direct", like the jumpEnabled_ toggled handler).
+    callback jump-enabled-changed();
+    // Fired when the user switches the WebDAV scheme (Rust follows the port
+    // 443<->80 when it still holds the previous scheme default).
+    callback webdav-scheme-changed();
+    // Fired from the header cells (0 name, 1 protocol, 2 host, 3 user).
+    callback sort-requested(int);
+
+    function move-selection(delta: int) {
+        if (root.rows.length == 0) {
+            return;
+        }
+        if (root.current-row < 0) {
+            root.current-row = delta > 0 ? 0 : root.rows.length - 1;
+        } else {
+            root.current-row = min(root.rows.length - 1, max(0, root.current-row + delta));
+        }
+        root.ensure-row-visible(root.current-row);
+    }
+
+    // Keeps a row visible (called from Rust after reselect too).
+    public function ensure-row-visible(idx: int) {
+        if (root.rows.length == 0 || idx < 0 || idx >= root.rows.length) {
+            return;
+        }
+        site-list.viewport-y = min(
+            max(0px, idx * 30px - (site-list.height - 30px) / 2),
+            max(0px, root.rows.length * 30px - site-list.height),
+        );
+    }
+
+    pure function protocol-label(storage: string) -> string {
+        if storage == "scp" {
+            return "SCP";
+        }
+        if storage == "ftp" {
+            return "FTP";
+        }
+        if storage == "ftps" {
+            return "FTPS";
+        }
+        if storage == "webdav" {
+            return "WebDAV";
+        }
+        return "SFTP";
+    }
+
+    pure function protocol-storage-name(label: string) -> string {
+        if label == "SCP" {
+            return "scp";
+        }
+        if label == "FTP" {
+            return "ftp";
+        }
+        if label == "FTPS" {
+            return "ftps";
+        }
+        if label == "WebDAV" {
+            return "webdav";
+        }
+        return "sftp";
+    }
+
+    pure function kh-policy-label(value: int) -> string {
+        if value == 1 {
+            return @tr("Accept new (TOFU)");
+        }
+        if value == 2 {
+            return @tr("No verification (double confirmation, expires in 15 min)");
+        }
+        return @tr("Strict");
+    }
+
+    pure function kh-policy-index(label: string) -> int {
+        if label == @tr("Accept new (TOFU)") {
+            return 1;
+        }
+        if label == @tr("No verification (double confirmation, expires in 15 min)") {
+            return 2;
+        }
+        return 0;
+    }
+
+    pure function integrity-label(value: int) -> string {
+        if value == 0 {
+            return @tr("Off (not recommended)");
+        }
+        if value == 2 {
+            return @tr("Required (strict)");
+        }
+        return @tr("Optional (recommended)");
+    }
+
+    pure function integrity-index(label: string) -> int {
+        if label == @tr("Off (not recommended)") {
+            return 0;
+        }
+        if label == @tr("Required (strict)") {
+            return 2;
+        }
+        return 1;
+    }
+
+    pure function proxy-label(value: int) -> string {
+        if value == 1 {
+            return "SOCKS5";
+        }
+        if value == 2 {
+            return "HTTP CONNECT";
+        }
+        return @tr("Direct (no proxy)");
+    }
+
+    pure function proxy-index(label: string) -> int {
+        if label == "SOCKS5" {
+            return 1;
+        }
+        if label == "HTTP CONNECT" {
+            return 2;
+        }
+        return 0;
+    }
+
+    // WebDAV scheme combo: display labels from ConnectionDialog.cpp
+    // ("HTTPS (recommended)" / "HTTP (insecure)") mapped to storage names.
+    pure function webdav-scheme-label(storage: string) -> string {
+        if storage == "http" {
+            return @tr("HTTP (insecure)");
+        }
+        return @tr("HTTPS (recommended)");
+    }
+
+    pure function webdav-scheme-storage(label: string) -> string {
+        if label == @tr("HTTP (insecure)") {
+            return "http";
+        }
+        return "https";
+    }
+
+    // Per-protocol host placeholder (Qt updateProtocolUi setPlaceholderText).
+    pure function host-placeholder(storage: string) -> string {
+        if storage == "scp" {
+            return @tr("scp.example.com");
+        }
+        if storage == "ftp" {
+            return @tr("ftp.example.com");
+        }
+        if storage == "ftps" {
+            return @tr("ftps.example.com");
+        }
+        if storage == "webdav" {
+            return @tr("webdav.example.com");
+        }
+        return @tr("sftp.example.com");
+    }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 10px;
+
+        // Header row (click a header to sort, like the Qt table).
+        HorizontalLayout {
+            spacing: 0px;
+            TouchArea {
+                width: 34%;
+                mouse-cursor: pointer;
+                clicked => { root.sort-requested(0); }
+                HorizontalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: @tr("Name");
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.sort-column == 0 ? (root.sort-ascending ? "▲" : "▼") : "";
+                        font-size: 10px;
+                        vertical-alignment: center;
+                        color: Palette.foreground;
+                    }
+                }
+            }
+            TouchArea {
+                width: 18%;
+                mouse-cursor: pointer;
+                clicked => { root.sort-requested(1); }
+                HorizontalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: @tr("Protocol");
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.sort-column == 1 ? (root.sort-ascending ? "▲" : "▼") : "";
+                        font-size: 10px;
+                        vertical-alignment: center;
+                        color: Palette.foreground;
+                    }
+                }
+            }
+            TouchArea {
+                width: 30%;
+                mouse-cursor: pointer;
+                clicked => { root.sort-requested(2); }
+                HorizontalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: @tr("Host");
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.sort-column == 2 ? (root.sort-ascending ? "▲" : "▼") : "";
+                        font-size: 10px;
+                        vertical-alignment: center;
+                        color: Palette.foreground;
+                    }
+                }
+            }
+            TouchArea {
+                width: 18%;
+                mouse-cursor: pointer;
+                clicked => { root.sort-requested(3); }
+                HorizontalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: @tr("User");
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.sort-column == 3 ? (root.sort-ascending ? "▲" : "▼") : "";
+                        font-size: 10px;
+                        vertical-alignment: center;
+                        color: Palette.foreground;
+                    }
+                }
+            }
+        }
+
+        // Site table (hand-rolled rows so the model stays [SiteRow]).
+        Rectangle {
+            border-width: 1px;
+            border-color: Palette.border;
+            vertical-stretch: 1;
+            clip: true;
+            site-list-scope := FocusScope {
+                width: parent.width;
+                height: parent.height;
+                key-pressed(event) => {
+                    if (event.text == Key.UpArrow) {
+                        root.move-selection(-1);
+                        return accept;
+                    } else if (event.text == Key.DownArrow) {
+                        root.move-selection(1);
+                        return accept;
+                    } else if (event.text == Key.Return) {
+                        if (root.has-selection) {
+                            root.connect-requested(root.rows[root.current-row].name);
+                        }
+                        return accept;
+                    }
+                    reject
+                }
+                site-list := ListView {
+                    for site[idx] in root.rows : Rectangle {
+                        height: 30px;
+                        background: idx == root.current-row
+                            ? Palette.accent-background
+                            : (mod(idx, 2) == 0 ? Palette.background : Palette.alternate-background);
+                        TouchArea {
+                            clicked => {
+                                root.current-row = idx;
+                                // Keyboard navigation (Up/Down/Enter) applies
+                                // while the table has focus.
+                                site-list-scope.focus();
+                                // Double-click detection happens in Rust
+                                // (site_manager::handle_row_click) because the
+                                // Timer-based variant triggered a Slint 1.17
+                                // codegen bug.
+                                root.site-clicked(idx);
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 0px;
+                            Text {
+                                text: site.name;
+                                overflow: elide;
+                                width: 34%;
+                                vertical-alignment: center;
+                                color: idx == root.current-row ? Palette.accent-foreground : Palette.foreground;
+                                Tooltip { text: @markdown("\{site.name}"); }
+                            }
+                            Text {
+                                text: site.protocol;
+                                overflow: elide;
+                                width: 18%;
+                                vertical-alignment: center;
+                                color: idx == root.current-row ? Palette.accent-foreground : Palette.foreground;
+                                Tooltip { text: @markdown("\{site.protocol}"); }
+                            }
+                            Text {
+                                text: site.host;
+                                overflow: elide;
+                                width: 30%;
+                                vertical-alignment: center;
+                                color: idx == root.current-row ? Palette.accent-foreground : Palette.foreground;
+                                Tooltip { text: @markdown("\{site.host}"); }
+                            }
+                            Text {
+                                text: site.username;
+                                overflow: elide;
+                                width: 18%;
+                                vertical-alignment: center;
+                                color: idx == root.current-row ? Palette.accent-foreground : Palette.foreground;
+                                Tooltip { text: @markdown("\{site.username}"); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Inline editor (visible while adding/editing a site).
+        if root.editor-visible : Rectangle {
+            border-width: 1px;
+            border-color: Palette.border;
+            height: 320px;
+            ScrollView {
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 6px;
+                    Text {
+                        text: root.editor-mode-is-add ? @tr("Add site") : @tr("Edit site");
+                        font-weight: 700;
+                    }
+                    GridLayout {
+                        spacing: 6px;
+                        Row {
+                            Text {
+                                text: @tr("Site name:");
+                                width: 190px;
+                                vertical-alignment: center;
+                            }
+                            LineEdit {
+                                text <=> root.editor-name;
+                                placeholder-text: @tr("My server");
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Protocol:");
+                                width: 190px;
+                                vertical-alignment: center;
+                            }
+                            ComboBox {
+                                model: ["SFTP", "SCP", "FTP", "FTPS", "WebDAV"];
+                                current-value: root.protocol-label(root.editor-protocol);
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    // Only fire when the protocol actually
+                                    // changes (Qt currentIndexChanged).
+                                    if (root.editor-protocol != root.protocol-storage-name(value)) {
+                                        root.editor-protocol = root.protocol-storage-name(value);
+                                        root.protocol-changed();
+                                    }
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("SCP mode:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-protocol == "scp";
+                            }
+                            ComboBox {
+                                model: [
+                                    @tr("Automatic (SCP with SFTP fallback)"),
+                                    @tr("SCP only (disable SFTP fallback)"),
+                                ];
+                                current-value: root.editor-scp-mode == "scp-only"
+                                    ? @tr("SCP only (disable SFTP fallback)")
+                                    : @tr("Automatic (SCP with SFTP fallback)");
+                                horizontal-stretch: 1;
+                                visible: root.editor-protocol == "scp";
+                                selected(value) => {
+                                    root.editor-scp-mode = value == @tr("SCP only (disable SFTP fallback)")
+                                        ? "scp-only"
+                                        : "auto";
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Host / Port:");
+                                width: 190px;
+                                vertical-alignment: center;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                LineEdit {
+                                    text <=> root.editor-host;
+                                    placeholder-text: root.host-placeholder(root.editor-protocol);
+                                    horizontal-stretch: 1;
+                                }
+                                SpinBox {
+                                    minimum: 1;
+                                    maximum: 65535;
+                                    value <=> root.editor-port;
+                                    width: 110px;
+                                    Tooltip { text: @markdown("Server port for the selected protocol"); }
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("User:");
+                                width: 190px;
+                                vertical-alignment: center;
+                            }
+                            LineEdit {
+                                text <=> root.editor-username;
+                                placeholder-text: @tr("user");
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Password:");
+                                width: 190px;
+                                vertical-alignment: center;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                LineEdit {
+                                    text <=> root.editor-password;
+                                    placeholder-text: @tr("optional");
+                                    input-type: root.show-password ? InputType.text : InputType.password;
+                                    horizontal-stretch: 1;
+                                }
+                                Button {
+                                    text: root.show-password ? @tr("Hide") : @tr("Show");
+                                    clicked => { root.show-password = !root.show-password; }
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Private key path:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-is-ssh;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                visible: root.editor-is-ssh;
+                                LineEdit {
+                                    text <=> root.editor-key-path;
+                                    placeholder-text: "~/.ssh/id_ed25519";
+                                    horizontal-stretch: 1;
+                                }
+                                Button {
+                                    text: @tr("Choose…");
+                                    clicked => { root.browse-path-requested("private-key"); }
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Key passphrase:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-is-ssh;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                visible: root.editor-is-ssh;
+                                LineEdit {
+                                    text <=> root.editor-key-passphrase;
+                                    placeholder-text: @tr("optional");
+                                    input-type: root.show-key-passphrase ? InputType.text : InputType.password;
+                                    horizontal-stretch: 1;
+                                }
+                                Button {
+                                    text: root.show-key-passphrase ? @tr("Hide") : @tr("Show");
+                                    clicked => { root.show-key-passphrase = !root.show-key-passphrase; }
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Proxy:");
+                                width: 190px;
+                                vertical-alignment: center;
+                            }
+                            ComboBox {
+                                model: [@tr("Direct (no proxy)"), "SOCKS5", "HTTP CONNECT"];
+                                current-value: root.proxy-label(root.editor-proxy-type);
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    root.editor-proxy-type = root.proxy-index(value);
+                                    root.proxy-type-changed();
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Proxy host / port:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-proxy-type > 0;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                visible: root.editor-proxy-type > 0;
+                                LineEdit {
+                                    text <=> root.editor-proxy-host;
+                                    placeholder-text: @tr("proxy.example.com");
+                                    horizontal-stretch: 1;
+                                }
+                                SpinBox {
+                                    minimum: 1;
+                                    maximum: 65535;
+                                    value <=> root.editor-proxy-port;
+                                    width: 110px;
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Proxy user:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-proxy-type > 0;
+                            }
+                            LineEdit {
+                                text <=> root.editor-proxy-username;
+                                placeholder-text: @tr("optional");
+                                horizontal-stretch: 1;
+                                visible: root.editor-proxy-type > 0;
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Proxy password:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-proxy-type > 0;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                visible: root.editor-proxy-type > 0;
+                                LineEdit {
+                                    text <=> root.editor-proxy-password;
+                                    placeholder-text: @tr("optional");
+                                    input-type: root.show-proxy-password ? InputType.text : InputType.password;
+                                    horizontal-stretch: 1;
+                                }
+                                Button {
+                                    text: root.show-proxy-password ? @tr("Hide") : @tr("Show");
+                                    clicked => { root.show-proxy-password = !root.show-proxy-password; }
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "";
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-is-ssh;
+                            }
+                            CheckBox {
+                                text: @tr("Use SSH jump host (bastion)");
+                                checked <=> root.editor-jump-enabled;
+                                horizontal-stretch: 1;
+                                visible: root.editor-is-ssh;
+                                toggled => { root.jump-enabled-changed(); }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Jump host / port:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-is-ssh && root.editor-jump-enabled;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                visible: root.editor-is-ssh && root.editor-jump-enabled;
+                                LineEdit {
+                                    text <=> root.editor-jump-host;
+                                    placeholder-text: @tr("bastion.example.com");
+                                    horizontal-stretch: 1;
+                                }
+                                SpinBox {
+                                    minimum: 1;
+                                    maximum: 65535;
+                                    value <=> root.editor-jump-port;
+                                    width: 110px;
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Jump user:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-is-ssh && root.editor-jump-enabled;
+                            }
+                            LineEdit {
+                                text <=> root.editor-jump-username;
+                                placeholder-text: @tr("optional");
+                                horizontal-stretch: 1;
+                                visible: root.editor-is-ssh && root.editor-jump-enabled;
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Jump private key:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-is-ssh && root.editor-jump-enabled;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                visible: root.editor-is-ssh && root.editor-jump-enabled;
+                                LineEdit {
+                                    text <=> root.editor-jump-key-path;
+                                    placeholder-text: @tr("optional");
+                                    horizontal-stretch: 1;
+                                }
+                                Button {
+                                    text: @tr("Choose…");
+                                    clicked => { root.browse-path-requested("jump-key"); }
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("known_hosts:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-is-ssh;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                visible: root.editor-is-ssh;
+                                LineEdit {
+                                    text <=> root.editor-known-hosts-path;
+                                    placeholder-text: "~/.ssh/known_hosts";
+                                    horizontal-stretch: 1;
+                                }
+                                Button {
+                                    text: @tr("Choose…");
+                                    clicked => { root.browse-path-requested("known-hosts"); }
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Policy:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-is-ssh;
+                            }
+                            ComboBox {
+                                model: [
+                                    @tr("Strict"),
+                                    @tr("Accept new (TOFU)"),
+                                    @tr("No verification (double confirmation, expires in 15 min)"),
+                                ];
+                                current-value: root.kh-policy-label(root.editor-known-hosts-policy);
+                                horizontal-stretch: 1;
+                                visible: root.editor-is-ssh;
+                                selected(value) => {
+                                    root.editor-known-hosts-policy = root.kh-policy-index(value);
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Integrity:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-protocol == "sftp";
+                            }
+                            ComboBox {
+                                model: [
+                                    @tr("Off (not recommended)"),
+                                    @tr("Optional (recommended)"),
+                                    @tr("Required (strict)"),
+                                ];
+                                current-value: root.integrity-label(root.editor-integrity-policy);
+                                horizontal-stretch: 1;
+                                visible: root.editor-protocol == "sftp";
+                                selected(value) => {
+                                    root.editor-integrity-policy = root.integrity-index(value);
+                                }
+                                Tooltip {
+                                    text: @markdown("Checksum verification for resume and final transfer validation.");
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "";
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-protocol == "ftps";
+                            }
+                            CheckBox {
+                                text: @tr("Verify FTPS server certificate (recommended)");
+                                checked <=> root.editor-ftps-verify-peer;
+                                horizontal-stretch: 1;
+                                visible: root.editor-protocol == "ftps";
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("FTPS CA bundle:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-protocol == "ftps";
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                visible: root.editor-protocol == "ftps";
+                                LineEdit {
+                                    text <=> root.editor-ftps-ca-cert;
+                                    placeholder-text: @tr("System CA bundle");
+                                    horizontal-stretch: 1;
+                                }
+                                Button {
+                                    text: @tr("Choose…");
+                                    clicked => { root.browse-path-requested("ftps-ca"); }
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("WebDAV scheme:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-protocol == "webdav";
+                            }
+                            ComboBox {
+                                model: [
+                                    @tr("HTTPS (recommended)"),
+                                    @tr("HTTP (insecure)"),
+                                ];
+                                current-value: root.webdav-scheme-label(root.editor-webdav-scheme);
+                                horizontal-stretch: 1;
+                                visible: root.editor-protocol == "webdav";
+                                selected(value) => {
+                                    root.editor-webdav-scheme = root.webdav-scheme-storage(value);
+                                    root.webdav-scheme-changed();
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "";
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-protocol == "webdav" && root.editor-webdav-scheme == "https";
+                            }
+                            CheckBox {
+                                text: @tr("Verify WebDAV server certificate (recommended)");
+                                checked <=> root.editor-webdav-verify-peer;
+                                horizontal-stretch: 1;
+                                visible: root.editor-protocol == "webdav" && root.editor-webdav-scheme == "https";
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("WebDAV CA bundle:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-protocol == "webdav" && root.editor-webdav-scheme == "https";
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                visible: root.editor-protocol == "webdav" && root.editor-webdav-scheme == "https";
+                                LineEdit {
+                                    text <=> root.editor-webdav-ca-cert;
+                                    placeholder-text: @tr("System CA bundle");
+                                    horizontal-stretch: 1;
+                                }
+                                Button {
+                                    text: @tr("Choose…");
+                                    clicked => { root.browse-path-requested("webdav-ca"); }
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "";
+                                width: 190px;
+                                vertical-alignment: center;
+                            }
+                            CheckBox {
+                                text: @tr("Save passwords/passphrases");
+                                checked <=> root.editor-save-credentials;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        Button {
+                            text: @tr("Save");
+                            primary: true;
+                            clicked => {
+                                root.save-requested();
+                            }
+                        }
+                        Button {
+                            text: @tr("Cancel");
+                            clicked => {
+                                root.editor-cancel-requested();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Action buttons.
+        HorizontalLayout {
+            Button {
+                text: @tr("Add");
+                icon: @image-url("../../../assets/icons/action-new-file.svg");
+                clicked => {
+                    root.new-requested();
+                }
+            }
+            Button {
+                text: @tr("Edit");
+                icon: @image-url("../../../assets/icons/action-rename.svg");
+                enabled: root.has-selection;
+                clicked => {
+                    if root.has-selection {
+                        root.edit-requested(root.rows[root.current-row].name);
+                    }
+                }
+            }
+            Button {
+                text: @tr("Delete");
+                icon: @image-url("../../../assets/icons/action-delete.svg");
+                enabled: root.has-selection;
+                clicked => {
+                    if root.has-selection {
+                        root.delete-requested(root.rows[root.current-row].name);
+                    }
+                }
+            }
+            Button {
+                text: @tr("Import SSH config");
+                clicked => {
+                    root.import-ssh-config-requested();
+                }
+            }
+            Button {
+                text: @tr("Connect");
+                icon: @image-url("../../../assets/icons/action-connect.svg");
+                enabled: root.has-selection;
+                clicked => {
+                    if root.has-selection {
+                        root.connect-requested(root.rows[root.current-row].name);
+                    }
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: @tr("Close");
+                clicked => {
+                    root.close-requested();
+                }
+            }
+        }
+    }
+}

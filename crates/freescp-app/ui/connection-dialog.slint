@@ -1,0 +1,618 @@
+// Connection dialog plus the session-security sub-dialogs (host-key TOFU,
+// keyboard-interactive prompt, "no verification" risk confirmation, alerts).
+//
+// Slint port of ui/ConnectionDialog.cpp and the dialog parts of
+// ui/MainWindowConnection.cpp (TOFU box, keyboard-interactive QInputDialog,
+// no-verification double confirmation, UiAlerts boxes).
+//
+// Rust counterpart: crates/freescp-app/src/connect.rs.
+//
+// Property contract (connect.rs reads/writes every `in-out` property):
+// - protocol:         0 SFTP, 1 SCP, 2 FTP, 3 FTPS, 4 WebDAV
+// - auth-mode:        0 password, 1 key (SSH protocols only)
+// - proxy-type:       0 None, 1 SOCKS5, 2 HTTP CONNECT
+// - known-hosts-policy: 0 Strict, 1 Accept new (TOFU), 2 Off
+// - scp-mode:         0 Auto (SCP with SFTP fallback), 1 SCP only
+// - integrity:        0 Off, 1 Optional, 2 Required
+// - webdav-https:     true HTTPS (recommended), false HTTP (insecure)
+// Extra UI-state properties used by connect.rs but not part of the session
+// mapping contract: connecting, status-message, webdav-scheme (int mirror of
+// webdav-https because ComboBox current-index is an int).
+
+import { Button, CheckBox, ComboBox, LineEdit, ProgressIndicator, ScrollView, SpinBox } from "std-widgets.slint";
+
+export component ConnectionDialog inherits Window {
+    title: "Connect";
+    width: 560px;
+    height: 500px;
+
+    // ---- Session fields (contract) ----------------------------------------
+    in-out property <int> protocol: 0;
+    in-out property <string> host: "";
+    in-out property <int> port: 22;
+    in-out property <string> username: "";
+    in-out property <int> auth-mode: 0;
+    in-out property <string> password: "";
+    in-out property <string> private-key-path: "";
+    in-out property <string> private-key-passphrase: "";
+    in-out property <bool> save-site: true;
+    in-out property <bool> save-credentials: false;
+    in-out property <string> site-name: "";
+
+    // ---- Advanced group (contract) ----------------------------------------
+    in-out property <int> proxy-type: 0;
+    in-out property <string> proxy-host: "";
+    in-out property <int> proxy-port: 1080;
+    in-out property <string> proxy-username: "";
+    in-out property <string> proxy-password: "";
+    in-out property <bool> jump-enabled: false;
+    in-out property <string> jump-host: "";
+    in-out property <int> jump-port: 22;
+    in-out property <string> jump-username: "";
+    in-out property <string> jump-key-path: "";
+    in-out property <string> known-hosts-path: "";
+    in-out property <int> known-hosts-policy: 0;
+    in-out property <int> scp-mode: 0;
+    in-out property <int> integrity: 1;
+    in-out property <bool> ftps-verify-peer: true;
+    in-out property <string> ftps-ca-path: "";
+    in-out property <bool> webdav-https: true;
+    in-out property <bool> webdav-verify-peer: true;
+    in-out property <string> webdav-ca-path: "";
+
+    // ---- UI state (not part of the session mapping) ------------------------
+    in-out property <bool> connecting: false;
+    in-out property <string> status-message: "";
+    property <bool> advanced-expanded: false;
+    property <bool> show-password: false;
+    property <bool> show-key-passphrase: false;
+    property <bool> show-proxy-password: false;
+    in-out property <int> webdav-scheme: 0; // 0 HTTPS, 1 HTTP
+
+    // ---- Callbacks (wired by connect.rs) -----------------------------------
+    callback connect-requested();
+    callback close-requested();
+    callback cancel-requested();
+    callback protocol-changed();
+    callback webdav-scheme-changed();
+    callback proxy-type-changed();
+    callback jump-enabled-changed();
+    callback browse-path-requested(string);
+
+    // Fire the Rust-side default-port/visibility logic on user selection.
+    changed protocol => { root.protocol-changed(); }
+    changed proxy-type => { root.proxy-type-changed(); }
+    changed jump-enabled => { root.jump-enabled-changed(); }
+
+    // Saving credentials only makes sense together with saving the site
+    // (C++ ConnectionDialog.cpp: saveCredentials_ is disabled — and cleared —
+    // when "Save to saved sites" is unchecked).
+    changed save-site => {
+        if (!root.save-site) { root.save-credentials = false; }
+    }
+
+    // Keep the ComboBox mirror and the bool property in sync (idempotent:
+    // setting an equal value does not re-fire `changed`).
+    changed webdav-https => { root.webdav-scheme = root.webdav-https ? 0 : 1; }
+    changed webdav-scheme => {
+        root.webdav-https = root.webdav-scheme == 0;
+        root.webdav-scheme-changed();
+    }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+
+        ScrollView {
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                width: parent.width;
+
+                GridLayout {
+                    spacing: 6px;
+                    width: parent.width;
+                    padding: 2px;
+
+                    Text { text: "Site name:"; vertical-alignment: center; visible: root.save-site; }
+                    LineEdit {
+                        text <=> root.site-name;
+                        placeholder-text: "My server";
+                        width: 340px;
+                        visible: root.save-site;
+                    }
+                    Text { text: ""; }
+                    CheckBox {
+                        text: "Save to saved sites";
+                        checked <=> root.save-site;
+                    }
+                    Text { text: ""; }
+                    CheckBox {
+                        text: "Save passwords/passphrases";
+                        checked <=> root.save-credentials;
+                        enabled: root.save-site;
+                    }
+                    Text { text: "Protocol:"; vertical-alignment: center; }
+                    ComboBox {
+                        model: ["SFTP", "SCP", "FTP", "FTPS", "WebDAV"];
+                        current-index <=> root.protocol;
+                        width: 340px;
+                    }
+                    Text { text: "Host / Port:"; vertical-alignment: center; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        LineEdit {
+                            text <=> root.host;
+                            placeholder-text: root.protocol == 0 ? "sftp.example.com"
+                                : root.protocol == 1 ? "scp.example.com"
+                                : root.protocol == 2 ? "ftp.example.com"
+                                : root.protocol == 3 ? "ftps.example.com"
+                                : "webdav.example.com";
+                            horizontal-stretch: 1;
+                            width: 240px;
+                        }
+                        SpinBox {
+                            value <=> root.port;
+                            minimum: 1;
+                            maximum: 65535;
+                            width: 100px;
+                        }
+                    }
+                    Text { text: "User:"; vertical-alignment: center; }
+                    LineEdit {
+                        text <=> root.username;
+                        placeholder-text: "user";
+                        width: 340px;
+                    }
+                    Text { text: "Authentication:"; vertical-alignment: center; visible: root.protocol <= 1; }
+                    ComboBox {
+                        model: ["Password", "Private key"];
+                        current-index <=> root.auth-mode;
+                        width: 340px;
+                        visible: root.protocol <= 1;
+                    }
+                    Text { text: "Password:"; vertical-alignment: center; visible: root.protocol >= 2 || root.auth-mode == 0; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        visible: root.protocol >= 2 || root.auth-mode == 0;
+                        LineEdit {
+                            text <=> root.password;
+                            placeholder-text: "optional";
+                            input-type: root.show-password ? InputType.text : InputType.password;
+                            horizontal-stretch: 1;
+                            width: 300px;
+                        }
+                        Button {
+                            text: root.show-password ? "Hide" : "Show";
+                            clicked => { root.show-password = !root.show-password; }
+                        }
+                    }
+                    Text { text: "Private key path:"; vertical-alignment: center; visible: root.protocol <= 1 && root.auth-mode == 1; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        visible: root.protocol <= 1 && root.auth-mode == 1;
+                        LineEdit {
+                            text <=> root.private-key-path;
+                            placeholder-text: "~/.ssh/id_ed25519";
+                            horizontal-stretch: 1;
+                            width: 270px;
+                        }
+                        Button {
+                            text: "Choose…";
+                            clicked => { root.browse-path-requested("private-key"); }
+                        }
+                    }
+                    Text { text: "Key passphrase:"; vertical-alignment: center; visible: root.protocol <= 1 && root.auth-mode == 1; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        visible: root.protocol <= 1 && root.auth-mode == 1;
+                        LineEdit {
+                            text <=> root.private-key-passphrase;
+                            placeholder-text: "optional";
+                            input-type: root.show-key-passphrase ? InputType.text : InputType.password;
+                            horizontal-stretch: 1;
+                            width: 300px;
+                        }
+                        Button {
+                            text: root.show-key-passphrase ? "Hide" : "Show";
+                            clicked => { root.show-key-passphrase = !root.show-key-passphrase; }
+                        }
+                    }
+                    Text { text: "SCP mode:"; vertical-alignment: center; visible: root.protocol == 1; }
+                    ComboBox {
+                        model: ["Automatic (SCP with SFTP fallback)", "SCP only (disable SFTP fallback)"];
+                        current-index <=> root.scp-mode;
+                        width: 340px;
+                        visible: root.protocol == 1;
+                    }
+                }
+
+                Button {
+                    text: root.advanced-expanded ? "Advanced ▴" : "Advanced ▾";
+                    clicked => { root.advanced-expanded = !root.advanced-expanded; }
+                }
+
+                if root.advanced-expanded : GridLayout {
+                    spacing: 6px;
+                    width: parent.width;
+                    padding: 2px;
+
+                    Text { text: "Proxy:"; vertical-alignment: center; }
+                    ComboBox {
+                        model: ["Direct (no proxy)", "SOCKS5", "HTTP CONNECT"];
+                        current-index <=> root.proxy-type;
+                        width: 340px;
+                    }
+                    Text { text: "Proxy host / port:"; vertical-alignment: center; visible: root.proxy-type != 0; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        visible: root.proxy-type != 0;
+                        LineEdit {
+                            text <=> root.proxy-host;
+                            placeholder-text: "proxy.example.com";
+                            horizontal-stretch: 1;
+                            width: 240px;
+                        }
+                        SpinBox {
+                            value <=> root.proxy-port;
+                            minimum: 1;
+                            maximum: 65535;
+                            width: 100px;
+                        }
+                    }
+                    Text { text: "Proxy user:"; vertical-alignment: center; visible: root.proxy-type != 0; }
+                    LineEdit {
+                        text <=> root.proxy-username;
+                        placeholder-text: "optional";
+                        width: 340px;
+                        visible: root.proxy-type != 0;
+                    }
+                    Text { text: "Proxy password:"; vertical-alignment: center; visible: root.proxy-type != 0; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        visible: root.proxy-type != 0;
+                        LineEdit {
+                            text <=> root.proxy-password;
+                            placeholder-text: "optional";
+                            input-type: root.show-proxy-password ? InputType.text : InputType.password;
+                            horizontal-stretch: 1;
+                            width: 300px;
+                        }
+                        Button {
+                            text: root.show-proxy-password ? "Hide" : "Show";
+                            clicked => { root.show-proxy-password = !root.show-proxy-password; }
+                        }
+                    }
+                    Text { text: ""; visible: root.protocol <= 1; }
+                    CheckBox {
+                        text: "Use SSH jump host (bastion)";
+                        checked <=> root.jump-enabled;
+                        visible: root.protocol <= 1;
+                    }
+                    Text { text: "Jump host / port:"; vertical-alignment: center; visible: root.protocol <= 1 && root.jump-enabled; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        visible: root.protocol <= 1 && root.jump-enabled;
+                        LineEdit {
+                            text <=> root.jump-host;
+                            placeholder-text: "bastion.example.com";
+                            horizontal-stretch: 1;
+                            width: 240px;
+                        }
+                        SpinBox {
+                            value <=> root.jump-port;
+                            minimum: 1;
+                            maximum: 65535;
+                            width: 100px;
+                        }
+                    }
+                    Text { text: "Jump user:"; vertical-alignment: center; visible: root.protocol <= 1 && root.jump-enabled; }
+                    LineEdit {
+                        text <=> root.jump-username;
+                        placeholder-text: "optional";
+                        width: 340px;
+                        visible: root.protocol <= 1 && root.jump-enabled;
+                    }
+                    Text { text: "Jump private key:"; vertical-alignment: center; visible: root.protocol <= 1 && root.jump-enabled; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        visible: root.protocol <= 1 && root.jump-enabled;
+                        LineEdit {
+                            text <=> root.jump-key-path;
+                            placeholder-text: "optional";
+                            horizontal-stretch: 1;
+                            width: 270px;
+                        }
+                        Button {
+                            text: "Choose…";
+                            clicked => { root.browse-path-requested("jump-key"); }
+                        }
+                    }
+                    Text { text: "known_hosts:"; vertical-alignment: center; visible: root.protocol <= 1; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        visible: root.protocol <= 1;
+                        LineEdit {
+                            text <=> root.known-hosts-path;
+                            placeholder-text: "~/.ssh/known_hosts";
+                            horizontal-stretch: 1;
+                            width: 270px;
+                        }
+                        Button {
+                            text: "Choose…";
+                            clicked => { root.browse-path-requested("known-hosts"); }
+                        }
+                    }
+                    Text { text: "Policy:"; vertical-alignment: center; visible: root.protocol <= 1; }
+                    ComboBox {
+                        model: ["Strict", "Accept new (TOFU)", "No verification (double confirmation, expires in 15 min)"];
+                        current-index <=> root.known-hosts-policy;
+                        width: 340px;
+                        visible: root.protocol <= 1;
+                    }
+                    Text { text: "Integrity:"; vertical-alignment: center; visible: root.protocol == 0; }
+                    ComboBox {
+                        model: ["Off (not recommended)", "Optional (recommended)", "Required (strict)"];
+                        current-index <=> root.integrity;
+                        width: 340px;
+                        visible: root.protocol == 0;
+                    }
+                    Text { text: ""; visible: root.protocol == 3; }
+                    CheckBox {
+                        text: "Verify FTPS server certificate (recommended)";
+                        checked <=> root.ftps-verify-peer;
+                        visible: root.protocol == 3;
+                    }
+                    Text { text: "FTPS CA bundle:"; vertical-alignment: center; visible: root.protocol == 3; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        visible: root.protocol == 3;
+                        LineEdit {
+                            text <=> root.ftps-ca-path;
+                            placeholder-text: "System CA bundle";
+                            horizontal-stretch: 1;
+                            width: 270px;
+                        }
+                        Button {
+                            text: "Choose…";
+                            clicked => { root.browse-path-requested("ftps-ca"); }
+                        }
+                    }
+                    Text { text: "WebDAV scheme:"; vertical-alignment: center; visible: root.protocol == 4; }
+                    ComboBox {
+                        model: ["HTTPS (recommended)", "HTTP (insecure)"];
+                        current-index <=> root.webdav-scheme;
+                        width: 340px;
+                        visible: root.protocol == 4;
+                    }
+                    Text { text: ""; visible: root.protocol == 4 && root.webdav-https; }
+                    CheckBox {
+                        text: "Verify WebDAV server certificate (recommended)";
+                        checked <=> root.webdav-verify-peer;
+                        visible: root.protocol == 4 && root.webdav-https;
+                    }
+                    Text { text: "WebDAV CA bundle:"; vertical-alignment: center; visible: root.protocol == 4 && root.webdav-https; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        visible: root.protocol == 4 && root.webdav-https;
+                        LineEdit {
+                            text <=> root.webdav-ca-path;
+                            placeholder-text: "System CA bundle";
+                            horizontal-stretch: 1;
+                            width: 270px;
+                        }
+                        Button {
+                            text: "Choose…";
+                            clicked => { root.browse-path-requested("webdav-ca"); }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            ProgressIndicator {
+                visible: root.connecting;
+                indeterminate: true;
+                width: 18px;
+                height: 18px;
+            }
+            Text {
+                text: root.status-message;
+                visible: root.status-message != "";
+                vertical-alignment: center;
+            }
+            Rectangle { } // spacer: pushes the buttons to the right
+            Button {
+                text: root.connecting ? "Cancel connection" : "Cancel";
+                clicked => {
+                    if root.connecting {
+                        root.cancel-requested();
+                    } else {
+                        root.close-requested();
+                    }
+                }
+            }
+            Button {
+                text: "Connect";
+                primary: true;
+                enabled: !root.connecting;
+                clicked => { root.connect-requested(); }
+            }
+        }
+    }
+}
+
+// Host-key TOFU confirmation. Shown by connect.rs from the (blocking)
+// host-key callback running on a tokio worker thread; the button handlers
+// resolve an mpsc channel that the callback is blocked on, mirroring the
+// C++ condition-variable wait in MainWindow::confirmHostKeyUI.
+export component HostKeyDialog inherits Window {
+    title: "Confirm SSH fingerprint";
+    width: 520px;
+    height: 300px;
+
+    in-out property <string> host: "";
+    in-out property <string> algorithm: "";
+    in-out property <string> fingerprint: "";
+    in-out property <bool> can-save: false;
+
+    callback accept-save();
+    callback accept-once();
+    callback reject();
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text { text: "Connect to " + root.host; font-weight: 600; wrap: word-wrap; }
+        Text { text: "Algorithm: " + root.algorithm; wrap: word-wrap; }
+        Text { text: "Fingerprint: " + root.fingerprint; wrap: word-wrap; font-family: "monospace"; }
+        Text {
+            text: root.can-save
+                ? "Trust and save to known_hosts?"
+                : "Fingerprint cannot be saved. Connection allowed only this time.";
+            wrap: word-wrap;
+        }
+        Rectangle { } // spacer
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { } // spacer: right-align the buttons
+            if root.can-save : Button {
+                text: "Accept and Save";
+                primary: true;
+                clicked => { root.accept-save(); }
+            }
+            if !root.can-save : Button {
+                text: "Accept once";
+                primary: true;
+                clicked => { root.accept-once(); }
+            }
+            Button {
+                text: "Cancel";
+                clicked => { root.reject(); }
+            }
+        }
+    }
+}
+
+// Single-field password prompt for keyboard-interactive auth (OTP/2FA,
+// password re-query, generic info). Port of the QInputDialog uses in
+// MainWindowConnection.cpp's keyboard_interactive_cb.
+export component KbdIntPromptDialog inherits Window {
+    in-out property <string> title-text: "Password required";
+    in-out property <string> name: "";
+    in-out property <string> instruction: "";
+    in-out property <string> prompt: "";
+    in-out property <string> answer: "";
+    // Generic keyboard-interactive prompts use normal echo; only password /
+    // passphrase / OTP prompts are masked (MainWindowConnection.cpp).
+    in property <bool> mask-input: true;
+
+    callback accepted();
+    callback rejected();
+
+    title: root.title-text;
+    width: 500px;
+    height: 300px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text { text: root.name; font-weight: 600; wrap: word-wrap; visible: root.name != ""; }
+        Text { text: root.instruction; wrap: word-wrap; visible: root.instruction != ""; }
+        Text { text: root.prompt; wrap: word-wrap; }
+        LineEdit { text <=> root.answer; input-type: root.mask-input ? InputType.password : InputType.text; }
+        Rectangle { } // spacer
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { } // spacer: right-align the buttons
+            Button { text: "OK"; primary: true; clicked => { root.accepted(); } }
+            Button { text: "Cancel"; clicked => { root.rejected(); } }
+        }
+    }
+}
+
+// "No verification" policy double confirmation: the user must type the token
+// exactly (C++ used a warning box + a QInputDialog; combined into one dialog
+// with an inline token field).
+export component ConfirmTextDialog inherits Window {
+    in-out property <string> title-text: "Critical security risk";
+    in-out property <string> message: "";
+    in-out property <string> confirm-token: "UNSAFE";
+    in-out property <string> entered-text: "";
+
+    callback confirmed();
+    callback rejected();
+
+    title: root.title-text;
+    width: 520px;
+    height: 340px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text { text: root.message; wrap: word-wrap; }
+        LineEdit {
+            text <=> root.entered-text;
+            placeholder-text: "Type " + root.confirm-token;
+        }
+        Rectangle { } // spacer
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { } // spacer: right-align the buttons
+            Button {
+                text: "Continue";
+                primary: true;
+                enabled: root.entered-text == root.confirm-token;
+                clicked => { root.confirmed(); }
+            }
+            Button { text: "Cancel"; clicked => { root.rejected(); } }
+        }
+    }
+}
+
+// Minimal modal-ish alert box (port of UiAlerts::critical/warning/information
+// usage in the connect path).
+export component AlertDialog inherits Window {
+    in-out property <string> title-text: "FreeSCP";
+    in-out property <string> message: "";
+    // In confirm mode the dialog shows Yes/No labels and fires `cancel` for
+    // the secondary button (used by blocking confirmations posted to the
+    // event loop, mirroring QMessageBox::question).
+    in property <bool> confirm-mode: false;
+    in property <string> yes-text: "Yes";
+    in property <string> no-text: "No";
+
+    callback ok();
+    callback cancel();
+
+    title: root.title-text;
+    width: 440px;
+    height: 220px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text { text: root.message; wrap: word-wrap; }
+        Rectangle { } // spacer
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { } // spacer: right-align the buttons
+            Button {
+                text: root.confirm-mode ? root.yes-text : "OK";
+                primary: true;
+                clicked => { root.ok(); }
+            }
+            Button {
+                text: root.no-text;
+                visible: root.confirm-mode;
+                clicked => { root.cancel(); }
+            }
+        }
+    }
+}

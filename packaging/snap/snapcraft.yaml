@@ -1,0 +1,68 @@
+# FreeSCP Snap manifest (Rust rewrite, snapcraft 8 / core24)
+#
+# The rust plugin builds the freescp-app crate from the Cargo workspace and
+# installs its binaries into $SNAPCRAFT_PART_INSTALL/bin. All network backends
+# are pure Rust (russh, suppaftp, reqwest+rustls), so the legacy libssh2/libssl
+# build-packages and the Qt (kde-neon-6) extension are gone; stage-packages now
+# only carry the shared libraries Slint loads at runtime.
+
+name: freescp
+base: core24
+version: "0.9.0"
+summary: Two-panel SFTP client focused on simplicity and security
+description: |
+  Two-panel SFTP client focused on simplicity and security
+grade: stable
+confinement: strict
+icon: icon.png
+
+apps:
+  freescp:
+    command: bin/freescp-app
+    desktop: usr/share/applications/freescp-snap.desktop
+    plugs:
+      - home
+      - network
+      - network-bind
+      - removable-media
+      - password-manager-service
+      - opengl
+
+parts:
+  freescp:
+    plugin: rust
+    source: ../..
+    rust-path:
+      - crates/freescp-app
+    build-packages:
+      - pkg-config
+      - libssl-dev
+      - libxkbcommon-dev
+      - libxkbcommon-x11-dev
+      - libfontconfig1-dev
+      - libgtk-3-dev
+      - libgl1-mesa-dev
+      - libxcb1-dev
+      - libxcb-render0-dev
+      - libxcb-shape0-dev
+      - libxcb-xfixes0-dev
+    stage-packages:
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libfontconfig1
+      - libxcb1
+      - libxcb-render0
+      - libxcb-shape0
+      - libxcb-xfixes0
+      - libgtk-3-0
+    override-build: |
+      craftctl default
+      # Desktop entry must exec the Rust binary (asset still says openscp_hello).
+      sed 's#^Exec=.*#Exec=freescp-app#' \
+        "${CRAFT_PROJECT_DIR}/freescp-snap.desktop" \
+        > "${CRAFT_PART_INSTALL}/usr/share/applications/freescp-snap.desktop"
+      # About-dialog credits text: the app looks for docs/ABOUT_LIBRARIES_<LANG>.txt
+      # next to $SNAP/bin/freescp-app and in $SNAP (settings::docs_search_bases).
+      install -d "${CRAFT_PART_INSTALL}/docs"
+      install -m644 "${CRAFT_PROJECT_DIR}/docs/ABOUT_LIBRARIES_"*.txt \
+        "${CRAFT_PART_INSTALL}/docs/"

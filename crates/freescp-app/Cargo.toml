@@ -1,0 +1,46 @@
+[package]
+name = "freescp-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FreeSCP desktop application (Slint UI)"
+
+[build-dependencies]
+slint-build.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[dependencies]
+slint.workspace = true
+rfd.workspace = true
+freescp-core = { path = "../freescp-core" }
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+dirs.workspace = true
+keyring.workspace = true
+walkdir.workspace = true
+filetime.workspace = true
+chrono.workspace = true
+regex.workspace = true
+sys-locale.workspace = true
+arboard.workspace = true
+mime_guess = "2.0.5"
+notify = "8.2.0"
+
+[dev-dependencies]
+i-slint-backend-testing = "=1.17.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7.0"
+
+# The app drives gettext itself to pick the `UI/language` catalog: gettext only
+# honors `LANGUAGE` when the process locale is a real locale, so the startup
+# code verifies the locale with `setlocale` (see `install_ui_locale`).
+[target.'cfg(unix)'.dependencies]
+gettext-rs = { version = "0.7.1", features = ["gettext-system"] }

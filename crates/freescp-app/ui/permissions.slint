@@ -1,0 +1,238 @@
+// Permissions dialog for a remote entry — Slint port of the C++
+// `PermissionsDialog` (ui/PermissionsDialog.cpp). Owned by the remote-panel
+// workstream.
+//
+// Contract for the sibling main-window workstream:
+// - `mode` (in-out, int): 0o777 permission bits shown/edited by the dialog.
+// - `path` (in-out, string): entry shown in the header line.
+// - `recursive` (in-out, bool): "Apply recursively to subfolders" checkbox.
+// - `apply-requested()`: emitted when the user confirms the change; read
+//   `mode` from Rust at that point.
+// - `close-requested()`: emitted when the user cancels (also wired to the
+//   title-bar close where the Slint runtime routes it there).
+//
+// Octal <-> checkbox sync mirrors the C++ logic: checkboxes are the source
+// of truth, `mode` tracks them for the Rust side, and programmatic `mode`
+// changes (e.g. `set_mode()` before show, or a preset selection) update the
+// checkboxes through the internal `*-bit` mirror properties, guarded by
+// `syncing` like the C++ QSignalBlocker.
+
+import { Button, CheckBox, ComboBox } from "std-widgets.slint";
+
+export component PermissionsDialog inherits Window {
+    in-out property <int> mode: 0;
+    in-out property <string> path: "";
+    in-out property <bool> recursive: false;
+
+    callback apply-requested();
+    callback close-requested();
+
+    // Internal mirror of the 9 checkboxes. Mirrors keep every handler free
+    // of cross-element references (Slint only resolves elements declared
+    // earlier in the file), and let `changed mode` re-sync checkboxes.
+    property <bool> syncing: false;
+    property <bool> ur-bit: false;
+    property <bool> uw-bit: false;
+    property <bool> ux-bit: false;
+    property <bool> gr-bit: false;
+    property <bool> gw-bit: false;
+    property <bool> gx-bit: false;
+    property <bool> or-bit: false;
+    property <bool> ow-bit: false;
+    property <bool> ox-bit: false;
+
+    width: 440px;
+    height: 430px;
+    title: "Change permissions";
+
+    // 0o400=256 0o200=128 0o100=64 0o040=32 0o020=16 0o010=8 0o004=4 0o002=2 0o001=1
+    pure function compose-mode(ur_: bool, uw_: bool, ux_: bool, gr_: bool, gw_: bool, gx_: bool, or_: bool, ow_: bool, ox_: bool) -> int {
+        return (ur_ ? 256 : 0) + (uw_ ? 128 : 0) + (ux_ ? 64 : 0)
+            + (gr_ ? 32 : 0) + (gw_ ? 16 : 0) + (gx_ ? 8 : 0)
+            + (or_ ? 4 : 0) + (ow_ ? 2 : 0) + (ox_ ? 1 : 0);
+    }
+
+    pure function octal-digits(m: int) -> string {
+        return "" + Math.mod(m / 64, 8) + Math.mod(m / 8, 8) + Math.mod(m, 8);
+    }
+
+    // Slint has no bitwise operators; test bit `bit` (a power of two) via
+    // floor division and modulo.
+    pure function bit-is-set(value: int, bit: int) -> bool {
+        return Math.mod(Math.floor(value / bit), 2) == 1;
+    }
+
+    // Presets mirror the C++ combo: Custom, 644, 755, 600, 700, 664, 775.
+    pure function preset-index(m: int) -> int {
+        if (m == 420) { return 1; }
+        if (m == 493) { return 2; }
+        if (m == 384) { return 3; }
+        if (m == 448) { return 4; }
+        if (m == 436) { return 5; }
+        if (m == 509) { return 6; }
+        return 0;
+    }
+
+    pure function preset-mode(i: int) -> int {
+        if (i == 1) { return 420; }
+        if (i == 2) { return 493; }
+        if (i == 3) { return 384; }
+        if (i == 4) { return 448; }
+        if (i == 5) { return 436; }
+        if (i == 6) { return 509; }
+        return 0;
+    }
+
+    // Programmatic mode changes (set_mode() from Rust, preset selection)
+    // push the bits into the checkboxes through their bindings.
+    changed mode => {
+        if self.syncing { return; }
+        self.syncing = true;
+        self.ur-bit = bit-is-set(self.mode, 256);
+        self.uw-bit = bit-is-set(self.mode, 128);
+        self.ux-bit = bit-is-set(self.mode, 64);
+        self.gr-bit = bit-is-set(self.mode, 32);
+        self.gw-bit = bit-is-set(self.mode, 16);
+        self.gx-bit = bit-is-set(self.mode, 8);
+        self.or-bit = bit-is-set(self.mode, 4);
+        self.ow-bit = bit-is-set(self.mode, 2);
+        self.ox-bit = bit-is-set(self.mode, 1);
+        self.syncing = false;
+    }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 10px;
+
+        Text {
+            text: root.path == "" ? "Change permissions" : "Permissions for: " + root.path;
+            font-weight: 600;
+            wrap: word-wrap;
+        }
+
+        GridLayout {
+            spacing: 8px;
+
+            Text { row: 0; col: 1; horizontal-alignment: center; text: "User"; }
+            Text { row: 0; col: 2; horizontal-alignment: center; text: "Group"; }
+            Text { row: 0; col: 3; horizontal-alignment: center; text: "Others"; }
+
+            Text { row: 1; col: 0; vertical-alignment: center; text: "Read"; }
+            ur := CheckBox {
+                row: 1; col: 1;                checked: root.ur-bit;
+                toggled => {
+                    if !root.syncing { root.ur-bit = self.checked; }
+                    root.mode = compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit);
+                }
+            }
+            gr := CheckBox {
+                row: 1; col: 2;                checked: root.gr-bit;
+                toggled => {
+                    if !root.syncing { root.gr-bit = self.checked; }
+                    root.mode = compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit);
+                }
+            }
+            or := CheckBox {
+                row: 1; col: 3;                checked: root.or-bit;
+                toggled => {
+                    if !root.syncing { root.or-bit = self.checked; }
+                    root.mode = compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit);
+                }
+            }
+
+            Text { row: 2; col: 0; vertical-alignment: center; text: "Write"; }
+            uw := CheckBox {
+                row: 2; col: 1;                checked: root.uw-bit;
+                toggled => {
+                    if !root.syncing { root.uw-bit = self.checked; }
+                    root.mode = compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit);
+                }
+            }
+            gw := CheckBox {
+                row: 2; col: 2;                checked: root.gw-bit;
+                toggled => {
+                    if !root.syncing { root.gw-bit = self.checked; }
+                    root.mode = compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit);
+                }
+            }
+            ow := CheckBox {
+                row: 2; col: 3;                checked: root.ow-bit;
+                toggled => {
+                    if !root.syncing { root.ow-bit = self.checked; }
+                    root.mode = compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit);
+                }
+            }
+
+            Text { row: 3; col: 0; vertical-alignment: center; text: "Execute"; }
+            ux := CheckBox {
+                row: 3; col: 1;                checked: root.ux-bit;
+                toggled => {
+                    if !root.syncing { root.ux-bit = self.checked; }
+                    root.mode = compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit);
+                }
+            }
+            gx := CheckBox {
+                row: 3; col: 2;                checked: root.gx-bit;
+                toggled => {
+                    if !root.syncing { root.gx-bit = self.checked; }
+                    root.mode = compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit);
+                }
+            }
+            ox := CheckBox {
+                row: 3; col: 3;                checked: root.ox-bit;
+                toggled => {
+                    if !root.syncing { root.ox-bit = self.checked; }
+                    root.mode = compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit);
+                }
+            }
+
+            Text { row: 4; col: 0; vertical-alignment: center; text: "Preset"; }
+            presets := ComboBox {
+                row: 4; col: 1; colspan: 3;
+                model: ["Custom", "File (644)", "Executable file (755)", "Private (600)", "Private directory (700)", "Shared (664)", "Shared directory (775)"];
+                current-index: preset-index(Math.mod(root.mode, 512));
+                selected => {
+                    if root.syncing { return; }
+                    if preset-mode(self.current-index) == 0 { return; }
+                    root.syncing = true;
+                    root.ur-bit = bit-is-set(preset-mode(self.current-index), 256);
+                    root.uw-bit = bit-is-set(preset-mode(self.current-index), 128);
+                    root.ux-bit = bit-is-set(preset-mode(self.current-index), 64);
+                    root.gr-bit = bit-is-set(preset-mode(self.current-index), 32);
+                    root.gw-bit = bit-is-set(preset-mode(self.current-index), 16);
+                    root.gx-bit = bit-is-set(preset-mode(self.current-index), 8);
+                    root.or-bit = bit-is-set(preset-mode(self.current-index), 4);
+                    root.ow-bit = bit-is-set(preset-mode(self.current-index), 2);
+                    root.ox-bit = bit-is-set(preset-mode(self.current-index), 1);
+                    root.mode = compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit);
+                    root.syncing = false;
+                }
+            }
+        }
+
+        Text {
+            text: "Octal mode: " + octal-digits(compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit));
+            font-weight: 600;
+        }
+
+        CheckBox {
+            text: "Apply recursively to subfolders";
+            checked: root.recursive;
+            toggled => { root.recursive = self.checked; }
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+
+            Button {
+                text: "Cancel";
+                clicked => { root.close-requested(); }
+            }
+            Button {
+                text: "Apply";
+                clicked => { root.apply-requested(); }
+            }
+        }
+    }
+}

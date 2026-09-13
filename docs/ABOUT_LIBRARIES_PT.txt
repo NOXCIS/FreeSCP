@@ -1,0 +1,140 @@
+Bibliotecas de terceiros usadas pelo FreeSCP (reescrita em Rust)
+(Excluem-se frameworks do sistema operacional como Security e AppKit no macOS,
+e o Secret Service do sistema no Linux.)
+
+Interface gráfica
+- Slint
+  Descrição: toolkit declarativo de interface gráfica (janelas, widgets, suporte a gettext).
+  Licença: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+  Site: https://slint.dev/
+  Copyright: SixtyFPS GmbH
+
+Backends de protocolo
+- russh
+  Descrição: cliente SSH assíncrono usado pelos transportes SFTP/SCP.
+  Licença: Apache-2.0
+  Site: https://github.com/warp-tech/russh
+  Copyright: Eugene Retunsky and contributors
+- russh-sftp
+  Descrição: implementação do protocolo SFTP sobre o russh.
+  Licença: Apache-2.0
+  Site: https://github.com/AspectUnk/russh-sftp
+  Copyright: The russh-sftp developers
+- suppaftp
+  Descrição: biblioteca cliente FTP/FTPS.
+  Licença: MIT OR Apache-2.0
+  Site: https://github.com/veeso/suppaftp
+  Copyright: Christian Visintin and contributors
+- reqwest
+  Descrição: cliente HTTP usado pelo backend WebDAV.
+  Licença: MIT OR Apache-2.0
+  Site: https://github.com/seanmonstar/reqwest
+  Copyright: Sean McArthur and contributors
+- quick-xml
+  Descrição: parser XML usado nas respostas PROPFIND do WebDAV.
+  Licença: MIT
+  Site: https://github.com/tafia/quick-xml
+  Copyright: The quick-xml developers
+- tokio-socks
+  Descrição: suporte a proxy SOCKS5 para os backends de protocolo.
+  Licença: MIT
+  Site: https://github.com/sticnarf/tokio-socks
+  Copyright: The tokio-socks developers
+
+Runtime e infraestrutura
+- tokio / futures-util / async-trait
+  Descrição: runtime assíncrono, utilitários de streams e suporte a traits assíncronos.
+  Licença: MIT (tokio); MIT OR Apache-2.0 (futures-util, async-trait)
+  Site: https://tokio.rs/ | https://github.com/rust-lang/futures-rs | https://github.com/dtolnay/async-trait
+  Copyright: Tokio Contributors, David Tolnay and the futures-rs developers
+- thiserror / anyhow
+  Descrição: derivação de tipos de erro e contexto de erros.
+  Licença: MIT OR Apache-2.0
+  Site: https://github.com/dtolnay/thiserror | https://github.com/dtolnay/anyhow
+  Copyright: David Tolnay and contributors
+- tracing / tracing-subscriber
+  Descrição: registro estruturado e filtragem de logs.
+  Licença: MIT
+  Site: https://github.com/tokio-rs/tracing
+  Copyright: Tokio Contributors
+- rand / sha2 / sha1 / hex / base64
+  Descrição: números aleatórios, hashing e utilitários de codificação.
+  Licença: MIT OR Apache-2.0
+  Site: https://github.com/rust-random/rand | https://github.com/RustCrypto/hashes | https://github.com/KokaKiwi/rust-hex | https://github.com/marshallpierce/rust-base64
+  Copyright: The Rand Project Developers, the RustCrypto Developers, KokaKiwi, Marshall Pierce and contributors
+
+Configuração e sistema de arquivos
+- serde / serde_json / toml
+  Descrição: serialização e leitura de configuração (preferences.toml,
+  sites.toml, known_hosts).
+  Licença: MIT OR Apache-2.0
+  Site: https://serde.rs/ | https://github.com/toml-rs/toml
+  Copyright: Erick Tryzelaar, David Tolnay and contributors
+- dirs
+  Descrição: localização de diretórios de configuração/dados por plataforma.
+  Licença: MIT OR Apache-2.0
+  Site: https://github.com/soc/dirs-rs
+  Copyright: The dirs developers
+- walkdir / filetime
+  Descrição: percurso recursivo de diretórios e carimbos de tempo locais.
+  Licença: Unlicense OR MIT (walkdir); MIT OR Apache-2.0 (filetime)
+  Site: https://github.com/BurntSushi/walkdir | https://github.com/alexcrichton/filetime
+  Copyright: Andrew Gallant, Alex Crichton and contributors
+- chrono
+  Descrição: manipulação de datas/horas para carimbos de tempo e a fila de transferências.
+  Licença: MIT OR Apache-2.0
+  Site: https://github.com/chronotope/chrono
+  Copyright: The chrono developers
+- regex
+  Descrição: expressões regulares para filtragem e busca.
+  Licença: MIT OR Apache-2.0
+  Site: https://github.com/rust-lang/regex
+  Copyright: The Rust Project Developers
+
+Integração com o desktop
+- rfd
+  Descrição: diálogos nativos de arquivos e pastas.
+  Licença: MIT
+  Site: https://github.com/PolyMeilex/rfd
+  Copyright: The rfd developers
+- arboard
+  Descrição: acesso à área de transferência (caminhos copiados, texto de diagnóstico).
+  Licença: MIT OR Apache-2.0
+  Site: https://github.com/1Password/arboard
+  Copyright: The arboard developers
+- mime_guess
+  Descrição: mapeamento de extensão de arquivo para tipo MIME.
+  Licença: MIT
+  Site: https://github.com/abonander/mime_guess
+  Copyright: The mime_guess developers
+- sys-locale
+  Descrição: detecção do idioma do sistema para o idioma inicial da interface.
+  Licença: MIT OR Apache-2.0
+  Site: https://github.com/1Password/sys-locale
+  Copyright: The sys-locale developers
+- notify
+  Descrição: notificações de alterações no sistema de arquivos para atualizar o painel local.
+  Licença: CC0-1.0
+  Site: https://github.com/notify-rs/notify
+  Copyright: The notify developers
+- keyring
+  Descrição: armazenamento de credenciais via Secret Service (Linux).
+  Licença: MIT OR Apache-2.0
+  Site: https://github.com/hwchen/keyring-rs
+  Copyright: The keyring developers
+- security-framework (somente macOS)
+  Descrição: acesso ao Keychain do macOS.
+  Licença: MIT OR Apache-2.0
+  Site: https://github.com/kornelski/rust-security-framework
+  Copyright: The rust-security-framework developers
+
+Notas:
+- As versões específicas podem variar conforme a plataforma/pacote de distribuição.
+- Agradecemos aos autores e comunidades de cada projeto pelo seu trabalho.
+- Os textos completos das licenças são distribuídos com os fontes de cada
+  crate (crates.io) e nos repositórios dos projetos.
+- A versão legada Qt/C++ do FreeSCP usava Qt, libssh2, libcurl, tinyxml2,
+  OpenSSL e zlib; seus créditos e textos de licença permanecem em
+  docs/credits/CREDITS.md e docs/credits/LICENSES/.
+
+Ícones: Tango Icon Theme (Domínio público)

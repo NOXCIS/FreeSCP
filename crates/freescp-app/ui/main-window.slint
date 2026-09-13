@@ -1,0 +1,2540 @@
+// FreeSCP main window (Slint). Owned by the main-window workstream.
+//
+// NOTE:
+// - `FileEntry` is exported here and imported by the other .slint files
+//   (connection-dialog, transfer-queue, site-manager, settings, about,
+//   permissions). Do not rename it or change its field layout without
+//   coordinating with those workstreams.
+// - The file lists use the `ListView` widget from std-widgets.
+// - Keyboard shortcuts are bound via `KeyBinding` inside the window-level
+//   `FocusScope` (Slint 1.17). The Transfers / History shortcuts honor the
+//   values configured in Settings via a curated candidate set (see the
+//   `queue-shortcut` / `history-shortcut` properties).
+// - Tooltips use the Slint 1.17 builtin `Tooltip` element.
+// - Context menus are `PopupWindow`s anchored to the right-clicked row, so
+//   they open at the cursor position.
+//
+// Palette (dark-friendly neutral, per assets/screenshots):
+//   window   #26262a   panel    #2d2d32   toolbar #313136
+//   border   #3c3c42   row-even #2c2c31   row-odd #2d2d32
+//   hover    #3a3a44   selection #33506e  text    #e6e6e9
+//   text-dim #9a9aa2   text-faint #6f6f77 danger  #e05858
+//   folder   #4a90d9   file     #6b6b73   field   #202024
+
+import { ListView, TabWidget, LineEdit, CheckBox, Button } from "std-widgets.slint";
+
+export struct FileEntry {
+    name: string,
+    is-dir: bool,
+    size: int,
+    // `true` when the size is known (remote listings may omit it; local
+    // entries always have one). C++ shows "—" for unknown remote sizes.
+    has-size: bool,
+    mtime: int,
+    mode: int,
+    // Local pane "Type" column (e.g. "Folder", "PDF File"); empty for remote.
+    type-label: string,
+    // Remote pane "Permissions" column (e.g. "-rw-r--r--"); empty for local.
+    permissions: string,
+}
+
+// Icon-only toolbar button (26px wide; stretches vertically inside toolbars).
+component ToolIcon inherits TouchArea {
+    in property <image> source;
+    in property <string> tooltip: "";
+    width: 26px;
+    mouse-cursor: MouseCursor.pointer;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover ? (root.enabled ? #3a3a44 : #00000000) : #00000000;
+        border-radius: 4px;
+    }
+    Image {
+        source: root.source;
+        width: 15px;
+        height: 15px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        opacity: root.enabled ? 1.0 : 0.35;
+    }
+    Tooltip { text: @markdown("\{root.tooltip}"); }
+}
+
+// Toolbar button with icon and text. Width sizes to the label; min-width
+// keeps the layout from squeezing labels when the toolbar is crowded.
+component ToolTextButton inherits TouchArea {
+    in property <image> source;
+    in property <string> text;
+    in property <string> tooltip: "";
+    mouse-cursor: MouseCursor.pointer;
+    property <length> content-w: 7px + 15px + 5px + label.preferred-width + 10px;
+    width: root.content-w;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover ? (root.enabled ? #3a3a44 : #00000000) : #00000000;
+        border-radius: 4px;
+    }
+    Image {
+        source: root.source;
+        width: 15px;
+        height: 15px;
+        x: 7px;
+        y: (parent.height - self.height) / 2;
+        opacity: root.enabled ? 1.0 : 0.35;
+    }
+    label := Text {
+        text: root.text;
+        x: 27px;
+        y: 0px;
+        height: parent.height;
+        vertical-alignment: center;
+        color: root.enabled ? #e6e6e9 : #6f6f77;
+        font-size: 12px;
+    }
+    Tooltip { text: @markdown("\{root.tooltip}"); }
+}
+
+// One row of an in-window context menu popup.
+component MenuRow inherits TouchArea {
+    in property <string> text;
+    height: 26px;
+    mouse-cursor: MouseCursor.pointer;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover ? #3a3a44 : #00000000;
+    }
+    Text {
+        text: root.text;
+        x: 10px;
+        y: 0px;
+        width: parent.width - 20px;
+        height: parent.height;
+        vertical-alignment: center;
+        overflow: elide;
+        color: root.enabled ? #e6e6e9 : #6f6f77;
+        font-size: 12px;
+    }
+}
+
+// Menu row with a leading check glyph (the pane-header column menus).
+// Two-way bind `checked` to a visibility property; clicking toggles it.
+component MenuCheckRow inherits TouchArea {
+    in property <string> text;
+    in-out property <bool> checked;
+    height: 26px;
+    mouse-cursor: MouseCursor.pointer;
+    clicked => { root.checked = !root.checked; }
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover ? #3a3a44 : #00000000;
+    }
+    Text {
+        text: "✓";
+        x: 8px;
+        width: 14px;
+        height: parent.height;
+        vertical-alignment: center;
+        color: #4a90d9;
+        font-size: 12px;
+        visible: root.checked;
+    }
+    Text {
+        text: root.text;
+        x: 26px;
+        width: parent.width - 34px;
+        height: parent.height;
+        vertical-alignment: center;
+        overflow: elide;
+        color: #e6e6e9;
+        font-size: 12px;
+    }
+}
+
+// Opaque frame for menu PopupWindows (the popup surface itself is transparent).
+// Children go inside so the fill always paints behind the menu rows.
+component MenuPopupFrame inherits Rectangle {
+    background: #2d2d32;
+    border-width: 1px;
+    border-color: #3c3c42;
+    border-radius: 4px;
+    @children
+}
+
+// Breadcrumb path-segment button.
+// NOTE: never bind `width` to `self.preferred-width` here — that makes the
+// width fixed in layout constraint terms and clamps every ancestor layout
+// (the whole pane stops stretching). min-width + label insets instead.
+component CrumbButton inherits TouchArea {
+    in property <string> text;
+    height: 100%;
+    min-width: 22px;
+    mouse-cursor: MouseCursor.pointer;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover ? #3a3a44 : #00000000;
+        border-radius: 4px;
+    }
+    Text {
+        text: root.text;
+        x: 5px;
+        width: parent.width - 10px;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        color: #c9c9cf;
+        font-size: 12px;
+    }
+}
+
+// Menu bar button (plain text label with hover highlight).
+component MenuBarButton inherits TouchArea {
+    in property <string> text;
+    in property <bool> open: false;
+    height: 100%;
+    min-width: 44px;
+    mouse-cursor: MouseCursor.pointer;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover || root.open ? #3a3a44 : #00000000;
+        border-radius: 4px;
+    }
+    Text {
+        text: root.text;
+        x: 8px;
+        width: parent.width - 16px;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        color: #e6e6e9;
+        font-size: 12px;
+    }
+}
+
+// Draggable boundary between two file columns, placed in the pane header.
+// `width-value` is two-way bound to the width of the column to the RIGHT of
+// the handle: dragging right shrinks that column and grows the columns to
+// its left (the Name column absorbs the remainder). The drag math is
+// incremental (width-value + cursor delta) so the handle tracks the cursor
+// 1:1 even though the handle itself moves while the column resizes.
+component ColumnHandle inherits TouchArea {
+    in-out property <length> width-value;
+    in property <length> width-max: 420px;
+    property <length> anchor-x: 0px;
+    width: 9px;
+    mouse-cursor: MouseCursor.ew-resize;
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        width: root.pressed || root.has-hover ? 2px : 1px;
+        height: parent.height;
+        background: root.pressed ? #4a90d9 : (root.has-hover ? #9a9aa2 : #00000000);
+    }
+    pointer-event(event) => {
+        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+            root.anchor-x = self.pressed-x;
+        }
+    }
+    moved => {
+        if (self.pressed) {
+            root.width-value = clamp(root.width-value - (self.mouse-x - root.anchor-x), 32px, root.width-max);
+        }
+    }
+}
+
+
+export component MainWindow inherits Window {
+    title: root.title-text;
+    width: 1200px;
+    height: 700px;
+    icon: @image-url("../../../assets/program/icon-freescp.svg");
+    background: #26262a;
+    forward-focus: key-scope;
+
+    // ---- window chrome ------------------------------------------------------
+
+    in-out property <string> title-text: @tr("FreeSCP — local/local (click Connect for remote)");
+    // macOS shows Settings/Quit in the application menu only.
+    in-out property <bool> is-macos: false;
+
+    // ---- pane state ---------------------------------------------------------
+
+    in-out property <string> left-path;
+    in-out property <string> right-path;
+    // Recent-path dropdown contents (left = recent local folders, right =
+    // recent remote folders). Rust refreshes them when a dropdown opens.
+    in-out property <[string]> left-recent-paths;
+    in-out property <[string]> right-recent-paths;
+    // Drag-and-drop state. The payload itself is opaque in Slint code and is
+    // installed once from Rust; the source pane and the copy-vs-move intent are
+    // recorded on the row press (Ctrl/Cmd = move, mirroring the C++
+    // `preferredPanelDropAction`).
+    in-out property <data-transfer> drag-payload;
+    in-out property <int> drag-source-pane: -1;
+    in-out property <bool> drag-move-intent: false;
+    in-out property <[FileEntry]> left-entries;
+    in-out property <[FileEntry]> right-entries;
+    in-out property <[string]> left-breadcrumbs;
+    in-out property <[string]> right-breadcrumbs;
+    // Per-pane sort state (port of the sortable Qt headers). Rust persists it
+    // with the window geometry and re-sorts the listing when it changes.
+    in-out property <int> left-sort-column: 0;
+    in-out property <bool> left-sort-ascending: true;
+    in-out property <int> right-sort-column: 0;
+    in-out property <bool> right-sort-ascending: true;
+    // Left pane width in px (right pane takes the rest). Set by the splitter
+    // drag and persisted with the window geometry.
+    in-out property <length> left-pane-width: 560px;
+
+    // ---- file column widths --------------------------------------------------
+
+    // Left pane: trailing column widths (Name takes the remaining space).
+    // Right pane: Size / Modified / Permissions (Name takes the remainder).
+    // All are resizable via drag handles in the pane headers and persisted
+    // together with the window geometry.
+    in-out property <length> left-size-width: 90px;
+    in-out property <length> left-type-width: 120px;
+    in-out property <length> left-mtime-width: 150px;
+    in-out property <length> right-size-width: 90px;
+    in-out property <length> right-mtime-width: 150px;
+    in-out property <length> right-perm-width: 120px;
+    // Per-pane info-column visibility, managed from the pane-header
+    // right-click menu and persisted with the window geometry. Name is
+    // always visible; sort column indices stay stable when columns hide.
+    in-out property <bool> left-col-size-visible: true;
+    in-out property <bool> left-col-type-visible: true;
+    in-out property <bool> left-col-mtime-visible: true;
+    in-out property <bool> right-col-size-visible: true;
+    in-out property <bool> right-col-mtime-visible: true;
+    in-out property <bool> right-col-perm-visible: true;
+    // Width basis shared by the pane header and the row cells (mirrored from
+    // the header Rectangle via `changed width`). Row cells live inside the
+    // ListView viewport, which is narrower than the header whenever the
+    // vertical scrollbar takes space — pinning both to one basis keeps the
+    // drag handles exactly on the cell boundaries.
+    property <length> left-col-basis: 560px;
+    property <length> right-col-basis: 620px;
+    // Right-click position for the pane-header column menus (a PopupWindow's
+    // x cannot be written from the enclosing element, so the handlers store
+    // it here and the popup binds to it).
+    property <length> left-cols-menu-x: 40px;
+    property <length> right-cols-menu-x: 40px;
+
+    // ---- shared file-column geometry -----------------------------------------
+
+    // Effective width of each info column (0px when hidden) and the x of its
+    // left edge within a pane of `*-col-basis` width. Header labels, drag
+    // handles and row cells all derive from these so they cannot drift apart.
+
+    pure function left-size-w() -> length {
+        root.left-col-size-visible ? root.left-size-width : 0px;
+    }
+    pure function left-type-w() -> length {
+        root.left-col-type-visible ? root.left-type-width : 0px;
+    }
+    pure function left-mtime-w() -> length {
+        root.left-col-mtime-visible ? root.left-mtime-width : 0px;
+    }
+    pure function left-name-w() -> length {
+        root.left-col-basis - 27px - root.left-size-w() - root.left-type-w() - root.left-mtime-w();
+    }
+    pure function left-size-x() -> length {
+        root.left-col-basis - root.left-size-w() - root.left-type-w() - root.left-mtime-w();
+    }
+    pure function left-type-x() -> length {
+        root.left-col-basis - root.left-type-w() - root.left-mtime-w();
+    }
+    pure function left-mtime-x() -> length {
+        root.left-col-basis - root.left-mtime-w();
+    }
+    pure function right-size-w() -> length {
+        root.right-col-size-visible ? root.right-size-width : 0px;
+    }
+    pure function right-mtime-w() -> length {
+        root.right-col-mtime-visible ? root.right-mtime-width : 0px;
+    }
+    pure function right-perm-w() -> length {
+        root.right-col-perm-visible ? root.right-perm-width : 0px;
+    }
+    pure function right-name-w() -> length {
+        root.right-col-basis - 27px - root.right-size-w() - root.right-mtime-w() - root.right-perm-w();
+    }
+    pure function right-size-x() -> length {
+        root.right-col-basis - root.right-size-w() - root.right-mtime-w() - root.right-perm-w();
+    }
+    pure function right-mtime-x() -> length {
+        root.right-col-basis - root.right-mtime-w() - root.right-perm-w();
+    }
+    pure function right-perm-x() -> length {
+        root.right-col-basis - root.right-perm-w();
+    }
+
+    // ---- status bar ---------------------------------------------------------
+
+    in-out property <string> status-text: "Ready";
+    in-out property <string> connection-type-text: "Type: None";
+    in-out property <string> connection-elapsed-text: "Session: --:--:--";
+    in-out property <bool> risk-banner-visible: false;
+    in-out property <bool> secrets-warning-visible: false;
+
+    // ---- remote session state -----------------------------------------------
+
+    // True while a remote session is active; enables remote-only actions.
+    in-out property <bool> remote-connected: false;
+    // True while a dialog-driven connect attempt is running (port of
+    // m_connectInProgress_): the Connect actions stay disabled until it ends.
+    in-out property <bool> connect-in-progress: false;
+    // False at the filesystem/remote root, where "Up" has no target
+    // (C++ gates the Up actions on canGoUp()).
+    in-out property <bool> left-can-go-up: true;
+    in-out property <bool> right-can-go-up: false;
+    // Selection-driven enablement of the pane actions and context menus
+    // (C++ updateDeleteShortcutEnables + showLeftContextMenu). The synthetic
+    // ".." row is not a real entry, so it never counts as a selection.
+    in-out property <bool> left-selected-is-parent: false;
+    in-out property <bool> right-selected-is-parent: false;
+    property <bool> left-selection-acts: root.left-selected-rows.length > 0;
+    property <bool> right-selection-acts: root.right-selected-rows.length > 0;
+    // Protocol capability: enables the Permissions actions (C++ gates them on
+    // capabilitiesForProtocol(...).supports_permissions).
+    in-out property <bool> right-supports-permissions: true;
+    // Shows the SCP transfer-only panel instead of the right file list.
+    in-out property <bool> scp-panel-visible: false;
+    // True while the right pane browses local folders: before a session
+    // connects and after disconnect, mirroring the C++ `rightIsRemote_ ==
+    // false` local/local layout. The header renders Kind instead of
+    // Permissions in that mode.
+    property <bool> right-local-mode: !root.remote-connected;
+
+    // ---- selection + focus + context menus ----------------------------------
+
+    // Multi-row selection (port of the Qt ExtendedSelection model). Rust owns
+    // this state: `*-selected-rows` is the canonical sorted set of selected
+    // view rows (never the synthetic ".." row), `*-selected-flags` is the
+    // per-row render flag parallel to the entries model, and the
+    // `*-selected-row` scalar is the current/anchor row (-1 = none) used for
+    // activation targets and single-item actions.
+    in-out property <[int]> left-selected-rows: [];
+    in-out property <[int]> right-selected-rows: [];
+    in-out property <[bool]> left-selected-flags: [];
+    in-out property <[bool]> right-selected-flags: [];
+    // True while the current click press holds Ctrl/Cmd/Shift; row activation
+    // is suppressed for those presses (Qt extends the selection instead).
+    property <bool> row-click-extended: false;
+    // Mirrors the C++ "single_click" preference: when false, a single click
+    // only selects and a double click activates; when true, a single click
+    // activates. Synced from AppState::prefs at startup by main.rs.
+    in-out property <bool> single-click-mode: false;
+
+    // Scalar selection (current/anchor row; -1 means none). Callers
+    // reloading a pane should reset the whole selection (see main.rs).
+    in-out property <int> left-selected-row: -1;
+    in-out property <int> right-selected-row: -1;
+    // Which pane currently has focus (0 = left/local, 1 = right/remote);
+    // keyboard shortcuts dispatch on it.
+    in-out property <int> focused-pane: 0;
+
+    // ---- shortcuts (configurable pair) --------------------------------------
+
+    // Canonical shortcut identifiers; main.rs normalizes the strings stored
+    // in Settings into one of the candidates below (defaults: F12,
+    // Ctrl+Shift+H). Invalid values fall back to the defaults.
+    in-out property <string> queue-shortcut: "F12";
+    in-out property <string> history-shortcut: "Ctrl+Shift+H";
+
+    // ---- callbacks (wired from main.rs) --------------------------------------
+
+    callback connect-requested();
+    callback disconnect-requested();
+    callback upload-requested();
+    callback download-requested();
+    callback refresh-right();
+    callback go-up-left();
+    callback go-up-right();
+    callback go-home-left();
+    callback go-home-right();
+    callback copy-left-to-right();
+    callback copy-right-to-left();
+    callback move-left-to-right();
+    callback move-right-to-left();
+    callback delete-left();
+    callback delete-right();
+    callback new-dir-left();
+    callback new-file-left();
+    callback rename-left();
+    callback new-dir-right();
+    callback new-file-right();
+    callback rename-right();
+    callback permissions-right();
+    callback search-left-requested();
+    callback search-right-requested();
+    callback open-terminal-right();
+    callback show-sites();
+    callback show-history();
+    callback show-queue();
+    callback show-settings();
+    callback show-about();
+    callback choose-left-dir();
+    callback choose-right-dir();
+    callback left-path-entered(string);
+    callback right-path-entered(string);
+    // Path-field recent-path dropdowns: requested when the chevron is pressed
+    // (Rust fills the `*-recent-paths` model), chosen when a row is picked.
+    callback left-recent-paths-requested();
+    callback right-recent-paths-requested();
+    callback left-recent-path-chosen(string);
+    callback right-recent-path-chosen(string);
+    // Drop of an in-app pane selection: (target pane, target row index or -1
+    // for the pane root, move instead of copy).
+    callback pane-dropped(int, int, bool);
+    callback left-crumb-clicked(int);
+    callback right-crumb-clicked(int);
+    callback left-item-activated(int);
+    callback right-item-activated(int);
+    // Multi-selection interactions: (view row, ctrl/cmd held, shift held).
+    // Rust updates the selection model and writes it back into the
+    // `*-selected-rows` / `*-selected-flags` properties.
+    callback left-row-clicked(int, bool, bool);
+    callback right-row-clicked(int, bool, bool);
+    // Select every non-parent entry in the pane (Ctrl/Cmd+A) and collapse the
+    // selection back to the current row (Escape).
+    callback pane-select-all(int);
+    callback pane-collapse-selection(int);
+    // Header click: (pane index, column index). Rust toggles the direction
+    // when the column is unchanged and persists the new state.
+    callback pane-sort-requested(int, int);
+    callback quit-requested();
+    callback report-bug-requested();
+    callback fullscreen-toggle-requested();
+
+    // Display formatting provided by Rust (no string formatting in Slint).
+    pure callback format-size(int) -> string;
+    pure callback format-size-remote(int) -> string;
+    pure callback format-mtime(int) -> string;
+    pure callback format-permissions(int) -> string;
+
+    key-scope := FocusScope {
+        // FocusScope is not a layout: without explicit bounds neither it nor
+        // its child layout fills the window, leaving dead space at the edge.
+        width: parent.width;
+        height: parent.height;
+        changed width => { root.scope-w = self.width; }
+        VerticalLayout {
+            width: parent.width;
+            height: parent.height;
+            changed width => { root.vlayout-w = self.width; }
+            spacing: 0px;
+
+            // ================= menu bar ========================================
+
+            Rectangle {
+                height: 27px;
+                background: #26262a;
+                HorizontalLayout {
+                    width: parent.width;
+                    height: parent.height;
+                    padding-left: 4px;
+                    padding-right: 4px;
+                    spacing: 2px;
+
+                    app-menu-btn := MenuBarButton {
+                        text: @tr("FreeSCP");
+                        open: app-menu-popup.is-open;
+                        clicked => { app-menu-popup.show(); }
+                        app-menu-popup := PopupWindow {
+                            close-policy: close-on-click-outside;
+                            x: 0px;
+                            y: parent.height;
+                            width: 200px;
+                            height: app-menu-layout.preferred-height;
+                            MenuPopupFrame {
+                                width: 100%;
+                                height: 100%;
+                                app-menu-layout := VerticalLayout {
+                                    padding: 4px;
+                                    MenuRow {
+                                        text: @tr("About FreeSCP");
+                                        clicked => { app-menu-popup.close(); show-about(); }
+                                    }
+                                    MenuRow {
+                                        text: @tr("Settings…");
+                                        clicked => { app-menu-popup.close(); show-settings(); }
+                                    }
+                                    Rectangle { height: 1px; background: #3c3c42; }
+                                    MenuRow {
+                                        text: @tr("Quit");
+                                        clicked => { app-menu-popup.close(); quit-requested(); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    file-menu-btn := MenuBarButton {
+                        text: @tr("File");
+                        open: file-menu-popup.is-open;
+                        clicked => { file-menu-popup.show(); }
+                        file-menu-popup := PopupWindow {
+                            close-policy: close-on-click-outside;
+                            x: 0px;
+                            y: parent.height;
+                            width: 190px;
+                            height: file-menu-layout.preferred-height;
+                            MenuPopupFrame {
+                                width: 100%;
+                                height: 100%;
+                                file-menu-layout := VerticalLayout {
+                                    padding: 4px;
+                                    MenuRow {
+                                        text: @tr("Open left folder");
+                                        clicked => { file-menu-popup.close(); choose-left-dir(); }
+                                    }
+                                    MenuRow {
+                                        text: @tr("Open right folder");
+                                        clicked => { file-menu-popup.close(); choose-right-dir(); }
+                                    }
+                                    Rectangle { height: 1px; background: #3c3c42; }
+                                    MenuRow {
+                                        text: @tr("Connect");
+                                        enabled: !root.remote-connected && !root.connect-in-progress;
+                                        clicked => { file-menu-popup.close(); connect-requested(); }
+                                    }
+                                    MenuRow {
+                                        text: @tr("Disconnect");
+                                        enabled: root.remote-connected;
+                                        clicked => { file-menu-popup.close(); disconnect-requested(); }
+                                    }
+                                    MenuRow {
+                                        text: @tr("Saved sites");
+                                        clicked => { file-menu-popup.close(); show-sites(); }
+                                    }
+                                    MenuRow {
+                                        text: @tr("Transfers");
+                                        clicked => { file-menu-popup.close(); show-queue(); }
+                                    }
+                                    MenuRow {
+                                        text: @tr("History");
+                                        clicked => { file-menu-popup.close(); show-history(); }
+                                    }
+                                    if !root.is-macos : Rectangle { height: 1px; background: #3c3c42; }
+                                    if !root.is-macos : MenuRow {
+                                        text: @tr("Settings…");
+                                        clicked => { file-menu-popup.close(); show-settings(); }
+                                    }
+                                    if !root.is-macos : MenuRow {
+                                        text: @tr("Quit");
+                                        clicked => { file-menu-popup.close(); quit-requested(); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    help-menu-btn := MenuBarButton {
+                        text: @tr("Help");
+                        open: help-menu-popup.is-open;
+                        clicked => { help-menu-popup.show(); }
+                        help-menu-popup := PopupWindow {
+                            close-policy: close-on-click-outside;
+                            x: 0px;
+                            y: parent.height;
+                            width: 190px;
+                            height: help-menu-layout.preferred-height;
+                            MenuPopupFrame {
+                                width: 100%;
+                                height: 100%;
+                                help-menu-layout := VerticalLayout {
+                                    padding: 4px;
+                                    MenuRow {
+                                        text: @tr("About FreeSCP");
+                                        clicked => { help-menu-popup.close(); show-about(); }
+                                    }
+                                    MenuRow {
+                                        text: @tr("Report a bug");
+                                        clicked => { help-menu-popup.close(); report-bug-requested(); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+
+            // ================= main toolbar =====================================
+
+            Rectangle {
+                height: 38px;
+                background: #313136;
+                HorizontalLayout {
+                    width: parent.width;
+                    height: parent.height;
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    spacing: 3px;
+
+                ToolTextButton {
+                    text: @tr("Connect");
+                    tooltip: @tr("Connect to a server");
+                    enabled: !root.remote-connected && !root.connect-in-progress;
+                    source: @image-url("../../../assets/icons/action-connect.svg");
+                    clicked => { connect-requested(); }
+                }
+                ToolTextButton {
+                    text: @tr("Disconnect");
+                    tooltip: @tr("Disconnect from the server");
+                    enabled: root.remote-connected;
+                    source: @image-url("../../../assets/icons/action-disconnect.svg");
+                    clicked => { disconnect-requested(); }
+                }
+                Rectangle { width: 1px; background: #3c3c42; }
+                ToolTextButton {
+                    text: @tr("Upload");
+                    tooltip: @tr("Upload (F8)");
+                    source: @image-url("../../../assets/icons/action-upload.svg");
+                    clicked => { upload-requested(); }
+                }
+                ToolTextButton {
+                    text: @tr("Download");
+                    tooltip: @tr("Download (F7)");
+                    enabled: root.remote-connected;
+                    source: @image-url("../../../assets/icons/action-download.svg");
+                    clicked => { download-requested(); }
+                }
+                ToolTextButton {
+                    text: @tr("Copy F5");
+                    tooltip: @tr("Copy to the other panel (F5)");
+                    source: @image-url("../../../assets/icons/action-copy.svg");
+                    clicked => { copy-left-to-right(); }
+                }
+                ToolTextButton {
+                    text: @tr("Move F6");
+                    tooltip: @tr("Move to the other panel (F6)");
+                    source: @image-url("../../../assets/icons/action-move-to-right.svg");
+                    clicked => { move-left-to-right(); }
+                }
+                Rectangle { width: 1px; background: #3c3c42; }
+                ToolTextButton {
+                    text: @tr("Sites");
+                    tooltip: @tr("Saved sites");
+                    source: @image-url("../../../assets/icons/action-open-saved-sites.svg");
+                    clicked => { show-sites(); }
+                }
+                ToolTextButton {
+                    text: @tr("History");
+                    tooltip: @tr("Connection history");
+                    source: @image-url("../../../assets/icons/action-open-history.svg");
+                    clicked => { show-history(); }
+                }
+                ToolIcon {
+                    enabled: root.remote-connected;
+                    tooltip: @tr("Open in terminal");
+                    source: @image-url("../../../assets/icons/action-open-terminal.svg");
+                    clicked => { open-terminal-right(); }
+                }
+                ToolTextButton {
+                    text: @tr("Transfers");
+                    tooltip: @tr("Transfer queue (F12)");
+                    source: @image-url("../../../assets/icons/action-open-transfer-queue.svg");
+                    clicked => { show-queue(); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                ToolIcon {
+                    tooltip: @tr("Settings");
+                    source: @image-url("../../../assets/icons/action-open-settings.svg");
+                    clicked => { show-settings(); }
+                }
+                ToolIcon {
+                    tooltip: @tr("About FreeSCP");
+                    source: @image-url("../../../assets/icons/action-open-about-us.svg");
+                    clicked => { show-about(); }
+                }
+                }
+            }
+
+            // ================= panes ==============================================
+
+            HorizontalLayout {
+                vertical-stretch: 1;
+                changed width => { root.panes-w = self.width; }
+
+                // ---------------- left pane (local) -------------------------------
+                left-pane := Rectangle {
+                    width: root.left-pane-width;
+                    background: #2d2d32;
+                    border-width: left-drop.has-drag ? 2px : 0px;
+                    border-color: #4a90d9;
+
+                    // Pane-wide drop target (the drop destination is the pane's
+                    // current folder). Declared before the layout so the folder
+                    // rows, which are painted in front, win the hit test.
+                    left-drop := DropArea {
+                        width: 100%;
+                        height: 100%;
+                        can-drop(event) => {
+                            return root.drag-source-pane >= 0 ? event.proposed-action : DragAction.none;
+                        }
+                        dropped(event) => {
+                            root.pane-dropped(0, -1, root.drag-move-intent);
+                            return event.proposed-action;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 0px;
+
+                        Rectangle {
+                            height: 32px;
+                            background: #313136;
+                            HorizontalLayout {
+                                width: parent.width;
+                                height: parent.height;
+                                padding-left: 4px;
+                                spacing: 2px;
+                            ToolIcon {
+                                tooltip: @tr("Up");
+                                enabled: root.left-can-go-up;
+                                source: @image-url("../../../assets/icons/action-go-up.svg");
+                                clicked => { go-up-left(); }
+                            }
+                            ToolIcon {
+                                tooltip: @tr("Open left folder");
+                                source: @image-url("../../../assets/icons/action-open-folder.svg");
+                                clicked => { choose-left-dir(); }
+                            }
+                            ToolIcon {
+                                tooltip: @tr("Home");
+                                source: @image-url("../../../assets/icons/action-go-home.svg");
+                                clicked => { go-home-left(); }
+                            }
+                            ToolIcon {
+                                tooltip: @tr("Search items");
+                                source: @image-url("../../../assets/icons/action-search-item.svg");
+                                clicked => { search-left-requested(); }
+                            }
+                            Rectangle { width: 1px; background: #3c3c42; }
+                            ToolIcon {
+                                enabled: root.left-selection-acts;
+                                tooltip: @tr("Copy to right panel");
+                                source: @image-url("../../../assets/icons/action-copy.svg");
+                                clicked => { copy-left-to-right(); }
+                            }
+                            ToolIcon {
+                                enabled: root.left-selection-acts;
+                                tooltip: @tr("Move to right panel");
+                                source: @image-url("../../../assets/icons/action-move-to-right.svg");
+                                clicked => { move-left-to-right(); }
+                            }
+                            ToolIcon {
+                                enabled: root.left-selection-acts;
+                                tooltip: @tr("Delete");
+                                source: @image-url("../../../assets/icons/action-delete.svg");
+                                clicked => { delete-left(); }
+                            }
+                            Rectangle { width: 1px; background: #3c3c42; }
+                            ToolIcon {
+                                enabled: root.left-selection-acts;
+                                tooltip: @tr("Rename (F2)");
+                                source: @image-url("../../../assets/icons/action-rename.svg");
+                                clicked => { rename-left(); }
+                            }
+                            ToolIcon {
+                                tooltip: @tr("New file (F10)");
+                                source: @image-url("../../../assets/icons/action-new-file.svg");
+                                clicked => { new-file-left(); }
+                            }
+                            ToolIcon {
+                                tooltip: @tr("New folder (F9)");
+                                source: @image-url("../../../assets/icons/action-new-folder.svg");
+                                clicked => { new-dir-left(); }
+                            }
+                            }
+                        }
+
+                        // Breadcrumbs (clickable path segments).
+                        Rectangle {
+                            height: 24px;
+                            background: #2d2d32;
+                            HorizontalLayout {
+                                width: parent.width;
+                                height: parent.height;
+                                padding-left: 4px;
+                                padding-right: 4px;
+                                spacing: 1px;
+                                for crumb[j] in root.left-breadcrumbs : CrumbButton {
+                                    text: crumb;
+                                    clicked => { left-crumb-clicked(j); }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            height: 30px;
+                            padding-left: 4px;
+                            padding-right: 4px;
+                            padding-top: 2px;
+                            padding-bottom: 2px;
+                            spacing: 4px;
+                            Rectangle {
+                                height: 26px;
+                                horizontal-stretch: 1;
+                                background: #202024;
+                                border-color: #3c3c42;
+                                border-width: 1px;
+                                border-radius: 4px;
+                                TextInput {
+                                    x: 8px;
+                                    y: 0px;
+                                    width: parent.width - 16px - 40px;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    text <=> root.left-path;
+                                    color: #e6e6e9;
+                                    font-size: 12px;
+                                    key_pressed(event) => { root.focused-pane = 0; reject }
+                                    accepted => { left-path-entered(self.text); }
+                                }
+                                // Qt `setClearButtonEnabled(true)` on the path edit.
+                                Text {
+                                    x: parent.width - 40px;
+                                    y: 0px;
+                                    width: 18px;
+                                    height: parent.height;
+                                    text: "✕";
+                                    visible: root.left-path != "";
+                                    vertical-alignment: center;
+                                    horizontal-alignment: center;
+                                    color: clear-left-hover.has-hover ? #e6e6e9 : #9a9aa2;
+                                    font-size: 11px;
+                                    clear-left-hover := TouchArea {
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => { root.left-path = ""; }
+                                    }
+                                }
+                                // Recent local folders dropdown (recent-path history).
+                                Text {
+                                    x: parent.width - 22px;
+                                    y: 0px;
+                                    width: 18px;
+                                    height: parent.height;
+                                    text: "▾";
+                                    vertical-alignment: center;
+                                    horizontal-alignment: center;
+                                    color: recent-left-hover.has-hover ? #e6e6e9 : #9a9aa2;
+                                    font-size: 11px;
+                                    recent-left-hover := TouchArea {
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => {
+                                            root.left-recent-paths-requested();
+                                            recent-left-popup.show();
+                                        }
+                                    }
+                                }
+                                recent-left-popup := PopupWindow {
+                                    close-policy: close-on-click-outside;
+                                    x: max(parent.width - 300px, 0px);
+                                    y: parent.height + 2px;
+                                    width: 300px;
+                                    height: min(recent-left-layout.preferred-height, 320px);
+                                    MenuPopupFrame {
+                                        width: 100%;
+                                        height: 100%;
+                                        recent-left-layout := VerticalLayout {
+                                            padding: 4px;
+                                            for path in root.left-recent-paths : MenuRow {
+                                                text: path;
+                                                clicked => {
+                                                    recent-left-popup.close();
+                                                    root.left-recent-path-chosen(path);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            ToolIcon {
+                                tooltip: @tr("Open left folder");
+                                source: @image-url("../../../assets/icons/action-open-folder.svg");
+                                clicked => { choose-left-dir(); }
+                            }
+                        }
+
+                        // Header (Name | Size | Type | Modified). Column
+                        // geometry comes from the shared pure functions so
+                        // labels, drag handles and row cells share one width
+                        // basis (the header width, mirrored into
+                        // root.left-col-basis). ColumnHandles are declared
+                        // after the labels so they sit on top for hit
+                        // testing; right-click any header column for the
+                        // visibility menu.
+                        Rectangle {
+                            height: 24px;
+                            background: #313136;
+                            changed width => { root.left-col-basis = self.width; }
+                            Text {
+                                text: root.left-sort-column == 0 ? @tr("Name") + (root.left-sort-ascending ? " ▲" : " ▼") : @tr("Name");
+                                x: 27px;
+                                y: 0px;
+                                width: root.left-name-w();
+                                height: parent.height;
+                                vertical-alignment: center;
+                                color: #9a9aa2;
+                                font-weight: 600;
+                                font-size: 12px;
+                            }
+                            TouchArea {
+                                x: 27px;
+                                y: 0px;
+                                width: root.left-name-w();
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => { root.pane-sort-requested(0, 0); }
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        root.left-cols-menu-x = clamp(self.x + self.mouse-x - 12px, 4px, max(4px, root.left-col-basis - 184px - 4px));
+                                        left-cols-popup.show();
+                                    }
+                                }
+                            }
+                            if root.left-col-size-visible : Text {
+                                text: root.left-sort-column == 1 ? @tr("Size") + (root.left-sort-ascending ? " ▲" : " ▼") : @tr("Size");
+                                x: root.left-size-x();
+                                y: 0px;
+                                width: root.left-size-width;
+                                height: parent.height;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                                color: #9a9aa2;
+                                font-weight: 600;
+                                font-size: 12px;
+                            }
+                            if root.left-col-size-visible : TouchArea {
+                                x: root.left-size-x();
+                                y: 0px;
+                                width: root.left-size-width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => { root.pane-sort-requested(0, 1); }
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        root.left-cols-menu-x = clamp(self.x + self.mouse-x - 12px, 4px, max(4px, root.left-col-basis - 184px - 4px));
+                                        left-cols-popup.show();
+                                    }
+                                }
+                            }
+                            if root.left-col-type-visible : Text {
+                                text: root.left-sort-column == 2 ? @tr("Kind") + (root.left-sort-ascending ? " ▲" : " ▼") : @tr("Kind");
+                                x: root.left-type-x();
+                                y: 0px;
+                                width: root.left-type-width;
+                                height: parent.height;
+                                vertical-alignment: center;
+                                color: #9a9aa2;
+                                font-weight: 600;
+                                font-size: 12px;
+                            }
+                            if root.left-col-type-visible : TouchArea {
+                                x: root.left-type-x();
+                                y: 0px;
+                                width: root.left-type-width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => { root.pane-sort-requested(0, 2); }
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        root.left-cols-menu-x = clamp(self.x + self.mouse-x - 12px, 4px, max(4px, root.left-col-basis - 184px - 4px));
+                                        left-cols-popup.show();
+                                    }
+                                }
+                            }
+                            if root.left-col-mtime-visible : Text {
+                                text: root.left-sort-column == 3 ? @tr("Date Modified") + (root.left-sort-ascending ? " ▲" : " ▼") : @tr("Date Modified");
+                                x: root.left-mtime-x();
+                                y: 0px;
+                                width: root.left-mtime-width;
+                                height: parent.height;
+                                vertical-alignment: center;
+                                color: #9a9aa2;
+                                font-weight: 600;
+                                font-size: 12px;
+                            }
+                            if root.left-col-mtime-visible : TouchArea {
+                                x: root.left-mtime-x();
+                                y: 0px;
+                                width: root.left-mtime-width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => { root.pane-sort-requested(0, 3); }
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        root.left-cols-menu-x = clamp(self.x + self.mouse-x - 12px, 4px, max(4px, root.left-col-basis - 184px - 4px));
+                                        left-cols-popup.show();
+                                    }
+                                }
+                            }
+                            if root.left-col-size-visible : ColumnHandle {
+                                x: root.left-size-x() - 4.5px;
+                                height: parent.height;
+                                width-value <=> root.left-size-width;
+                                width-max: max(32px, root.left-col-basis - 27px - 60px - root.left-type-w() - root.left-mtime-w());
+                            }
+                            if root.left-col-type-visible : ColumnHandle {
+                                x: root.left-type-x() - 4.5px;
+                                height: parent.height;
+                                width-value <=> root.left-type-width;
+                                width-max: max(32px, root.left-col-basis - 27px - 60px - root.left-size-w() - root.left-mtime-w());
+                            }
+                            if root.left-col-mtime-visible : ColumnHandle {
+                                x: root.left-mtime-x() - 4.5px;
+                                height: parent.height;
+                                width-value <=> root.left-mtime-width;
+                                width-max: max(32px, root.left-col-basis - 27px - 60px - root.left-size-w() - root.left-type-w());
+                            }
+                            left-cols-popup := PopupWindow {
+                                close-policy: close-on-click-outside;
+                                x: root.left-cols-menu-x;
+                                y: 24px;
+                                width: 184px;
+                                height: left-cols-layout.preferred-height;
+                                MenuPopupFrame {
+                                    width: 100%;
+                                    height: 100%;
+                                    left-cols-layout := VerticalLayout {
+                                        padding: 4px;
+                                        MenuCheckRow {
+                                            text: @tr("Size");
+                                            checked <=> root.left-col-size-visible;
+                                        }
+                                        MenuCheckRow {
+                                            text: @tr("Kind");
+                                            checked <=> root.left-col-type-visible;
+                                        }
+                                        MenuCheckRow {
+                                            text: @tr("Date Modified");
+                                            checked <=> root.left-col-mtime-visible;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.left-entries.length == 0 : Rectangle {
+                            vertical-stretch: 1;
+                            Text {
+                                text: @tr("(empty folder)");
+                                color: #6f6f77;
+                                font-size: 12px;
+                                x: 12px;
+                                y: 12px;
+                            }
+                            // Right-clicking the empty listing shows the
+                            // no-selection context menu that the C++ view
+                            // offers everywhere (Up + New file/New folder).
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        root.left-selected-row = -1;
+                                        root.left-selected-is-parent = false;
+                                        root.left-selected-rows = [];
+                                        root.left-selected-flags = [];
+                                        root.focused-pane = 0;
+                                        left-pane-popup.show();
+                                    }
+                                }
+                                left-pane-popup := PopupWindow {
+                                    close-policy: close-on-click-outside;
+                                    x: 6px;
+                                    y: 6px;
+                                    width: 184px;
+                                    height: left-pane-layout.preferred-height;
+                                    MenuPopupFrame {
+                                        width: 100%;
+                                        height: 100%;
+                                        left-pane-layout := VerticalLayout {
+                                            padding: 4px;
+                                            MenuRow {
+                                                text: @tr("Up");
+                                                visible: root.left-can-go-up;
+                                                clicked => { left-pane-popup.close(); go-up-left(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("New file");
+                                                clicked => { left-pane-popup.close(); new-file-left(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("New folder");
+                                                clicked => { left-pane-popup.close(); new-dir-left(); }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.left-entries.length > 0 : ListView {
+                            vertical-stretch: 1;
+                            for entry[i] in root.left-entries : DragArea {
+                                width: 100%;
+                                height: 26px;
+                                data: root.drag-payload;
+                                allow-copy: true;
+                                // Only allow a "move" negotiation when the
+                                // press captured Ctrl/Cmd (the C++ rule); left
+                                // unset, the runtime would propose move as its
+                                // no-modifier default and show a move cursor
+                                // for what is actually a copy.
+                                allow-move: root.drag-move-intent;
+                                drag-finished(action) => { root.drag-source-pane = -1; }
+                                TouchArea {
+                                width: 100%;
+                                height: 26px;
+                                mouse-cursor: MouseCursor.pointer;
+                                // Parallel to the entries model; Rust keeps the
+                                // length in sync with every reload.
+                                property <bool> is-selected: i < root.left-selected-flags.length && root.left-selected-flags[i];
+                                Rectangle {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    background: parent.is-selected ? #33506e : (mod(i, 2) == 0 ? #2c2c31 : #2d2d32);
+                                }
+                                clicked => {
+                                    root.focused-pane = 0;
+                                    // Ctrl/Cmd- and Shift-clicks extend the
+                                    // selection without activating (Qt
+                                    // ExtendedSelection).
+                                    if (!root.row-click-extended && root.single-click-mode) { left-item-activated(i); }
+                                }
+                                double-clicked => {
+                                    root.focused-pane = 0;
+                                    if (!root.row-click-extended && !root.single-click-mode) { left-item-activated(i); }
+                                }
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        // Qt right-click keeps an already
+                                        // selected row selected (so the
+                                        // context menu acts on the whole
+                                        // selection); otherwise it selects it.
+                                        if (!self.is-selected) {
+                                            left-row-clicked(i, false, false);
+                                        }
+                                        root.focused-pane = 0;
+                                        left-row-popup.show();
+                                    } else if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                                        // TouchArea.clicked carries no
+                                        // modifiers; capture them on press.
+                                        root.row-click-extended = event.modifiers.control || event.modifiers.meta || event.modifiers.shift;
+                                        // Remember the drag source and the
+                                        // copy-vs-move intent (Ctrl/Cmd = move).
+                                        root.drag-source-pane = 0;
+                                        root.drag-move-intent = event.modifiers.control || event.modifiers.meta;
+                                        left-row-clicked(i, event.modifiers.control || event.modifiers.meta, event.modifiers.shift);
+                                    }
+                                }
+                                left-row-popup := PopupWindow {
+                                    close-policy: close-on-click-outside;
+                                    x: 6px;
+                                    y: 26px;
+                                    width: 184px;
+                                    height: left-row-layout.preferred-height;
+                                    MenuPopupFrame {
+                                        width: 100%;
+                                        height: 100%;
+                                        left-row-layout := VerticalLayout {
+                                            padding: 4px;
+                                            // C++ showLeftContextMenu(): Up first when a
+                                            // parent exists, then New file/New folder, and
+                                            // the selection actions only with a selection.
+                                            MenuRow {
+                                                text: @tr("Up");
+                                                visible: root.left-can-go-up;
+                                                clicked => { left-row-popup.close(); go-up-left(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("New file");
+                                                clicked => { left-row-popup.close(); new-file-left(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("New folder");
+                                                clicked => { left-row-popup.close(); new-dir-left(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("Rename");
+                                                visible: root.left-selection-acts;
+                                                clicked => { left-row-popup.close(); rename-left(); }
+                                            }
+                                            Rectangle { height: 1px; background: #3c3c42; visible: root.left-selection-acts; }
+                                            MenuRow {
+                                                text: @tr("Copy to right panel");
+                                                visible: root.left-selection-acts;
+                                                clicked => { left-row-popup.close(); copy-left-to-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("Move to right panel");
+                                                visible: root.left-selection-acts;
+                                                clicked => { left-row-popup.close(); move-left-to-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("Delete");
+                                                visible: root.left-selection-acts;
+                                                clicked => { left-row-popup.close(); delete-left(); }
+                                            }
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    x: 9px;
+                                    y: (parent.height - self.height) / 2;
+                                    width: 12px;
+                                    height: 12px;
+                                    border-radius: 3px;
+                                    background: entry.is-dir ? #4a90d9 : #6b6b73;
+                                }
+                                Text {
+                                    text: entry.name;
+                                    x: 27px;
+                                    y: 0px;
+                                    width: root.left-name-w();
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: #e6e6e9;
+                                    font-size: 12px;
+                                }
+                                if root.left-col-size-visible : Text {
+                                    // QFileSystemModel leaves the Size cell of
+                                    // folders empty (rendered as "--" here).
+                                    text: entry.is-dir ? "--" : format-size(entry.size);
+                                    x: root.left-size-x();
+                                    y: 0px;
+                                    width: root.left-size-width;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: right;
+                                    color: #9a9aa2;
+                                    font-size: 12px;
+                                }
+                                if root.left-col-type-visible : Text {
+                                    text: entry.type-label;
+                                    x: root.left-type-x();
+                                    y: 0px;
+                                    width: root.left-type-width;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: #9a9aa2;
+                                    font-size: 12px;
+                                }
+                                if root.left-col-mtime-visible : Text {
+                                    text: format-mtime(entry.mtime);
+                                    x: root.left-mtime-x();
+                                    y: 0px;
+                                    width: root.left-mtime-width;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: #9a9aa2;
+                                    font-size: 12px;
+                                }
+                                }
+                                // Folder rows are drop targets of their own.
+                                if entry.is-dir : row-drop := DropArea {
+                                    width: 100%;
+                                    height: 100%;
+                                    can-drop(event) => {
+                                        return root.drag-source-pane >= 0 ? event.proposed-action : DragAction.none;
+                                    }
+                                    dropped(event) => {
+                                        root.pane-dropped(0, i, root.drag-move-intent);
+                                        return event.proposed-action;
+                                    }
+                                    Rectangle {
+                                        visible: row-drop.has-drag;
+                                        width: 100%;
+                                        height: 100%;
+                                        // C++ `DragAwareTreeView::paintEvent`:
+                                        // translucent highlight over the row.
+                                        background: #4a90d95a;
+                                        border-width: 1px;
+                                        border-color: #4a90d9;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---------------- splitter handle ----------------------------------
+                // Incremental drag math (width + cursor delta, anchored at the
+                // press offset) so the divider tracks the cursor 1:1; an
+                // absolute formula would converge at half speed because the
+                // handle itself moves while the panes resize.
+                splitter := Rectangle {
+                    width: 7px;
+                    background: root.splitter-dragging ? #4a90d9 : (splitter-area.has-hover ? #4a4a52 : #2f2f34);
+                    splitter-area := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: MouseCursor.ew-resize;
+                        pointer-event(event) => {
+                            if (event.kind == PointerEventKind.down) {
+                                root.splitter-dragging = true;
+                                root.splitter-anchor-x = self.pressed-x;
+                            }
+                            if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                                root.splitter-dragging = false;
+                            }
+                            if (event.kind == PointerEventKind.move && root.splitter-dragging) {
+                                root.left-pane-width = clamp(root.left-pane-width + self.mouse-x - root.splitter-anchor-x, 260px, max(root.width - 260px, 260px));
+                            }
+                        }
+                    }
+                }
+
+                // ---------------- right pane (local / remote) ---------------------
+                right-pane := Rectangle {
+                    horizontal-stretch: 1;
+                    background: #2d2d32;
+                    border-width: right-drop.has-drag ? 2px : 0px;
+                    border-color: #4a90d9;
+                    changed width => { root.right-pane-w = self.width; }
+
+                    // Pane-wide drop target (see the left pane).
+                    right-drop := DropArea {
+                        width: 100%;
+                        height: 100%;
+                        can-drop(event) => {
+                            return root.drag-source-pane >= 0 ? event.proposed-action : DragAction.none;
+                        }
+                        dropped(event) => {
+                            root.pane-dropped(1, -1, root.drag-move-intent);
+                            return event.proposed-action;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 0px;
+
+                        Rectangle {
+                            height: 32px;
+                            background: #313136;
+                            HorizontalLayout {
+                                width: parent.width;
+                                height: parent.height;
+                                padding-left: 4px;
+                                spacing: 2px;
+                            ToolIcon {
+                                tooltip: @tr("Up");
+                                enabled: root.right-can-go-up;
+                                source: @image-url("../../../assets/icons/action-go-up.svg");
+                                clicked => { go-up-right(); }
+                            }
+                            ToolIcon {
+                                tooltip: @tr("Open right folder");
+                                enabled: root.right-local-mode;
+                                source: @image-url("../../../assets/icons/action-open-folder.svg");
+                                clicked => { choose-right-dir(); }
+                            }
+                            ToolIcon {
+                                tooltip: @tr("Home");
+                                source: @image-url("../../../assets/icons/action-go-home.svg");
+                                clicked => { go-home-right(); }
+                            }
+                            ToolIcon {
+                                tooltip: @tr("Search items");
+                                source: @image-url("../../../assets/icons/action-search-item.svg");
+                                clicked => { search-right-requested(); }
+                            }
+                            ToolIcon {
+                                tooltip: @tr("Refresh");
+                                source: @image-url("../../../assets/icons/action-refresh.svg");
+                                clicked => { refresh-right(); }
+                            }
+                            Rectangle { width: 1px; background: #3c3c42; }
+                            ToolIcon {
+                                enabled: root.right-selection-acts;
+                                tooltip: @tr("Copy to left panel");
+                                source: @image-url("../../../assets/icons/action-copy.svg");
+                                clicked => { copy-right-to-left(); }
+                            }
+                            ToolIcon {
+                                enabled: root.right-selection-acts;
+                                tooltip: @tr("Move to left panel");
+                                source: @image-url("../../../assets/icons/action-move-to-left.svg");
+                                clicked => { move-right-to-left(); }
+                            }
+                            ToolIcon {
+                                enabled: root.right-selection-acts;
+                                tooltip: @tr("Delete");
+                                source: @image-url("../../../assets/icons/action-delete.svg");
+                                clicked => { delete-right(); }
+                            }
+                            ToolIcon {
+                                enabled: root.right-selection-acts;
+                                tooltip: @tr("Rename (F2)");
+                                source: @image-url("../../../assets/icons/action-rename.svg");
+                                clicked => { rename-right(); }
+                            }
+                            ToolIcon {
+                                tooltip: @tr("New file (F10)");
+                                source: @image-url("../../../assets/icons/action-new-file.svg");
+                                clicked => { new-file-right(); }
+                            }
+                            ToolIcon {
+                                tooltip: @tr("New folder (F9)");
+                                source: @image-url("../../../assets/icons/action-new-folder.svg");
+                                clicked => { new-dir-right(); }
+                            }
+                            Rectangle { width: 1px; background: #3c3c42; }
+                            ToolIcon {
+                                enabled: root.remote-connected;
+                                tooltip: @tr("Download (F7)");
+                                source: @image-url("../../../assets/icons/action-download.svg");
+                                clicked => { download-requested(); }
+                            }
+                            ToolIcon {
+                                enabled: root.remote-connected;
+                                tooltip: @tr("Upload (F8)");
+                                source: @image-url("../../../assets/icons/action-upload.svg");
+                                clicked => { upload-requested(); }
+                            }
+                            ToolIcon {
+                                enabled: root.remote-connected;
+                                tooltip: @tr("Open in terminal");
+                                source: @image-url("../../../assets/icons/action-open-terminal.svg");
+                                clicked => { open-terminal-right(); }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            ToolIcon {
+                                enabled: root.remote-connected && root.right-supports-permissions;
+                                tooltip: @tr("Change permissions");
+                                source: @image-url("../../../assets/icons/action-open-folder-remote.svg");
+                                clicked => { permissions-right(); }
+                            }
+                            }
+                        }
+
+                        // Breadcrumbs (clickable path segments).
+                        Rectangle {
+                            height: 24px;
+                            background: #2d2d32;
+                            HorizontalLayout {
+                                width: parent.width;
+                                height: parent.height;
+                                padding-left: 4px;
+                                padding-right: 4px;
+                                spacing: 1px;
+                                for crumb[j] in root.right-breadcrumbs : CrumbButton {
+                                    text: crumb;
+                                    clicked => { right-crumb-clicked(j); }
+                                }
+                                // Stretch filler keeps this row from clamping the
+                                // pane's maximum width to the crumbs' preferred width.
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            height: 30px;
+                            padding-left: 4px;
+                            padding-right: 4px;
+                            padding-top: 2px;
+                            padding-bottom: 2px;
+                            spacing: 4px;
+                            Rectangle {
+                                height: 26px;
+                                horizontal-stretch: 1;
+                                background: #202024;
+                                border-color: #3c3c42;
+                                border-width: 1px;
+                                border-radius: 4px;
+                                TextInput {
+                                    x: 8px;
+                                    y: 0px;
+                                    width: parent.width - 16px - 40px;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    text <=> root.right-path;
+                                    color: #e6e6e9;
+                                    font-size: 12px;
+                                    key_pressed(event) => { root.focused-pane = 1; reject }
+                                    accepted => { right-path-entered(self.text); }
+                                }
+                                // Qt `setClearButtonEnabled(true)` on the path edit.
+                                Text {
+                                    x: parent.width - 40px;
+                                    y: 0px;
+                                    width: 18px;
+                                    height: parent.height;
+                                    text: "✕";
+                                    visible: root.right-path != "";
+                                    vertical-alignment: center;
+                                    horizontal-alignment: center;
+                                    color: clear-right-hover.has-hover ? #e6e6e9 : #9a9aa2;
+                                    font-size: 11px;
+                                    clear-right-hover := TouchArea {
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => { root.right-path = ""; }
+                                    }
+                                }
+                                // Recent remote folders dropdown (recent-path history).
+                                Text {
+                                    x: parent.width - 22px;
+                                    y: 0px;
+                                    width: 18px;
+                                    height: parent.height;
+                                    text: "▾";
+                                    vertical-alignment: center;
+                                    horizontal-alignment: center;
+                                    color: recent-right-hover.has-hover ? #e6e6e9 : #9a9aa2;
+                                    font-size: 11px;
+                                    recent-right-hover := TouchArea {
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => {
+                                            root.right-recent-paths-requested();
+                                            recent-right-popup.show();
+                                        }
+                                    }
+                                }
+                                recent-right-popup := PopupWindow {
+                                    close-policy: close-on-click-outside;
+                                    x: max(parent.width - 300px, 0px);
+                                    y: parent.height + 2px;
+                                    width: 300px;
+                                    height: min(recent-right-layout.preferred-height, 320px);
+                                    MenuPopupFrame {
+                                        width: 100%;
+                                        height: 100%;
+                                        recent-right-layout := VerticalLayout {
+                                            padding: 4px;
+                                            for path in root.right-recent-paths : MenuRow {
+                                                text: path;
+                                                clicked => {
+                                                    recent-right-popup.close();
+                                                    root.right-recent-path-chosen(path);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            ToolIcon {
+                                enabled: !root.scp-panel-visible;
+                                tooltip: @tr("Open right folder");
+                                source: @image-url("../../../assets/icons/action-open-folder.svg");
+                                clicked => { choose-right-dir(); }
+                            }
+                        }
+
+                        // Header (Name | Size | Modified | Permissions).
+                        // Column geometry comes from the shared pure
+                        // functions so labels, drag handles and row cells
+                        // share one width basis (the header width, mirrored
+                        // into root.right-col-basis). Handles sit after the
+                        // labels so they are hit-tested first; right-click
+                        // any header column for the visibility menu.
+                        Rectangle {
+                            height: 24px;
+                            background: #313136;
+                            changed width => { root.right-col-basis = self.width; }
+                            Text {
+                                text: root.right-sort-column == 0 ? @tr("Name") + (root.right-sort-ascending ? " ▲" : " ▼") : @tr("Name");
+                                x: 27px;
+                                y: 0px;
+                                width: root.right-name-w();
+                                height: parent.height;
+                                vertical-alignment: center;
+                                color: #9a9aa2;
+                                font-weight: 600;
+                                font-size: 12px;
+                            }
+                            TouchArea {
+                                x: 27px;
+                                y: 0px;
+                                width: root.right-name-w();
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => { root.pane-sort-requested(1, 0); }
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        root.right-cols-menu-x = clamp(self.x + self.mouse-x - 12px, 4px, max(4px, root.right-col-basis - 184px - 4px));
+                                        right-cols-popup.show();
+                                    }
+                                }
+                            }
+                            if root.right-col-size-visible : Text {
+                                text: root.right-sort-column == 1 ? @tr("Size") + (root.right-sort-ascending ? " ▲" : " ▼") : @tr("Size");
+                                x: root.right-size-x();
+                                y: 0px;
+                                width: root.right-size-width;
+                                height: parent.height;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                                color: #9a9aa2;
+                                font-weight: 600;
+                                font-size: 12px;
+                            }
+                            if root.right-col-size-visible : TouchArea {
+                                x: root.right-size-x();
+                                y: 0px;
+                                width: root.right-size-width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => { root.pane-sort-requested(1, 1); }
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        root.right-cols-menu-x = clamp(self.x + self.mouse-x - 12px, 4px, max(4px, root.right-col-basis - 184px - 4px));
+                                        right-cols-popup.show();
+                                    }
+                                }
+                            }
+                            if root.right-col-mtime-visible : Text {
+                                text: root.right-sort-column == 2 ? @tr("Date") + (root.right-sort-ascending ? " ▲" : " ▼") : @tr("Date");
+                                x: root.right-mtime-x();
+                                y: 0px;
+                                width: root.right-mtime-width;
+                                height: parent.height;
+                                vertical-alignment: center;
+                                color: #9a9aa2;
+                                font-weight: 600;
+                                font-size: 12px;
+                            }
+                            if root.right-col-mtime-visible : TouchArea {
+                                x: root.right-mtime-x();
+                                y: 0px;
+                                width: root.right-mtime-width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => { root.pane-sort-requested(1, 2); }
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        root.right-cols-menu-x = clamp(self.x + self.mouse-x - 12px, 4px, max(4px, root.right-col-basis - 184px - 4px));
+                                        right-cols-popup.show();
+                                    }
+                                }
+                            }
+                            if root.right-col-perm-visible : Text {
+                                text: root.right-sort-column == 3
+                                    ? (root.right-local-mode ? @tr("Kind") : @tr("Permissions")) + (root.right-sort-ascending ? " ▲" : " ▼")
+                                    : (root.right-local-mode ? @tr("Kind") : @tr("Permissions"));
+                                x: root.right-perm-x();
+                                y: 0px;
+                                width: root.right-perm-width;
+                                height: parent.height;
+                                vertical-alignment: center;
+                                color: #9a9aa2;
+                                font-weight: 600;
+                                font-size: 12px;
+                            }
+                            if root.right-col-perm-visible : TouchArea {
+                                x: root.right-perm-x();
+                                y: 0px;
+                                width: root.right-perm-width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => { root.pane-sort-requested(1, 3); }
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        root.right-cols-menu-x = clamp(self.x + self.mouse-x - 12px, 4px, max(4px, root.right-col-basis - 184px - 4px));
+                                        right-cols-popup.show();
+                                    }
+                                }
+                            }
+                            if root.right-col-size-visible : ColumnHandle {
+                                x: root.right-size-x() - 4.5px;
+                                height: parent.height;
+                                width-value <=> root.right-size-width;
+                                width-max: max(32px, root.right-col-basis - 27px - 60px - root.right-mtime-w() - root.right-perm-w());
+                            }
+                            if root.right-col-mtime-visible : ColumnHandle {
+                                x: root.right-mtime-x() - 4.5px;
+                                height: parent.height;
+                                width-value <=> root.right-mtime-width;
+                                width-max: max(32px, root.right-col-basis - 27px - 60px - root.right-size-w() - root.right-perm-w());
+                            }
+                            if root.right-col-perm-visible : ColumnHandle {
+                                x: root.right-perm-x() - 4.5px;
+                                height: parent.height;
+                                width-value <=> root.right-perm-width;
+                                width-max: max(32px, root.right-col-basis - 27px - 60px - root.right-size-w() - root.right-mtime-w());
+                            }
+                            right-cols-popup := PopupWindow {
+                                close-policy: close-on-click-outside;
+                                x: root.right-cols-menu-x;
+                                y: 24px;
+                                width: 184px;
+                                height: right-cols-layout.preferred-height;
+                                MenuPopupFrame {
+                                    width: 100%;
+                                    height: 100%;
+                                    right-cols-layout := VerticalLayout {
+                                        padding: 4px;
+                                        MenuCheckRow {
+                                            text: @tr("Size");
+                                            checked <=> root.right-col-size-visible;
+                                        }
+                                        MenuCheckRow {
+                                            text: @tr("Date");
+                                            checked <=> root.right-col-mtime-visible;
+                                        }
+                                        MenuCheckRow {
+                                            text: root.right-local-mode ? @tr("Kind") : @tr("Permissions");
+                                            checked <=> root.right-col-perm-visible;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // SCP transfer-only mode replaces the file list.
+                        if root.scp-panel-visible : Rectangle {
+                            vertical-stretch: 1;
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 8px;
+                                Text {
+                                    text: @tr("This protocol works in transfer-only mode.\nUse the remote path above as the target folder for uploads.\nFor downloads, choose a remote file path explicitly.");
+                                    color: #9a9aa2;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                                ToolTextButton {
+                                    text: @tr("Upload local files…");
+                                    min-width: 160px;
+                                    height: 26px;
+                                    source: @image-url("../../../assets/icons/action-upload.svg");
+                                    clicked => { upload-requested(); }
+                                }
+                                ToolTextButton {
+                                    text: @tr("Download remote file…");
+                                    min-width: 176px;
+                                    height: 26px;
+                                    source: @image-url("../../../assets/icons/action-download.svg");
+                                    clicked => { download-requested(); }
+                                }
+                                Rectangle { vertical-stretch: 1; }
+                            }
+                        }
+
+                        // Empty-folder placeholder (list is hidden in that case).
+                        if !root.scp-panel-visible && root.right-entries.length == 0 : Rectangle {
+                            vertical-stretch: 1;
+                            Text {
+                                text: @tr("(empty folder)");
+                                color: #6f6f77;
+                                font-size: 12px;
+                                x: 12px;
+                                y: 12px;
+                            }
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        root.right-selected-row = -1;
+                                        root.right-selected-is-parent = false;
+                                        root.right-selected-rows = [];
+                                        root.right-selected-flags = [];
+                                        root.focused-pane = 1;
+                                        right-pane-popup.show();
+                                    }
+                                }
+                                right-pane-popup := PopupWindow {
+                                    close-policy: close-on-click-outside;
+                                    x: 6px;
+                                    y: 6px;
+                                    width: 184px;
+                                    height: right-pane-layout.preferred-height;
+                                    MenuPopupFrame {
+                                        width: 100%;
+                                        height: 100%;
+                                        right-pane-layout := VerticalLayout {
+                                            padding: 4px;
+                                            MenuRow {
+                                                text: @tr("Up");
+                                                visible: root.right-can-go-up;
+                                                clicked => { right-pane-popup.close(); go-up-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("New file");
+                                                clicked => { right-pane-popup.close(); new-file-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("New folder");
+                                                clicked => { right-pane-popup.close(); new-dir-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("Refresh");
+                                                clicked => { right-pane-popup.close(); refresh-right(); }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if !root.scp-panel-visible && root.right-entries.length > 0 : ListView {
+                            vertical-stretch: 1;
+                            for entry[i] in root.right-entries : DragArea {
+                                width: 100%;
+                                height: 26px;
+                                data: root.drag-payload;
+                                allow-copy: true;
+                                // Only allow a "move" negotiation when the
+                                // press captured Ctrl/Cmd (the C++ rule); left
+                                // unset, the runtime would propose move as its
+                                // no-modifier default and show a move cursor
+                                // for what is actually a copy.
+                                allow-move: root.drag-move-intent;
+                                drag-finished(action) => { root.drag-source-pane = -1; }
+                                TouchArea {
+                                width: 100%;
+                                height: 26px;
+                                mouse-cursor: MouseCursor.pointer;
+                                // Parallel to the entries model; Rust keeps the
+                                // length in sync with every reload.
+                                property <bool> is-selected: i < root.right-selected-flags.length && root.right-selected-flags[i];
+                                Rectangle {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    background: parent.is-selected ? #33506e : (mod(i, 2) == 0 ? #2c2c31 : #2d2d32);
+                                }
+                                clicked => {
+                                    root.focused-pane = 1;
+                                    // Ctrl/Cmd- and Shift-clicks extend the
+                                    // selection without activating (Qt
+                                    // ExtendedSelection).
+                                    if (!root.row-click-extended && root.single-click-mode) { right-item-activated(i); }
+                                }
+                                double-clicked => {
+                                    root.focused-pane = 1;
+                                    if (!root.row-click-extended && !root.single-click-mode) { right-item-activated(i); }
+                                }
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        // Qt right-click keeps an already
+                                        // selected row selected (so the
+                                        // context menu acts on the whole
+                                        // selection); otherwise it selects it.
+                                        if (!self.is-selected) {
+                                            right-row-clicked(i, false, false);
+                                        }
+                                        root.focused-pane = 1;
+                                        right-row-popup.show();
+                                    } else if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                                        // TouchArea.clicked carries no
+                                        // modifiers; capture them on press.
+                                        root.row-click-extended = event.modifiers.control || event.modifiers.meta || event.modifiers.shift;
+                                        // Remember the drag source and the
+                                        // copy-vs-move intent (Ctrl/Cmd = move).
+                                        root.drag-source-pane = 1;
+                                        root.drag-move-intent = event.modifiers.control || event.modifiers.meta;
+                                        right-row-clicked(i, event.modifiers.control || event.modifiers.meta, event.modifiers.shift);
+                                    }
+                                }
+                                right-row-popup := PopupWindow {
+                                    close-policy: close-on-click-outside;
+                                    x: 6px;
+                                    y: 26px;
+                                    width: 184px;
+                                    height: right-row-layout.preferred-height;
+                                    MenuPopupFrame {
+                                        width: 100%;
+                                        height: 100%;
+                                        right-row-layout := VerticalLayout {
+                                            padding: 4px;
+                                            // C++ showRightContextMenu(): Up, then Download,
+                                            // then creation (no selection) or the selection
+                                            // actions, with permissions last.
+                                            MenuRow {
+                                                text: @tr("Up");
+                                                visible: root.right-can-go-up;
+                                                clicked => { right-row-popup.close(); go-up-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("Download");
+                                                enabled: root.remote-connected;
+                                                clicked => { right-row-popup.close(); download-requested(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("New file");
+                                                visible: !root.right-selection-acts;
+                                                clicked => { right-row-popup.close(); new-file-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("New folder");
+                                                visible: !root.right-selection-acts;
+                                                clicked => { right-row-popup.close(); new-dir-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("Copy to left panel");
+                                                visible: root.right-selection-acts;
+                                                clicked => { right-row-popup.close(); copy-right-to-left(); }
+                                            }
+                                            Rectangle { height: 1px; background: #3c3c42; visible: root.right-selection-acts; }
+                                            MenuRow {
+                                                text: @tr("Upload…");
+                                                visible: root.right-selection-acts && root.remote-connected;
+                                                clicked => { right-row-popup.close(); upload-requested(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("New file");
+                                                visible: root.right-selection-acts;
+                                                clicked => { right-row-popup.close(); new-file-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("New folder");
+                                                visible: root.right-selection-acts;
+                                                clicked => { right-row-popup.close(); new-dir-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("Rename");
+                                                visible: root.right-selection-acts;
+                                                clicked => { right-row-popup.close(); rename-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("Delete");
+                                                visible: root.right-selection-acts;
+                                                clicked => { right-row-popup.close(); delete-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("Move to left panel");
+                                                visible: root.right-selection-acts;
+                                                clicked => { right-row-popup.close(); move-right-to-left(); }
+                                            }
+                                            Rectangle { height: 1px; background: #3c3c42; visible: root.right-selection-acts && root.remote-connected && root.right-supports-permissions; }
+                                            MenuRow {
+                                                text: @tr("Change permissions…");
+                                                visible: root.right-selection-acts && root.remote-connected && root.right-supports-permissions;
+                                                clicked => { right-row-popup.close(); permissions-right(); }
+                                            }
+                                            Rectangle { height: 1px; background: #3c3c42; }
+                                            MenuRow {
+                                                text: @tr("Refresh");
+                                                clicked => { right-row-popup.close(); refresh-right(); }
+                                            }
+                                            MenuRow {
+                                                text: @tr("Open in terminal");
+                                                enabled: root.remote-connected;
+                                                clicked => { right-row-popup.close(); open-terminal-right(); }
+                                            }
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    x: 9px;
+                                    y: (parent.height - self.height) / 2;
+                                    width: 12px;
+                                    height: 12px;
+                                    border-radius: 3px;
+                                    background: entry.is-dir ? #4a90d9 : #6b6b73;
+                                }
+                                Text {
+                                    text: entry.name;
+                                    x: 27px;
+                                    y: 0px;
+                                    width: root.right-name-w();
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: #e6e6e9;
+                                    font-size: 12px;
+                                }
+                                if root.right-col-size-visible : Text {
+                                    // C++ RemoteModel: directories have no
+                                    // size cell; unknown sizes show "—".
+                                    text: entry.is-dir ? "" : (entry.has-size ? format-size-remote(entry.size) : "—");
+                                    x: root.right-size-x();
+                                    y: 0px;
+                                    width: root.right-size-width;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: right;
+                                    color: #9a9aa2;
+                                    font-size: 12px;
+                                }
+                                if root.right-col-mtime-visible : Text {
+                                    text: format-mtime(entry.mtime);
+                                    x: root.right-mtime-x();
+                                    y: 0px;
+                                    width: root.right-mtime-width;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: #9a9aa2;
+                                    font-size: 12px;
+                                }
+                                if root.right-col-perm-visible : Text {
+                                    text: root.right-local-mode ? entry.type-label : entry.permissions;
+                                    x: root.right-perm-x();
+                                    y: 0px;
+                                    width: root.right-perm-width;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: #9a9aa2;
+                                    font-size: 12px;
+                                }
+                                }
+                                // Folder rows are drop targets of their own.
+                                if entry.is-dir : right-row-drop := DropArea {
+                                    width: 100%;
+                                    height: 100%;
+                                    can-drop(event) => {
+                                        return root.drag-source-pane >= 0 ? event.proposed-action : DragAction.none;
+                                    }
+                                    dropped(event) => {
+                                        root.pane-dropped(1, i, root.drag-move-intent);
+                                        return event.proposed-action;
+                                    }
+                                    Rectangle {
+                                        visible: right-row-drop.has-drag;
+                                        width: 100%;
+                                        height: 100%;
+                                        // C++ `DragAwareTreeView::paintEvent`:
+                                        // translucent highlight over the row.
+                                        background: #4a90d95a;
+                                        border-width: 1px;
+                                        border-color: #4a90d9;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ================= status bar =========================================
+
+            Rectangle {
+                height: 26px;
+                background: #313136;
+                HorizontalLayout {
+                    width: parent.width;
+                    height: parent.height;
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 12px;
+
+                Text {
+                    text: root.status-text;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: #c9c9cf;
+                    font-size: 12px;
+                }
+                Text {
+                    visible: root.secrets-warning-visible;
+                    text: @tr("Warning: unencrypted secrets storage active (fallback)");
+                    vertical-alignment: center;
+                    color: #e05858;
+                    font-weight: 600;
+                    font-size: 12px;
+                }
+                Text {
+                    visible: root.risk-banner-visible;
+                    text: @tr("Risk: host key not verified in this session");
+                    vertical-alignment: center;
+                    color: #e05858;
+                    font-weight: 600;
+                    font-size: 12px;
+                }
+                Text {
+                    property <string> tip: @tr("Active connection method for this session");
+                    text: root.connection-type-text;
+                    vertical-alignment: center;
+                    color: #9a9aa2;
+                    font-size: 12px;
+                    Tooltip { text: @markdown("\{tip}"); }
+                }
+                Text {
+                    property <string> tip: @tr("Elapsed time for the current connection session");
+                    text: root.connection-elapsed-text;
+                    vertical-alignment: center;
+                    color: #9a9aa2;
+                    font-size: 12px;
+                    Tooltip { text: @markdown("\{tip}"); }
+                }
+                }
+            }
+        }
+
+        // ================= keyboard shortcuts =====================================
+
+        KeyBinding { keys: @keys(F2); activated => { if (root.focused-pane == 0) { rename-left(); } else { rename-right(); } } }
+        KeyBinding { keys: @keys(F5); activated => { if (root.focused-pane == 0) { copy-left-to-right(); } else { copy-right-to-left(); } } }
+        KeyBinding { keys: @keys(F6); activated => { if (root.focused-pane == 0) { move-left-to-right(); } else { move-right-to-left(); } } }
+        KeyBinding { keys: @keys(F7); activated => { download-requested(); } }
+        KeyBinding { keys: @keys(F8); activated => { upload-requested(); } }
+        KeyBinding { keys: @keys(F9); activated => { if (root.focused-pane == 0) { new-dir-left(); } else { new-dir-right(); } } }
+        KeyBinding { keys: @keys(F10); activated => { if (root.focused-pane == 0) { new-file-left(); } else { new-file-right(); } } }
+        KeyBinding { keys: @keys(Delete); activated => { if (root.focused-pane == 0) { delete-left(); } else { delete-right(); } } }
+        // List navigation: QTreeView handles the arrow keys/Home/End; the
+        // row-click callback applies the same plain-click selection semantics
+        // as the mouse (Rust keeps the scalar and the multi-selection set in
+        // sync). Return activates the current row.
+        KeyBinding {
+            keys: @keys(DownArrow);
+            activated => {
+                if (root.focused-pane == 0 && root.left-entries.length > 0 && root.left-selected-row < root.left-entries.length - 1) {
+                    left-row-clicked(root.left-selected-row + 1, false, false);
+                } else if (root.focused-pane == 1 && root.right-entries.length > 0 && root.right-selected-row < root.right-entries.length - 1) {
+                    right-row-clicked(root.right-selected-row + 1, false, false);
+                }
+            }
+        }
+        KeyBinding {
+            keys: @keys(UpArrow);
+            activated => {
+                if (root.focused-pane == 0 && root.left-selected-row > 0) {
+                    left-row-clicked(root.left-selected-row - 1, false, false);
+                } else if (root.focused-pane == 1 && root.right-selected-row > 0) {
+                    right-row-clicked(root.right-selected-row - 1, false, false);
+                }
+            }
+        }
+        KeyBinding {
+            keys: @keys(Home);
+            activated => {
+                if (root.focused-pane == 0 && root.left-entries.length > 0) {
+                    left-row-clicked(0, false, false);
+                } else if (root.focused-pane == 1 && root.right-entries.length > 0) {
+                    right-row-clicked(0, false, false);
+                }
+            }
+        }
+        KeyBinding {
+            keys: @keys(End);
+            activated => {
+                if (root.focused-pane == 0 && root.left-entries.length > 0) {
+                    left-row-clicked(root.left-entries.length - 1, false, false);
+                } else if (root.focused-pane == 1 && root.right-entries.length > 0) {
+                    right-row-clicked(root.right-entries.length - 1, false, false);
+                }
+            }
+        }
+        KeyBinding {
+            keys: @keys(Return);
+            activated => {
+                if (root.focused-pane == 0 && root.left-selected-row >= 0) {
+                    left-item-activated(root.left-selected-row);
+                } else if (root.focused-pane == 1 && root.right-selected-row >= 0) {
+                    right-item-activated(root.right-selected-row);
+                }
+            }
+        }
+        // Ctrl/Cmd+A selects every non-parent entry of the focused pane;
+        // Escape collapses the selection back to the current row (Qt
+        // ExtendedSelection).
+        KeyBinding { keys: @keys(Control+A); activated => { pane-select-all(root.focused-pane); } }
+        KeyBinding { keys: @keys(Meta+A); activated => { pane-select-all(root.focused-pane); } }
+        KeyBinding { keys: @keys(Escape); activated => { pane-collapse-selection(root.focused-pane); } }
+        KeyBinding { keys: @keys(Control+F); activated => { if (root.focused-pane == 0) { search-left-requested(); } else { search-right-requested(); } } }
+        KeyBinding { keys: @keys(Meta+F); activated => { if (root.focused-pane == 0) { search-left-requested(); } else { search-right-requested(); } } }
+        KeyBinding { keys: @keys(Control+Comma); activated => { show-settings(); } }
+        KeyBinding { keys: @keys(Meta+Comma); activated => { show-settings(); } }
+        KeyBinding { keys: @keys(Control+Q); activated => { quit-requested(); } }
+        KeyBinding { keys: @keys(Meta+Q); activated => { quit-requested(); } }
+        KeyBinding { keys: @keys(F11); activated => { root.fullscreen-toggle-requested(); } }
+        KeyBinding { keys: @keys(Meta+Control+F); activated => { root.fullscreen-toggle-requested(); } }
+
+        // Configurable Transfers shortcut (default F12).
+        KeyBinding { keys: @keys(F12); enabled: root.queue-shortcut == "F12"; activated => { show-queue(); } }
+        KeyBinding { keys: @keys(Control+Shift+T); enabled: root.queue-shortcut == "Ctrl+Shift+T"; activated => { show-queue(); } }
+        KeyBinding { keys: @keys(Control+Alt+T); enabled: root.queue-shortcut == "Ctrl+Alt+T"; activated => { show-queue(); } }
+        KeyBinding { keys: @keys(Control+J); enabled: root.queue-shortcut == "Ctrl+J"; activated => { show-queue(); } }
+
+        // Configurable History shortcut (default Ctrl+Shift+H).
+        KeyBinding { keys: @keys(Control+Shift+H); enabled: root.history-shortcut == "Ctrl+Shift+H"; activated => { show-history(); } }
+        KeyBinding { keys: @keys(Control+H); enabled: root.history-shortcut == "Ctrl+H"; activated => { show-history(); } }
+        KeyBinding { keys: @keys(Control+Alt+H); enabled: root.history-shortcut == "Ctrl+Alt+H"; activated => { show-history(); } }
+    }
+
+    // Splitter drag state (internal).
+    property <bool> splitter-dragging: false;
+    property <length> splitter-anchor-x: 0px;
+    // Geometry probes for layout tests (pane/layout actual widths).
+    out property <length> right-pane-w;
+    out property <length> panes-w;
+    out property <length> vlayout-w;
+    out property <length> scope-w;
+}
+
+// ---------------------------------------------------------------------------
+// Search dialog (pattern + recursive checkbox + results list).
+// ---------------------------------------------------------------------------
+
+export component SearchDialog inherits Window {
+    in-out property <string> title-text: @tr("Search items");
+    in-out property <string> pattern: "";
+    in-out property <bool> recursive: false;
+    in-out property <bool> busy: false;
+    in-out property <string> summary-text: "";
+    in-out property <[string]> results: [];
+
+    callback search-requested();
+    callback cancel-requested();
+
+    width: 560px;
+    height: 480px;
+    background: #26262a;
+    title: root.title-text;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        Text {
+            text: @tr("Pattern accepts wildcard (*, ?) or regex.\nExamples: *report*, report, ^report_.*\\.pdf$");
+            color: #9a9aa2;
+            font-size: 12px;
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text {
+                text: @tr("Pattern:");
+                vertical-alignment: center;
+                color: #e6e6e9;
+                font-size: 12px;
+                width: 60px;
+            }
+            LineEdit {
+                text <=> root.pattern;
+                placeholder-text: @tr("e.g. *report*");
+                horizontal-stretch: 1;
+                enabled: !root.busy;
+                accepted => { search-requested(); }
+            }
+        }
+        CheckBox {
+            text: @tr("Search recursively in subfolders");
+            checked <=> root.recursive;
+            enabled: !root.busy;
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Button {
+                text: @tr("Search");
+                primary: true;
+                enabled: !root.busy && root.pattern != "";
+                clicked => { search-requested(); }
+            }
+            Button {
+                text: @tr("Cancel");
+                enabled: !root.busy;
+                clicked => { cancel-requested(); root.hide(); }
+            }
+            Text {
+                text: root.busy ? @tr("Searching…") : "";
+                vertical-alignment: center;
+                color: #9a9aa2;
+                font-size: 12px;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: @tr("Close");
+                clicked => { root.hide(); }
+            }
+        }
+        Text {
+            text: root.summary-text;
+            color: #c9c9cf;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            background: #2d2d32;
+            border-color: #3c3c42;
+            border-width: 1px;
+            border-radius: 4px;
+            if root.results.length == 0 : Text {
+                text: @tr("(no results)");
+                color: #6f6f77;
+                font-size: 12px;
+                x: 12px;
+                y: 12px;
+            }
+            if root.results.length > 0 : ListView {
+                for result[i] in root.results : Rectangle {
+                    width: 100%;
+                    height: 24px;
+                    background: mod(i, 2) == 0 ? #2c2c31 : #2d2d32;
+                    Text {
+                        text: result;
+                        x: 10px;
+                        y: 0px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: #e6e6e9;
+                        font-size: 12px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// History dialog (three tabs: local paths, remote paths, servers).
+// ---------------------------------------------------------------------------
+
+export component HistoryDialog inherits Window {
+    in-out property <[string]> local-paths;
+    in-out property <[string]> remote-paths;
+    in-out property <[string]> servers;
+    in-out property <int> local-selected: -1;
+    in-out property <int> remote-selected: -1;
+    in-out property <int> server-selected: -1;
+    in-out property <int> active-tab: 0;
+
+    callback open-selected();
+    callback clear-history();
+
+    width: 620px;
+    height: 460px;
+    background: #26262a;
+    title: @tr("History");
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        TabWidget {
+            vertical-stretch: 1;
+            Tab {
+                title: @tr("Recent local paths");
+                if root.local-paths.length == 0 : Text {
+                    text: @tr("No recent history");
+                    color: #6f6f77;
+                    font-size: 12px;
+                    x: 12px;
+                    y: 12px;
+                }
+                if root.local-paths.length > 0 : ListView {
+                    for path[i] in root.local-paths : TouchArea {
+                        width: 100%;
+                        height: 26px;
+                        mouse-cursor: MouseCursor.pointer;
+                        Rectangle {
+                            width: parent.width;
+                            height: parent.height;
+                            background: i == root.local-selected ? #33506e : (mod(i, 2) == 0 ? #2c2c31 : #2d2d32);
+                        }
+                        clicked => { root.local-selected = i; }
+                        double-clicked => { root.local-selected = i; root.open-selected(); }
+                        Text {
+                            text: path;
+                            x: 10px;
+                            y: 0px;
+                            width: parent.width - 20px;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            color: #e6e6e9;
+                            font-size: 12px;
+                        }
+                    }
+                }
+            }
+            Tab {
+                title: @tr("Recent remote paths");
+                if root.remote-paths.length == 0 : Text {
+                    text: @tr("No recent history");
+                    color: #6f6f77;
+                    font-size: 12px;
+                    x: 12px;
+                    y: 12px;
+                }
+                if root.remote-paths.length > 0 : ListView {
+                    for path[i] in root.remote-paths : TouchArea {
+                        width: 100%;
+                        height: 26px;
+                        mouse-cursor: MouseCursor.pointer;
+                        Rectangle {
+                            width: parent.width;
+                            height: parent.height;
+                            background: i == root.remote-selected ? #33506e : (mod(i, 2) == 0 ? #2c2c31 : #2d2d32);
+                        }
+                        clicked => { root.remote-selected = i; }
+                        double-clicked => { root.remote-selected = i; root.open-selected(); }
+                        Text {
+                            text: path;
+                            x: 10px;
+                            y: 0px;
+                            width: parent.width - 20px;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            color: #e6e6e9;
+                            font-size: 12px;
+                        }
+                    }
+                }
+            }
+            Tab {
+                title: @tr("Recent servers");
+                if root.servers.length == 0 : Text {
+                    text: @tr("No recent history");
+                    color: #6f6f77;
+                    font-size: 12px;
+                    x: 12px;
+                    y: 12px;
+                }
+                if root.servers.length > 0 : ListView {
+                    for server[i] in root.servers : TouchArea {
+                        width: 100%;
+                        height: 26px;
+                        mouse-cursor: MouseCursor.pointer;
+                        Rectangle {
+                            width: parent.width;
+                            height: parent.height;
+                            background: i == root.server-selected ? #33506e : (mod(i, 2) == 0 ? #2c2c31 : #2d2d32);
+                        }
+                        clicked => { root.server-selected = i; }
+                        double-clicked => { root.server-selected = i; root.open-selected(); }
+                        Text {
+                            text: server;
+                            x: 10px;
+                            y: 0px;
+                            width: parent.width - 20px;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            color: #e6e6e9;
+                            font-size: 12px;
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            Button {
+                text: @tr("Open selected");
+                primary: true;
+                enabled: (root.active-tab == 0 && root.local-selected >= 0)
+                    || (root.active-tab == 1 && root.remote-selected >= 0)
+                    || (root.active-tab == 2 && root.server-selected >= 0);
+                clicked => { root.open-selected(); }
+            }
+            Button {
+                text: @tr("Clear history");
+                clicked => { root.clear-history(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: @tr("Close");
+                clicked => { root.hide(); }
+            }
+        }
+    }
+}

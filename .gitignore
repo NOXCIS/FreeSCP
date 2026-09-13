@@ -1,0 +1,21 @@
+# Rust
+/target/
+
+# Build outputs
+/dist/
+*.AppImage
+*.dmg
+*.sha256
+
+# Secrets / env files
+AuthKey_*.p8
+.env
+.env.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+*.log

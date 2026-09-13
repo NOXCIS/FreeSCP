@@ -1,0 +1,56 @@
+// Overwrite-conflict prompt with "apply to all" support. Port of the Qt
+// QMessageBox used by the copy/move flows: Yes / No / Yes to All / No to All
+// (ui/MainWindowLocalOps.cpp conflict prompts, transfer worker precheck).
+//
+// Rust counterpart: crates/freescp-app/src/main.rs
+// (`prompt_overwrite_choice`); the transfer worker blocks on an mpsc
+// channel while this window is shown, mirroring the C++ condition-variable
+// wait in the transfer manager.
+
+import { Button } from "std-widgets.slint";
+
+export component OverwriteDialog inherits Window {
+    title: @tr("Overwrite confirmation");
+    width: 520px;
+    height: 320px;
+
+    in-out property <string> message: "";
+
+    callback overwrite();
+    callback skip();
+    callback overwrite-all();
+    callback skip-all();
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text {
+            text: root.message;
+            wrap: word-wrap;
+            vertical-stretch: 1;
+        }
+        Rectangle { } // spacer
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { } // spacer: right-align the buttons
+            Button {
+                text: @tr("Overwrite");
+                primary: true;
+                clicked => { root.overwrite(); }
+            }
+            Button {
+                text: @tr("Skip");
+                clicked => { root.skip(); }
+            }
+            Button {
+                text: @tr("Overwrite all");
+                clicked => { root.overwrite-all(); }
+            }
+            Button {
+                text: @tr("Skip all");
+                clicked => { root.skip-all(); }
+            }
+        }
+    }
+}
