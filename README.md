@@ -83,8 +83,38 @@ documented in [docs/PARITY.md](docs/PARITY.md) and exercised by
 
 ## Packaging
 
-- macOS `.app`/DMG: `scripts/package_mac_rust.sh`
-- Linux AppImage: `scripts/package_appimage_rust.sh`
+All release packages are built **inside Docker** and published to the GitHub
+Release for each `v*` tag (and mirrored to GitLab) by
+[.github/workflows/release.yml](.github/workflows/release.yml):
+
+| Target | Artifacts |
+| --- | --- |
+| Linux x86_64 / aarch64 | `FreeSCP-<ver>-<arch>.AppImage`, `FreeSCP-<ver>-linux-<arch>.tar.gz` |
+| macOS x86_64 / arm64 | `FreeSCP-<ver>-macos-<arch>-UNSIGNED.zip` (`FreeSCP.app` + `freescp` CLI) |
+| Windows x86_64 / arm64 | `FreeSCP-<ver>-windows-<arch>-UNSIGNED.zip` (`FreeSCP.exe` + `freescp.exe`) |
+
+- Linux builds run natively in a container matching the target arch (the
+  aarch64 packaging container runs under QEMU binfmt on amd64 runners); the
+  AppImages bundle GTK/xkb/fontconfig dependencies via linuxdeploy and need
+  glibc 2.35+ (Ubuntu 22.04 / Debian 12 or newer).
+- macOS binaries are cross-compiled from Linux with
+  [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) and shipped
+  as unsigned zipped `.app` bundles (Apple licensing forbids building in a
+  macOS container).
+- Windows binaries are cross-compiled with
+  [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) against the
+  `*-pc-windows-gnullvm` Rust targets and shipped unsigned.
+
+Build all six locally (requires Docker with binfmt for cross-arch containers):
+
+```bash
+scripts/release/docker-build-all.sh          # all targets -> dist/release/
+scripts/release/docker-build-all.sh macos-arm64 windows-x86_64   # subset
+```
+
+Platform-specific scripts that run outside Docker are still available for
+signing/notarization workflows: `scripts/package_mac_rust.sh` (Developer ID
+signing, notarization, DMG) and `scripts/package_appimage_rust.sh`.
 
 ## Translations
 

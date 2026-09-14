@@ -7,6 +7,10 @@
 *.dmg
 *.sha256
 
+# Docker release pipeline state (cargo caches, cross-target build dirs)
+/.cargo-home/
+/.docker-target/
+
 # Secrets / env files
 AuthKey_*.p8
 .env

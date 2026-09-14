@@ -7,8 +7,9 @@ description = "FreeSCP desktop application (Slint UI)"
 
 [build-dependencies]
 slint-build.workspace = true
-
-[target.'cfg(windows)'.build-dependencies]
+# Ungated (not [target.'cfg(windows)']): build scripts compile for the host, so
+# a target-gated dep would be missing when cross-compiling Windows from Linux.
+# compile() itself no-ops unless CARGO_CFG_WINDOWS is set (see build.rs).
 winresource = "0.1"
 
 [dependencies]

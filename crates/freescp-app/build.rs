@@ -130,10 +130,15 @@ fn main() {
 // Embeds the application icon (and file metadata) into the PE resource
 // section, so freescp-app.exe shows the FreeSCP icon in Explorer, the
 // taskbar and installers without needing an external .ico next to it.
-// No-op on non-Windows hosts: the target-gated winresource build-dependency
-// is not even compiled there.
-#[cfg(windows)]
+// CARGO_CFG_WINDOWS reflects the TARGET (unlike #[cfg(windows)], which is
+// evaluated against the host), so resources are also embedded when
+// cross-compiling Windows binaries from Linux (windres provided by
+// llvm-mingw). winresource is an ungated build-dependency; its compile()
+// call below is only reached for Windows targets.
 fn embed_windows_resources(manifest: &std::path::Path) {
+    if env::var_os("CARGO_CFG_WINDOWS").is_none() {
+        return;
+    }
     let icon = manifest.join("../../assets/program/icon-freescp.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
     let mut res = winresource::WindowsResource::new();
@@ -143,6 +148,3 @@ fn embed_windows_resources(manifest: &std::path::Path) {
     res.compile()
         .expect("failed to compile Windows resources (app icon)");
 }
-
-#[cfg(not(windows))]
-fn embed_windows_resources(_manifest: &std::path::Path) {}

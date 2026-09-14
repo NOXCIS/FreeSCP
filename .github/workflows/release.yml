@@ -1,0 +1,162 @@
+# Release pipeline: builds every package inside Docker (docker/Dockerfile) and
+# publishes them to a GitHub Release when a v* tag is pushed.
+#
+#   linux-x86_64    FreeSCP-<v>-x86_64.AppImage / -linux-x86_64.tar.gz
+#   linux-aarch64   FreeSCP-<v>-aarch64.AppImage / -linux-aarch64.tar.gz
+#   macos-x86_64    FreeSCP-<v>-macos-x86_64-UNSIGNED.zip (FreeSCP.app + CLI)
+#   macos-arm64     FreeSCP-<v>-macos-arm64-UNSIGNED.zip
+#   windows-x86_64  FreeSCP-<v>-windows-x86_64-UNSIGNED.zip (FreeSCP.exe + CLI)
+#   windows-arm64   FreeSCP-<v>-windows-arm64-UNSIGNED.zip
+#
+# All builds run in containers; the aarch64 Linux job uses QEMU binfmt for the
+# packaging container. macOS/Windows binaries are cross-compiled (zig /
+# llvm-mingw) so no Apple or Windows runners are needed. Artifacts are
+# unsigned; zip names carry the -UNSIGNED marker. Manual runs
+# (workflow_dispatch) only build and upload run artifacts — no release.
+
+name: Release (Docker cross-builds)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: freescp-build:ci
+
+jobs:
+  # ------------------------------------------------------------- builds ----
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - linux-x86_64
+          - linux-aarch64
+          - macos-x86_64
+          - macos-arm64
+          - windows-x86_64
+          - windows-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (arm64 containers on amd64 runner)
+        if: matrix.target == 'linux-aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (gha layer cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          load: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha,scope=rebuild-image
+          cache-to: type=gha,scope=rebuild-image,mode=max
+
+      - name: Cache cargo home (registry + deps)
+        uses: actions/cache@v4
+        with:
+          path: .cargo-home
+          key: cargo-home-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-home-
+
+      - name: Build ${{ matrix.target }} in Docker
+        run: scripts/release/docker-build-all.sh ${{ matrix.target }}
+        env:
+          IMAGE_NAME: ${{ env.IMAGE }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------ release ----
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist/release
+
+      - name: Regenerate combined SHA256SUMS
+        working-directory: dist/release
+        run: |
+          set -euo pipefail
+          rm -f SHA256SUMS
+          sha256sum *.AppImage *.zip *.tar.gz >> SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Write release notes
+        working-directory: dist/release
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ver="${VERSION#v}"
+          {
+            echo "FreeSCP ${VERSION} — packages for Linux, macOS and Windows (x86_64 + ARM64)."
+            echo
+            echo "All builds were produced inside Docker by [docker-build-all.sh](https://github.com/${GITHUB_REPOSITORY}/blob/main/scripts/release/docker-build-all.sh) (cross-compiled with zig for macOS and llvm-mingw for Windows)."
+            echo
+            echo "| Platform | Package | Notes |"
+            echo "| --- | --- | --- |"
+            echo "| Linux x86_64 | \`FreeSCP-${ver}-x86_64.AppImage\` | GUI + CLI, glibc 2.35+ |"
+            echo "| Linux ARM64 | \`FreeSCP-${ver}-aarch64.AppImage\` | GUI + CLI, glibc 2.35+ |"
+            echo "| Linux x86_64 | \`FreeSCP-${ver}-linux-x86_64.tar.gz\` | GUI + CLI tarball |"
+            echo "| Linux ARM64 | \`FreeSCP-${ver}-linux-aarch64.tar.gz\` | GUI + CLI tarball |"
+            echo "| macOS x86_64 | \`FreeSCP-${ver}-macos-x86_64-UNSIGNED.zip\` | FreeSCP.app + CLI, Intel |"
+            echo "| macOS ARM64 | \`FreeSCP-${ver}-macos-arm64-UNSIGNED.zip\` | FreeSCP.app + CLI, Apple Silicon |"
+            echo "| Windows x86_64 | \`FreeSCP-${ver}-windows-x86_64-UNSIGNED.zip\` | FreeSCP.exe + freescp.exe |"
+            echo "| Windows ARM64 | \`FreeSCP-${ver}-windows-arm64-UNSIGNED.zip\` | FreeSCP.exe + freescp.exe |"
+            echo
+            echo "macOS and Windows packages are **unsigned**. On macOS, right-click the app and choose *Open*, or clear the quarantine flag:"
+            echo
+            echo "    xattr -dr com.apple.quarantine /Applications/FreeSCP.app"
+            echo
+            echo "SHA-256 checksums are in \`SHA256SUMS\` and per-artifact \`.sha256\` files."
+          } > RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "FreeSCP ${GITHUB_REF_NAME#v}" \
+            --notes-file dist/release/RELEASE_NOTES.md \
+            --verify-tag \
+            dist/release/*.AppImage \
+            dist/release/*.tar.gz \
+            dist/release/*.zip \
+            dist/release/*.sha256 \
+            dist/release/SHA256SUMS
