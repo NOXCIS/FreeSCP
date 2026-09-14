@@ -68,14 +68,13 @@ build() {
   cmd+=(-p freescp-app -p freescp-cli)
 
   if [[ "$os" == "windows" ]]; then
-    # winresource shells out to a tool literally named `windres`; llvm-mingw
-    # names its tools with the mingw triple (x86_64-w64-mingw32-*), not the
-    # Rust gnullvm triple, so map and shim it onto PATH.
+    # llvm-mingw names its tools with the mingw triple (x86_64-w64-mingw32-*),
+    # not the Rust gnullvm triple. winresource (icon embedding) shells out to
+    # "llvm-windres" by default, which builds for the toolchain's default
+    # target — the wrong arch on cross hosts — so pin WINDRES/AR to the
+    # triple-wrapped tools, which force the correct target.
     local mingw="${triple/-pc-windows-gnullvm/-w64-mingw32}"
-    local shim="/tmp/win-shims-${triple}"
-    mkdir -p "$shim"
-    ln -sf "$(command -v "${mingw}-windres")" "$shim/windres"
-    PATH="$shim:$PATH" "${cmd[@]}"
+    WINDRES="${mingw}-windres" AR="${mingw}-ar" "${cmd[@]}"
   elif [[ "$os" == "macos" ]]; then
     # Vendored C deps (gettext-sys) build Mach-O objects; GNU binutils `ar`
     # writes a corrupt symbol index for them which zig's MachO linker cannot

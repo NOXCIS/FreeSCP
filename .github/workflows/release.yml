@@ -68,8 +68,11 @@ jobs:
           file: docker/Dockerfile
           load: true
           tags: ${{ env.IMAGE }}
-          cache-from: type=gha,scope=rebuild-image
-          cache-to: type=gha,scope=rebuild-image,mode=max
+          # The aarch64 Linux job runs its build container under QEMU, so it
+          # needs the arm64 image variant; everything else uses amd64.
+          platforms: ${{ matrix.target == 'linux-aarch64' && 'linux/arm64' || 'linux/amd64' }}
+          cache-from: type=gha,scope=img-${{ matrix.target == 'linux-aarch64' && 'arm64' || 'amd64' }}
+          cache-to: type=gha,scope=img-${{ matrix.target == 'linux-aarch64' && 'arm64' || 'amd64' }},mode=max
 
       - name: Cache cargo home (registry + deps)
         uses: actions/cache@v4
