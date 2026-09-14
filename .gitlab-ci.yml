@@ -31,9 +31,24 @@ mirror-github-release:
         AUTH=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
       fi
       TAG_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${CI_COMMIT_TAG}"
-      echo "Fetching asset list from ${TAG_URL}"
-      curl -fsSL "${AUTH[@]}" "${TAG_URL}" | jq -r '.assets[].browser_download_url' > urls.txt
-      test -s urls.txt || { echo "no assets found on GitHub release ${CI_COMMIT_TAG}"; exit 1; }
+      # The GitHub release is produced by Actions after the Docker builds
+      # finish, which can lag this tag-triggered job by an hour or more.
+      echo "Waiting for the GitHub release ${CI_COMMIT_TAG} to publish assets..."
+      ASSETS=""
+      for i in $(seq 1 120); do
+        ASSETS=$(curl -fsSL "${AUTH[@]}" "${TAG_URL}" | jq -r '.assets[].browser_download_url' 2>/dev/null || true)
+        if [ -n "${ASSETS}" ]; then
+          N=$(printf '%s\n' "${ASSETS}" | wc -l)
+          if [ "${N}" -ge 17 ]; then break; fi
+          echo "attempt ${i}: release exists with ${N} assets; waiting..."
+        else
+          echo "attempt ${i}: release not published yet; waiting..."
+        fi
+        sleep 60
+      done
+      test -n "${ASSETS}" || { echo "GitHub release ${CI_COMMIT_TAG} did not appear in time"; exit 1; }
+      printf '%s\n' "${ASSETS}" > urls.txt
+      test "$(wc -l < urls.txt)" -ge 17 || { echo "expected at least 17 assets, got: $(cat urls.txt)"; exit 1; }
       while IFS= read -r url; do
         echo "Downloading ${url}"
         curl -fsSL -O "${AUTH[@]}" "${url}"
