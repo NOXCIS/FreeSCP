@@ -4,11 +4,17 @@
 # by .github/workflows/release.yml (GitHub Actions provides the docker builder
 # and QEMU needed for the full 6-target matrix). This pipeline mirrors a
 # published GitHub release into a GitLab Release: it downloads the assets from
-# the public GitHub release, uploads them to this project's generic package
-# registry, and creates a GitLab Release linking them.
+# the public GitHub release, verifies their checksums, uploads them to this
+# project's generic package registry, and creates a GitLab Release linking
+# them.
 #
 # The job runs when a v* tag is pushed and only succeeds once the matching
 # GitHub release exists and carries all expected assets.
+#
+# NOTE: GitLab runs job scripts with /bin/sh (busybox ash on Alpine), so this
+# file must stay POSIX sh — no bash arrays or bashisms. The release itself is
+# created via the API instead of the `release:` keyword because asset link
+# URLs need $VERSION, which YAML release fields cannot see.
 
 stages:
   - release
@@ -23,69 +29,98 @@ mirror-github-release:
     GIT_STRATEGY: none
   script:
     - apk add --no-cache curl jq
-    - export VERSION="${CI_COMMIT_TAG#v}"
     - mkdir -p assets && cd assets
     - |
-      AUTH=()
-      if [ -n "${GITHUB_TOKEN:-}" ]; then
-        AUTH=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
-      fi
-      TAG_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${CI_COMMIT_TAG}"
-      # The GitHub release is produced by Actions after the Docker builds
-      # finish, which can lag this tag-triggered job by an hour or more.
+      V="${CI_COMMIT_TAG#v}"
+      BASE="https://github.com/${GITHUB_REPO}/releases/download/${CI_COMMIT_TAG}"
+      # Poll the public asset URL instead of the GitHub API: the API allows
+      # only 60 unauthenticated requests/hour, which a polling loop would
+      # exhaust long before the ~3h Docker/QEMU build finishes.
       echo "Waiting for the GitHub release ${CI_COMMIT_TAG} to publish assets..."
-      ASSETS=""
+      UP=0
       for i in $(seq 1 240); do
-        ASSETS=$(curl -fsSL "${AUTH[@]}" "${TAG_URL}" | jq -r '.assets[].browser_download_url' 2>/dev/null || true)
-        if [ -n "${ASSETS}" ]; then
-          N=$(printf '%s\n' "${ASSETS}" | wc -l)
-          if [ "${N}" -ge 17 ]; then break; fi
-          echo "attempt ${i}: release exists with ${N} assets; waiting..."
-        else
-          echo "attempt ${i}: release not published yet; waiting..."
-        fi
+        if curl -fsSLI -o /dev/null "${BASE}/SHA256SUMS"; then UP=1; break; fi
+        echo "attempt ${i}: assets not published yet; waiting..."
         sleep 60
       done
-      test -n "${ASSETS}" || { echo "GitHub release ${CI_COMMIT_TAG} did not appear in time"; exit 1; }
-      printf '%s\n' "${ASSETS}" > urls.txt
-      test "$(wc -l < urls.txt)" -ge 17 || { echo "expected at least 17 assets, got: $(cat urls.txt)"; exit 1; }
-      while IFS= read -r url; do
-        echo "Downloading ${url}"
-        curl -fsSL -O "${AUTH[@]}" "${url}"
-      done < urls.txt
+      [ "${UP}" -eq 1 ] || { echo "GitHub release ${CI_COMMIT_TAG} did not appear in time"; exit 1; }
+    - |
+      V="${CI_COMMIT_TAG#v}"
+      BASE="https://github.com/${GITHUB_REPO}/releases/download/${CI_COMMIT_TAG}"
+      # Asset names are deterministic; download them all by URL. 8 packages
+      # + their .sha256 files + SHA256SUMS = 17 assets in total.
+      PKGS="FreeSCP-${V}-x86_64.AppImage \
+        FreeSCP-${V}-aarch64.AppImage \
+        FreeSCP-${V}-linux-x86_64.tar.gz \
+        FreeSCP-${V}-linux-aarch64.tar.gz \
+        FreeSCP-${V}-macos-x86_64-UNSIGNED.zip \
+        FreeSCP-${V}-macos-arm64-UNSIGNED.zip \
+        FreeSCP-${V}-windows-x86_64-UNSIGNED.zip \
+        FreeSCP-${V}-windows-arm64-UNSIGNED.zip"
+      MISSING=0
+      for f in ${PKGS}; do
+        for u in "${BASE}/${f}" "${BASE}/${f}.sha256"; do
+          echo "Downloading ${u}"
+          curl -fsSL -O "${u}" || { echo "ERROR: failed to download ${u}"; MISSING=1; }
+        done
+      done
+      curl -fsSL -O "${BASE}/SHA256SUMS" || { echo "ERROR: failed to download SHA256SUMS"; MISSING=1; }
+      [ "${MISSING}" -eq 0 ] || exit 1
+      # Fail unless every downloaded artifact matches the published checksums.
+      sha256sum -c SHA256SUMS
     - |
       # Upload every artifact to the generic package registry using the
-      # built-in job token (no personal token required).
-      for f in *.AppImage *.zip *.tar.gz *.sha256 SHA256SUMS; do
-        [ -e "$f" ] || continue
+      # built-in job token (no personal token required). 409 is tolerated so
+      # job retries after a partial upload are idempotent.
+      for f in *; do
+        [ -f "${f}" ] || continue
         echo "Uploading ${f}"
-        curl --fail --silent --show-error \
+        code=$(curl -sS -o /dev/null -w '%{http_code}' \
           --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
           --upload-file "${f}" \
-          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/freescp/${VERSION}/${f}"
-        echo
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/freescp/${CI_COMMIT_TAG}/${f}") \
+          || { echo "ERROR: upload failed for ${f}"; exit 1; }
+        case "${code}" in
+          20*|409) echo "uploaded ${f} (HTTP ${code})" ;;
+          *) echo "ERROR: unexpected HTTP ${code} for ${f}"; exit 1 ;;
+        esac
       done
-  release:
-    tag_name: "$CI_COMMIT_TAG"
-    name: "FreeSCP $VERSION"
-    description: "FreeSCP $VERSION — Linux, macOS and Windows packages (x86_64 + ARM64). Binaries are built in Docker on GitHub Actions and mirrored here. macOS and Windows packages are unsigned."
-    assets:
-      links:
-        - name: "FreeSCP-$VERSION-x86_64.AppImage (Linux x86_64)"
-          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/freescp/${VERSION}/FreeSCP-${VERSION}-x86_64.AppImage"
-        - name: "FreeSCP-$VERSION-aarch64.AppImage (Linux ARM64)"
-          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/freescp/${VERSION}/FreeSCP-${VERSION}-aarch64.AppImage"
-        - name: "FreeSCP-$VERSION-linux-x86_64.tar.gz"
-          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/freescp/${VERSION}/FreeSCP-${VERSION}-linux-x86_64.tar.gz"
-        - name: "FreeSCP-$VERSION-linux-aarch64.tar.gz"
-          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/freescp/${VERSION}/FreeSCP-${VERSION}-linux-aarch64.tar.gz"
-        - name: "FreeSCP-$VERSION-macos-x86_64-UNSIGNED.zip"
-          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/freescp/${VERSION}/FreeSCP-${VERSION}-macos-x86_64-UNSIGNED.zip"
-        - name: "FreeSCP-$VERSION-macos-arm64-UNSIGNED.zip"
-          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/freescp/${VERSION}/FreeSCP-${VERSION}-macos-arm64-UNSIGNED.zip"
-        - name: "FreeSCP-$VERSION-windows-x86_64-UNSIGNED.zip"
-          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/freescp/${VERSION}/FreeSCP-${VERSION}-windows-x86_64-UNSIGNED.zip"
-        - name: "FreeSCP-$VERSION-windows-arm64-UNSIGNED.zip"
-          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/freescp/${VERSION}/FreeSCP-${VERSION}-windows-arm64-UNSIGNED.zip"
-        - name: "SHA256SUMS"
-          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/freescp/${VERSION}/SHA256SUMS"
+    - |
+      # Create the GitLab Release via the Releases API (job tokens have full
+      # access to it). $VERSION is needed for the asset link URLs, which the
+      # YAML `release:` keyword cannot see. Tolerate 409 so retries are
+      # idempotent when the release already exists.
+      V="${CI_COMMIT_TAG#v}"
+      REG="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/freescp/${CI_COMMIT_TAG}"
+      jq -n \
+        --arg tag "${CI_COMMIT_TAG}" \
+        --arg v "${V}" \
+        --arg reg "${REG}" \
+        '{
+          tag_name: $tag,
+          name: ("FreeSCP " + $v),
+          description: ("FreeSCP " + $v + " — Linux, macOS and Windows packages (x86_64 + ARM64). Binaries are built in Docker on GitHub Actions and mirrored here. macOS and Windows packages are unsigned."),
+          assets: {
+            links: [
+              {name: ("FreeSCP-" + $v + "-x86_64.AppImage (Linux x86_64)"),    url: ($reg + "/FreeSCP-" + $v + "-x86_64.AppImage")},
+              {name: ("FreeSCP-" + $v + "-aarch64.AppImage (Linux ARM64)"),    url: ($reg + "/FreeSCP-" + $v + "-aarch64.AppImage")},
+              {name: ("FreeSCP-" + $v + "-linux-x86_64.tar.gz"),               url: ($reg + "/FreeSCP-" + $v + "-linux-x86_64.tar.gz")},
+              {name: ("FreeSCP-" + $v + "-linux-aarch64.tar.gz"),              url: ($reg + "/FreeSCP-" + $v + "-linux-aarch64.tar.gz")},
+              {name: ("FreeSCP-" + $v + "-macos-x86_64-UNSIGNED.zip"),         url: ($reg + "/FreeSCP-" + $v + "-macos-x86_64-UNSIGNED.zip")},
+              {name: ("FreeSCP-" + $v + "-macos-arm64-UNSIGNED.zip"),          url: ($reg + "/FreeSCP-" + $v + "-macos-arm64-UNSIGNED.zip")},
+              {name: ("FreeSCP-" + $v + "-windows-x86_64-UNSIGNED.zip"),       url: ($reg + "/FreeSCP-" + $v + "-windows-x86_64-UNSIGNED.zip")},
+              {name: ("FreeSCP-" + $v + "-windows-arm64-UNSIGNED.zip"),        url: ($reg + "/FreeSCP-" + $v + "-windows-arm64-UNSIGNED.zip")},
+              {name: "SHA256SUMS",                                             url: ($reg + "/SHA256SUMS")}
+            ]
+          }
+        }' > release.json
+      code=$(curl -sS -o release-resp.json -w '%{http_code}' \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --header "Content-Type: application/json" \
+        --data @release.json \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases") \
+        || { echo "ERROR: release creation request failed"; exit 1; }
+      case "${code}" in
+        20*|409) echo "GitLab release published (HTTP ${code})" ;;
+        *) echo "ERROR: release creation returned HTTP ${code}:"; cat release-resp.json; exit 1 ;;
+      esac
