@@ -1,0 +1,188 @@
+// Session-security dialogs used by the connect path, split out of
+// connection-dialog.slint:
+//   - HostKeyDialog        host-key TOFU confirmation
+//   - KbdIntPromptDialog   keyboard-interactive prompt (OTP/2FA)
+//   - ConfirmTextDialog    "no verification" policy double confirmation
+//   - AlertDialog          minimal critical/warning/information box
+//
+// Imported by connection-dialog.slint (never compiled on its own), which
+// re-exports all four for crate::ui::connection_dialog::*.
+//
+// These components carry no `@tr` strings today: connect.rs drives them with
+// fully-built messages, exactly like the C++ UiAlerts/QInputDialog call
+// sites.
+
+import { Button, LineEdit } from "std-widgets.slint";
+
+// Host-key TOFU confirmation. Shown by connect.rs from the (blocking)
+// host-key callback running on a tokio worker thread; the button handlers
+// resolve an mpsc channel that the callback is blocked on, mirroring the
+// C++ condition-variable wait in MainWindow::confirmHostKeyUI.
+export component HostKeyDialog inherits Window {
+    title: "Confirm SSH fingerprint";
+    width: 520px;
+    height: 300px;
+
+    in-out property <string> host: "";
+    in-out property <string> algorithm: "";
+    in-out property <string> fingerprint: "";
+    in-out property <bool> can-save: false;
+
+    callback accept-save();
+    callback accept-once();
+    callback reject();
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text { text: "Connect to " + root.host; font-weight: 600; wrap: word-wrap; }
+        Text { text: "Algorithm: " + root.algorithm; wrap: word-wrap; }
+        Text { text: "Fingerprint: " + root.fingerprint; wrap: word-wrap; font-family: "monospace"; }
+        Text {
+            text: root.can-save
+                ? "Trust and save to known_hosts?"
+                : "Fingerprint cannot be saved. Connection allowed only this time.";
+            wrap: word-wrap;
+        }
+        Rectangle { } // spacer
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { } // spacer: right-align the buttons
+            if root.can-save : Button {
+                text: "Accept and Save";
+                primary: true;
+                clicked => { root.accept-save(); }
+            }
+            if !root.can-save : Button {
+                text: "Accept once";
+                primary: true;
+                clicked => { root.accept-once(); }
+            }
+            Button {
+                text: "Cancel";
+                clicked => { root.reject(); }
+            }
+        }
+    }
+}
+
+// Single-field password prompt for keyboard-interactive auth (OTP/2FA,
+// password re-query, generic info). Port of the QInputDialog uses in
+// MainWindowConnection.cpp's keyboard_interactive_cb.
+export component KbdIntPromptDialog inherits Window {
+    in-out property <string> title-text: "Password required";
+    in-out property <string> name: "";
+    in-out property <string> instruction: "";
+    in-out property <string> prompt: "";
+    in-out property <string> answer: "";
+    // Generic keyboard-interactive prompts use normal echo; only password /
+    // passphrase / OTP prompts are masked (MainWindowConnection.cpp).
+    in property <bool> mask-input: true;
+
+    callback accepted();
+    callback rejected();
+
+    title: root.title-text;
+    width: 500px;
+    height: 300px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text { text: root.name; font-weight: 600; wrap: word-wrap; visible: root.name != ""; }
+        Text { text: root.instruction; wrap: word-wrap; visible: root.instruction != ""; }
+        Text { text: root.prompt; wrap: word-wrap; }
+        LineEdit { text <=> root.answer; input-type: root.mask-input ? InputType.password : InputType.text; }
+        Rectangle { } // spacer
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { } // spacer: right-align the buttons
+            Button { text: "OK"; primary: true; clicked => { root.accepted(); } }
+            Button { text: "Cancel"; clicked => { root.rejected(); } }
+        }
+    }
+}
+
+// "No verification" policy double confirmation: the user must type the token
+// exactly (C++ used a warning box + a QInputDialog; combined into one dialog
+// with an inline token field).
+export component ConfirmTextDialog inherits Window {
+    in-out property <string> title-text: "Critical security risk";
+    in-out property <string> message: "";
+    in-out property <string> confirm-token: "UNSAFE";
+    in-out property <string> entered-text: "";
+
+    callback confirmed();
+    callback rejected();
+
+    title: root.title-text;
+    width: 520px;
+    height: 340px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text { text: root.message; wrap: word-wrap; }
+        LineEdit {
+            text <=> root.entered-text;
+            placeholder-text: "Type " + root.confirm-token;
+        }
+        Rectangle { } // spacer
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { } // spacer: right-align the buttons
+            Button {
+                text: "Continue";
+                primary: true;
+                enabled: root.entered-text == root.confirm-token;
+                clicked => { root.confirmed(); }
+            }
+            Button { text: "Cancel"; clicked => { root.rejected(); } }
+        }
+    }
+}
+
+// Minimal modal-ish alert box (port of UiAlerts::critical/warning/information
+// usage in the connect path).
+export component AlertDialog inherits Window {
+    in-out property <string> title-text: "FreeSCP";
+    in-out property <string> message: "";
+    // In confirm mode the dialog shows Yes/No labels and fires `cancel` for
+    // the secondary button (used by blocking confirmations posted to the
+    // event loop, mirroring QMessageBox::question).
+    in property <bool> confirm-mode: false;
+    in property <string> yes-text: "Yes";
+    in property <string> no-text: "No";
+
+    callback ok();
+    callback cancel();
+
+    title: root.title-text;
+    width: 440px;
+    height: 220px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text { text: root.message; wrap: word-wrap; }
+        Rectangle { } // spacer
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { } // spacer: right-align the buttons
+            Button {
+                text: root.confirm-mode ? root.yes-text : "OK";
+                primary: true;
+                clicked => { root.ok(); }
+            }
+            Button {
+                text: root.no-text;
+                visible: root.confirm-mode;
+                clicked => { root.cancel(); }
+            }
+        }
+    }
+}

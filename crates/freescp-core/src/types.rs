@@ -54,6 +54,8 @@ pub enum Protocol {
     Ftp,
     Ftps,
     WebDav,
+    Smb,
+    Telnet,
 }
 
 /// HTTP transport scheme for WebDAV.
@@ -159,13 +161,26 @@ pub const fn default_port_for_webdav_scheme(scheme: WebDavScheme) -> u16 {
     }
 }
 
-/// Default TCP port for a protocol (SFTP/SCP 22, FTP 21, FTPS 990, WebDAV 443).
+/// Default TCP port for a protocol (SFTP/SCP 22, FTP 21, FTPS 990, WebDAV 443,
+/// SMB 445, Telnet 23).
 pub const fn default_port_for_protocol(protocol: Protocol) -> u16 {
     match protocol {
         Protocol::Sftp | Protocol::Scp => 22,
         Protocol::Ftp => 21,
         Protocol::Ftps => 990,
         Protocol::WebDav => 443,
+        Protocol::Smb => 445,
+        Protocol::Telnet => 23,
+    }
+}
+
+/// Default TCP port for a telnet session: plain telnet uses 23, telnet over
+/// TLS (secure telnet) uses 992.
+pub const fn default_port_for_telnet(tls: bool) -> u16 {
+    if tls {
+        992
+    } else {
+        default_port_for_protocol(Protocol::Telnet)
     }
 }
 
@@ -196,7 +211,7 @@ pub fn webdav_scheme_from_storage_name(raw: &str) -> WebDavScheme {
 }
 
 /// Storage name for a protocol (`"sftp"`, `"scp"`, `"ftp"`, `"ftps"`,
-/// `"webdav"`).
+/// `"webdav"`, `"smb"`, `"telnet"`).
 pub const fn protocol_storage_name(protocol: Protocol) -> &'static str {
     match protocol {
         Protocol::Sftp => "sftp",
@@ -204,6 +219,8 @@ pub const fn protocol_storage_name(protocol: Protocol) -> &'static str {
         Protocol::Ftp => "ftp",
         Protocol::Ftps => "ftps",
         Protocol::WebDav => "webdav",
+        Protocol::Smb => "smb",
+        Protocol::Telnet => "telnet",
     }
 }
 
@@ -215,6 +232,8 @@ pub const fn protocol_display_name(protocol: Protocol) -> &'static str {
         Protocol::Ftp => "FTP",
         Protocol::Ftps => "FTPS",
         Protocol::WebDav => "WebDAV",
+        Protocol::Smb => "SMB",
+        Protocol::Telnet => "Telnet",
     }
 }
 
@@ -237,6 +256,12 @@ pub fn protocol_from_storage_name(raw: &str) -> Protocol {
     }
     if raw.eq_ignore_ascii_case("webdav") {
         return Protocol::WebDav;
+    }
+    if raw.eq_ignore_ascii_case("smb") {
+        return Protocol::Smb;
+    }
+    if raw.eq_ignore_ascii_case("telnet") {
+        return Protocol::Telnet;
     }
     Protocol::Sftp
 }
@@ -269,9 +294,10 @@ pub fn scp_transfer_mode_from_storage_name(raw: &str) -> ScpTransferMode {
 
 /// Feature matrix describing what a protocol backend can do.
 ///
-/// All five protocols report `implemented = true`: the pure-Rust backends
+/// All six protocols report `implemented = true`: the pure-Rust backends
 /// replace the C++ compile-time gates (`FREESCP_HAS_CURL_FTP` /
-/// `FREESCP_HAS_CURL_WEBDAV`) and always ship.
+/// `FREESCP_HAS_CURL_WEBDAV`) and always ship. Telnet is implemented but
+/// reports no file-transfer capabilities (it is an interactive console).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProtocolCapabilities {
     pub implemented: bool,
@@ -333,6 +359,21 @@ pub fn capabilities_for_protocol(protocol: Protocol) -> ProtocolCapabilities {
             caps.supports_file_transfers = true;
             caps.supports_metadata = true;
             caps.supports_proxy = true;
+        }
+        // SMB2/3 via the pure-Rust smb2 crate. Timestamps are readable via
+        // stat/listing, but smb2 has no set-times API; permissions/ownership
+        // and proxy/jump tunnels are unsupported.
+        Protocol::Smb => {
+            caps.implemented = true;
+            caps.supports_listing = true;
+            caps.supports_file_transfers = true;
+            caps.supports_resume = true;
+            caps.supports_metadata = true;
+        }
+        // Telnet is an interactive console, not a file-transfer protocol:
+        // implemented, but with no transfer/listing/proxy capabilities.
+        Protocol::Telnet => {
+            caps.implemented = true;
         }
     }
     caps
@@ -419,6 +460,23 @@ pub struct SessionOptions {
     pub webdav_verify_peer: bool,
     pub webdav_ca_cert_path: Option<String>,
 
+    /// SMB2/3 settings: workgroup/domain for NTLM authentication (empty
+    /// means local/guest, mirroring `smb2::ClientConfig::domain`).
+    pub smb_domain: Option<String>,
+
+    /// Telnet console settings.
+    /// Wrap the telnet session in TLS (secure telnet, default port 992).
+    pub telnet_tls: bool,
+    /// Verify the TLS peer (mirrors the FTPS/WebDAV verify flags).
+    pub telnet_verify_peer: bool,
+    /// Optional CA bundle used when `telnet_tls` is enabled.
+    pub telnet_ca_cert_path: Option<String>,
+    /// Auto-login: send `username`/`password` when the server prompts for
+    /// them (only when credentials are present).
+    pub telnet_auto_login: bool,
+    /// TERMINAL-TYPE reported during negotiation (e.g. `"xterm-256color"`).
+    pub telnet_terminal_type: String,
+
     /// Optional TCP proxy tunnel for the transport.
     pub proxy_type: ProxyType,
     pub proxy_host: String,
@@ -461,6 +519,12 @@ impl Default for SessionOptions {
             webdav_scheme: WebDavScheme::Https,
             webdav_verify_peer: true,
             webdav_ca_cert_path: None,
+            smb_domain: None,
+            telnet_tls: false,
+            telnet_verify_peer: true,
+            telnet_ca_cert_path: None,
+            telnet_auto_login: true,
+            telnet_terminal_type: "xterm-256color".to_string(),
             proxy_type: ProxyType::None,
             proxy_host: String::new(),
             proxy_port: 0,
@@ -500,6 +564,12 @@ impl std::fmt::Debug for SessionOptions {
             .field("webdav_scheme", &self.webdav_scheme)
             .field("webdav_verify_peer", &self.webdav_verify_peer)
             .field("webdav_ca_cert_path", &self.webdav_ca_cert_path)
+            .field("smb_domain", &self.smb_domain)
+            .field("telnet_tls", &self.telnet_tls)
+            .field("telnet_verify_peer", &self.telnet_verify_peer)
+            .field("telnet_ca_cert_path", &self.telnet_ca_cert_path)
+            .field("telnet_auto_login", &self.telnet_auto_login)
+            .field("telnet_terminal_type", &self.telnet_terminal_type)
             .field("proxy_type", &self.proxy_type)
             .field("proxy_host", &self.proxy_host)
             .field("proxy_port", &self.proxy_port)
@@ -551,6 +621,11 @@ mod tests {
         assert!(opts.ftps_verify_peer);
         assert_eq!(opts.webdav_scheme, WebDavScheme::Https);
         assert!(opts.webdav_verify_peer);
+        assert!(!opts.telnet_tls);
+        assert!(opts.telnet_verify_peer);
+        assert!(opts.telnet_auto_login);
+        assert_eq!(opts.telnet_terminal_type, "xterm-256color");
+        assert!(opts.telnet_ca_cert_path.is_none());
         assert_eq!(opts.proxy_type, ProxyType::None);
         assert_eq!(opts.proxy_port, 0);
         assert_eq!(opts.jump_port, 22);
@@ -565,6 +640,10 @@ mod tests {
         assert_eq!(default_port_for_protocol(Protocol::Ftp), 21);
         assert_eq!(default_port_for_protocol(Protocol::Ftps), 990);
         assert_eq!(default_port_for_protocol(Protocol::WebDav), 443);
+        assert_eq!(default_port_for_protocol(Protocol::Smb), 445);
+        assert_eq!(default_port_for_protocol(Protocol::Telnet), 23);
+        assert_eq!(default_port_for_telnet(false), 23);
+        assert_eq!(default_port_for_telnet(true), 992);
         assert_eq!(default_port_for_proxy_type(ProxyType::None), 0);
         assert_eq!(default_port_for_proxy_type(ProxyType::Socks5), 1080);
         assert_eq!(default_port_for_proxy_type(ProxyType::HttpConnect), 8080);
@@ -580,6 +659,8 @@ mod tests {
             Protocol::Ftp,
             Protocol::Ftps,
             Protocol::WebDav,
+            Protocol::Smb,
+            Protocol::Telnet,
         ] {
             assert_eq!(
                 protocol_from_storage_name(protocol_storage_name(proto)),
@@ -589,8 +670,12 @@ mod tests {
         assert_eq!(protocol_from_storage_name(""), Protocol::Sftp);
         assert_eq!(protocol_from_storage_name("SFTP"), Protocol::Sftp);
         assert_eq!(protocol_from_storage_name("WebDav"), Protocol::WebDav);
+        assert_eq!(protocol_from_storage_name("SMB"), Protocol::Smb);
+        assert_eq!(protocol_from_storage_name("Telnet"), Protocol::Telnet);
         assert_eq!(protocol_from_storage_name("bogus"), Protocol::Sftp);
         assert_eq!(protocol_display_name(Protocol::WebDav), "WebDAV");
+        assert_eq!(protocol_display_name(Protocol::Smb), "SMB");
+        assert_eq!(protocol_display_name(Protocol::Telnet), "Telnet");
 
         assert_eq!(webdav_scheme_from_storage_name("http"), WebDavScheme::Http);
         assert_eq!(
@@ -644,6 +729,8 @@ mod tests {
             Protocol::Ftp,
             Protocol::Ftps,
             Protocol::WebDav,
+            Protocol::Smb,
+            Protocol::Telnet,
         ] {
             assert!(
                 capabilities_for_protocol(proto).implemented,
@@ -668,6 +755,34 @@ mod tests {
         let webdav = capabilities_for_protocol(Protocol::WebDav);
         assert!(webdav.supports_metadata);
         assert!(!webdav.supports_resume);
+        // SMB2/3: full file management, but no permissions/ownership/set-times
+        // and no proxy or jump-host tunnels.
+        let smb = capabilities_for_protocol(Protocol::Smb);
+        assert!(smb.supports_listing);
+        assert!(smb.supports_file_transfers);
+        assert!(smb.supports_resume);
+        assert!(smb.supports_metadata);
+        assert!(!smb.supports_permissions);
+        assert!(!smb.supports_ownership);
+        assert!(!smb.supports_timestamps);
+        assert!(!smb.supports_proxy);
+        assert!(!smb.supports_jump_host);
+        assert!(!smb.supports_known_hosts);
+        assert!(!smb.supports_transfer_integrity);
+        // Telnet is an interactive console: implemented, but no file-transfer
+        // capabilities.
+        let telnet = capabilities_for_protocol(Protocol::Telnet);
+        assert!(!telnet.supports_listing);
+        assert!(!telnet.supports_file_transfers);
+        assert!(!telnet.supports_resume);
+        assert!(!telnet.supports_metadata);
+        assert!(!telnet.supports_permissions);
+        assert!(!telnet.supports_ownership);
+        assert!(!telnet.supports_timestamps);
+        assert!(!telnet.supports_proxy);
+        assert!(!telnet.supports_jump_host);
+        assert!(!telnet.supports_known_hosts);
+        assert!(!telnet.supports_transfer_integrity);
     }
 
     #[test]

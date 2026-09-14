@@ -1,0 +1,9 @@
+{
+  "name": "freescp-org",
+  "compatibility_date": "2026-09-13",
+  "assets": { "directory": "." },
+  "routes": [
+    { "pattern": "freescp.org", "custom_domain": true },
+    { "pattern": "www.freescp.org", "custom_domain": true }
+  ]
+}

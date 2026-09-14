@@ -24,6 +24,8 @@ workstreams land modules incrementally, so rows are updated as they land):
 | SCP backend (exec channel, Auto SFTP fallback, SCP-only mode) | `core/src/libssh2/Libssh2ScpClient.cpp` | `crates/freescp-core/src/backends/scp/` | done |
 | FTP/FTPS backend (MLSD+LIST listing, TLS explicit/implicit, custom CA) | `core/src/curl/CurlFtpClient.cpp` | `crates/freescp-core/src/backends/ftp/` | done |
 | WebDAV backend (PROPFIND/MKCOL/MOVE/DELETE/PUT/GET) | `core/src/curl/CurlWebDavClient.cpp` | `crates/freescp-core/src/backends/webdav/` | done |
+| SMB/CIFS backend (SMB2/SMB3: share listing, chunked transfers + resume, recursive delete; no SMB1/proxy/jump/permissions/set-times) | — (Rust-only) | `crates/freescp-core/src/backends/smb.rs` | done |
+| Telnet console (TCP/TLS, VT100/VT220 screen, NAWS resize, auto-login) | — (Rust-only) | `crates/freescp-core/src/telnet/`, `crates/freescp-app/src/console.rs`, `ui/console.slint` | done |
 | Shared types, `SessionOptions`, parsers, capabilities | `core/include/freescp/SftpTypes.hpp` | `crates/freescp-core/src/types.rs` | done |
 | Async `SftpClient` trait + `ClientError` | `core/include/freescp/SftpClient.hpp` | `crates/freescp-core/src/client.rs` | done |
 | Protocol-aware client factory | `core/include/freescp/ClientFactory.hpp` | `crates/freescp-core/src/client_factory.rs` | done |
@@ -72,6 +74,32 @@ workstreams land modules incrementally, so rows are updated as they land):
     re-importing is idempotent.
   The C++ app never read `~/.ssh/config` (its `ssh -W` bastion inherited it
   implicitly from the OpenSSH CLI; the in-process russh bastion does not).
+
+- **Embedded Telnet console** (`crates/freescp-core/src/telnet/`,
+  `crates/freescp-app/src/console.rs`, `crates/freescp-app/ui/console.slint`):
+  a Telnet client (RFC 854 with IAC quoting and TTYPE/NAWS option negotiation)
+  over plain TCP or TLS (rustls), rendered as a VT100/VT220 terminal in the
+  right pane of its session tab: scrollback, mouse selection and clipboard,
+  bracketed paste, application cursor keys, an optional prompt-driven
+  auto-login, and the application-set window title (OSC 0/2). The C++ app had
+  no terminal at all (it launched external SSH sessions for shells).
+  Deliberately unsupported, per the capability flags (the connect dialog hides
+  the matching sections):
+  - Telnet through a SOCKS5/HTTP proxy or an SSH jump host;
+  - client certificates for Telnet TLS;
+  - LINEMODE/special-device modes, mouse forwarding and OSC 52 clipboard;
+  - reusing the transport for an SSH shell console.
+
+- **SMB/CIFS backend** (`crates/freescp-core/src/backends/smb.rs`): SMB2/SMB3
+  file transfer over the pure-Rust `smb2` crate, with a persistent session and
+  automatic reconnect (mutating operations are never replayed across a
+  reconnect), share enumeration at the share root (`list("/")` returns the
+  server's shares), 64 KiB chunked uploads/downloads with progress and
+  cancellation, positioned resume on both directions, and a depth-capped
+  recursive delete. Deliberately unsupported, per the capability flags (the
+  connect dialog hides the matching sections): SMB1, proxies and jump hosts,
+  permissions/ownership and set-times. The C++ app had no SMB support
+  (libssh2/curl only).
 
 ## UI parity sweep (Slint 1.9 → 1.17.1)
 
@@ -397,6 +425,28 @@ Transport variants (all optional; mirror the C++ `libssh2_integration_tests.cpp`
   `FREESCP_IT_WEBDAV_SCHEME`, `FREESCP_IT_WEBDAV_PORT` (default `443`),
   `FREESCP_IT_WEBDAV_VERIFY_PEER` (`1`/`0`, default `1`), `FREESCP_IT_WEBDAV_CA_CERT`
 
+### SMB suite (`tests/smb_integration.rs` — written)
+
+- Required: `FREESCP_IT_SMB_HOST`, `FREESCP_IT_SMB_SHARE`
+- Optional: `FREESCP_IT_SMB_USER`, `FREESCP_IT_SMB_PASS`,
+  `FREESCP_IT_SMB_DOMAIN` (workgroup/domain for NTLM),
+  `FREESCP_IT_SMB_PORT` (default `445`)
+- The in-process suite (`tests/smb_tests.rs`) needs no environment variables
+  and runs inside every `cargo test`.
+
+### Telnet console suite (`tests/telnet_integration.rs`)
+
+- Required: `FREESCP_IT_TELNET_HOST`
+- Optional: `FREESCP_IT_TELNET_PORT` (default `23`),
+  `FREESCP_IT_TELNET_TLS` (`1` for telnet-over-TLS, default `0`),
+  `FREESCP_IT_TELNET_VERIFY_PEER` (`1`/`0`, default `1`),
+  `FREESCP_IT_TELNET_CA_CERT` (CA bundle for TLS verification)
+- The auto-login test additionally needs `FREESCP_IT_TELNET_USER` and
+  `FREESCP_IT_TELNET_PASS` (it prints `[SKIP]` when either is missing) and
+  expects a `welcome` reply after login when `FREESCP_IT_TELNET_EXPECT_LOGIN=1`
+- The in-process mock-server suite (`tests/telnet_tests.rs`) needs no
+  environment variables and runs inside every `cargo test`.
+
 ### CI wiring (`.github/workflows/ci.yml`)
 
 - `quick-dev` (push to `dev`): fmt + clippy + `cargo test -p freescp-core
@@ -410,8 +460,15 @@ Transport variants (all optional; mirror the C++ `libssh2_integration_tests.cpp`
     `FREESCP_IT_PROXY_TYPE=http` + user/pass)
   - SFTP suite through an SSH jump host (`FREESCP_IT_JUMP_*`, host key seeded
     via `ssh-keyscan`)
-  - FTP/FTPS/WebDAV suites run with no env to exercise the skip path (their
-    servers are not provisioned in CI, same as the legacy workflow)
+  - FTP/FTPS/WebDAV/SMB suites run with no env to exercise the skip path
+    (their servers are not provisioned in CI, same as the legacy workflow)
+  - Telnet suite against an inline Python telnet server (`FREESCP_IT_TELNET_*`:
+    host/port, `USER`/`PASS` and `EXPECT_LOGIN=1` for the auto-login test)
+- Every run also executes the `website-csp` job (`scripts/check_website_csp.py`,
+  no Rust toolchain): the hand-written site in `website/` ships only a JSON-LD
+  data block, so `website/_headers` keeps the strict `script-src 'none'`
+  policy with no SHA-256 hashes to maintain, and the guard fails if an
+  executable script is ever added.
 - Until a suite file lands, the corresponding CI step prints a "not written
   yet (sibling workstream); skipping" notice instead of failing. All suites
   are now written; the guards remain as harmless no-ops.

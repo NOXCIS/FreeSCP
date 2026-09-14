@@ -1,0 +1,189 @@
+// Keyboard shortcut recorder (port of QKeySequenceEdit), used by the
+// Settings dialog.
+//
+// The C++ dialog uses QKeySequenceEdit, which records the next chord typed
+// while the field has focus and renders it as QKeySequence::PortableText
+// ("Ctrl+Shift+T"). Slint cannot build `KeyBinding` elements from the runtime
+// candidate lists (`@keys(...)` requires compile-time constants), so the field
+// captures raw key events in a FocusScope and maps them to portable text
+// itself. The accepted chords mirror QUEUE_SHORTCUT_CANDIDATES and
+// HISTORY_SHORTCUT_CANDIDATES in crates/freescp-app/src/settings.rs; a Rust
+// unit test asserts that every candidate appears in this file so the two
+// cannot drift. An unsupported chord shows an inline warning and keeps the
+// previous value, like QKeySequenceEdit ignoring an unpreferred sequence.
+
+import { Palette } from "std-widgets.slint";
+
+export component ShortcutRecorder inherits Rectangle {
+    in-out property <string> value;
+    /// Comma-joined chords accepted by this field, shown as the hint line.
+    in property <string> supported-hint;
+    /// Selects the connection-history candidate set instead of the queue one.
+    in property <bool> history: false;
+
+    /// Last rejected chord ("" when there is none); readable from Rust for
+    /// tests, shown as the inline warning below the field.
+    out property <string> warning: "";
+
+    height: 46px;
+
+    // Qt portable text for the chords accepted by the two shortcut fields.
+    // Takes the key-event parts instead of a pre-built string: Slint 1.17's
+    // generated code moves a `string` local passed to a function, so reusing
+    // the chord afterwards (root.value = chord) would not compile.
+    pure function chord-supported(
+        meta: bool,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+        key: string,
+        history: bool,
+    ) -> bool {
+        let chord = chord-text(meta, ctrl, alt, shift, key);
+        if (history) {
+            return chord == "Ctrl+Shift+H" || chord == "Ctrl+H" || chord == "Ctrl+Alt+H";
+        }
+        return chord == "F12" || chord == "Ctrl+Shift+T" || chord == "Ctrl+Alt+T" || chord == "Ctrl+J";
+    }
+
+    // `KeyEvent.text` carries special keys as private-use code points, which
+    // the `Key` namespace names; regular keys arrive as text and are
+    // upper-cased so Ctrl+Shift+T matches "T" from any backend.
+    pure function key-name(text: string) -> string {
+        if (text == "") {
+            return "";
+        }
+        if (text == Key.F1) { return "F1"; }
+        if (text == Key.F2) { return "F2"; }
+        if (text == Key.F3) { return "F3"; }
+        if (text == Key.F4) { return "F4"; }
+        if (text == Key.F5) { return "F5"; }
+        if (text == Key.F6) { return "F6"; }
+        if (text == Key.F7) { return "F7"; }
+        if (text == Key.F8) { return "F8"; }
+        if (text == Key.F9) { return "F9"; }
+        if (text == Key.F10) { return "F10"; }
+        if (text == Key.F11) { return "F11"; }
+        if (text == Key.F12) { return "F12"; }
+        if (text == Key.Backspace) { return "Backspace"; }
+        if (text == Key.Tab) { return "Tab"; }
+        if (text == Key.Backtab) { return "Backtab"; }
+        if (text == Key.Return) { return "Return"; }
+        if (text == Key.Escape) { return "Esc"; }
+        if (text == Key.Delete) { return "Del"; }
+        if (text == Key.Space) { return "Space"; }
+        if (text == Key.UpArrow) { return "Up"; }
+        if (text == Key.DownArrow) { return "Down"; }
+        if (text == Key.LeftArrow) { return "Left"; }
+        if (text == Key.RightArrow) { return "Right"; }
+        if (text == Key.Home) { return "Home"; }
+        if (text == Key.End) { return "End"; }
+        if (text == Key.PageUp) { return "PgUp"; }
+        if (text == Key.PageDown) { return "PgDown"; }
+        if (text == Key.Insert) { return "Ins"; }
+        return text.to-uppercase();
+    }
+
+    // Modifier order follows Qt's portable text, which is also the canonical
+    // order `settings::normalized_shortcut` accepts. Qt renders Command/Meta
+    // as "Ctrl" on every platform (QKeySequence::PortableText), so meta and
+    // control fold into the same "Ctrl" token here.
+    pure function chord-text(meta: bool, ctrl: bool, alt: bool, shift: bool, key: string) -> string {
+        if (key == "") {
+            return "";
+        }
+        return ((meta || ctrl) ? "Ctrl+" : "") + (alt ? "Alt+" : "")
+            + (shift ? "Shift+" : "") + key;
+    }
+
+    VerticalLayout {
+        spacing: 2px;
+
+        Rectangle {
+            height: 30px;
+            border-width: 1px;
+            border-radius: 4px;
+            border-color: fs.has-focus ? Palette.accent-background : Palette.border;
+            background: Palette.control-background;
+
+            Text {
+                x: 8px;
+                y: 0;
+                width: parent.width - 16px;
+                height: parent.height;
+                vertical-alignment: center;
+                overflow: elide;
+                text: root.value == "" ? @tr("Press shortcut…") : root.value;
+                color: Palette.control-foreground;
+                opacity: root.value == "" ? 0.55 : 1.0;
+            }
+
+            fs := FocusScope {
+                key-pressed(event) => {
+                    // Modifier-only presses must not end the recording; keep
+                    // waiting for the actual key of the chord.
+                    if (event.text == Key.Shift || event.text == Key.ShiftR
+                        || event.text == Key.Control || event.text == Key.ControlR
+                        || event.text == Key.Alt || event.text == Key.AltGr
+                        || event.text == Key.Meta || event.text == Key.MetaR
+                        || event.text == Key.CapsLock) {
+                        return accept;
+                    }
+                    // Tab/Backtab keep their focus-navigation meaning.
+                    if (event.text == Key.Tab || event.text == Key.Backtab) {
+                        return reject;
+                    }
+                    if (event.text == Key.Escape) {
+                        root.warning = "";
+                        return accept;
+                    }
+                    let chord = root.chord-text(
+                        event.modifiers.meta,
+                        event.modifiers.control,
+                        event.modifiers.alt,
+                        event.modifiers.shift,
+                        root.key-name(event.text),
+                    );
+                    if (root.chord-supported(
+                        event.modifiers.meta,
+                        event.modifiers.control,
+                        event.modifiers.alt,
+                        event.modifiers.shift,
+                        root.key-name(event.text),
+                        root.history,
+                    )) {
+                        root.warning = "";
+                        root.value = chord;
+                    } else if (chord != "") {
+                        root.warning = chord;
+                    }
+                    return accept;
+                }
+
+                focus-lost(reason) => {
+                    root.warning = "";
+                }
+            }
+
+            TouchArea {
+                clicked => {
+                    fs.focus();
+                }
+            }
+        }
+
+        if (root.warning != "") : Text {
+            text: @tr("Unsupported shortcut: {}", root.warning);
+            color: #c0392b;
+            font-size: 11px;
+            overflow: elide;
+        }
+        if (root.warning == "" && fs.has-focus) : Text {
+            text: @tr("Supported: {}", root.supported-hint);
+            color: Palette.foreground;
+            opacity: 0.65;
+            font-size: 11px;
+            overflow: elide;
+        }
+    }
+}

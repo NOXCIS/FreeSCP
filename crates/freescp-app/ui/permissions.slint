@@ -18,6 +18,7 @@
 // `syncing` like the C++ QSignalBlocker.
 
 import { Button, CheckBox, ComboBox } from "std-widgets.slint";
+import { DialogFooter } from "widgets.slint";
 
 export component PermissionsDialog inherits Window {
     in-out property <int> mode: 0;
@@ -221,10 +222,7 @@ export component PermissionsDialog inherits Window {
             toggled => { root.recursive = self.checked; }
         }
 
-        HorizontalLayout {
-            alignment: end;
-            spacing: 8px;
-
+        DialogFooter {
             Button {
                 text: "Cancel";
                 clicked => { root.close-requested(); }

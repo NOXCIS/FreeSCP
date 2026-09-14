@@ -19,31 +19,7 @@
 // close-event handler is declared here.
 
 import { Button, ComboBox, ListView, SpinBox } from "std-widgets.slint";
-
-// One row of the per-row context menu (TouchArea so disabled rows do not
-// fire `clicked` at all, like a disabled QAction).
-component QueueMenuRow inherits TouchArea {
-    in property <string> text;
-    height: 24px;
-    mouse-cursor: MouseCursor.pointer;
-    Rectangle {
-        width: parent.width;
-        height: parent.height;
-        background: root.has-hover && root.enabled ? #3a3a44 : #00000000;
-        border-radius: 4px;
-    }
-    Text {
-        text: root.text;
-        x: 8px;
-        y: 0px;
-        width: parent.width - 16px;
-        height: parent.height;
-        vertical-alignment: center;
-        overflow: elide;
-        color: root.enabled ? #e6e6e9 : #6f6f77;
-        font-size: 12px;
-    }
-}
+import { MenuPopupFrame, MenuRow } from "widgets.slint";
 
 export struct QueueRow {
     id: int,
@@ -217,56 +193,61 @@ export component TransferQueueDialog inherits Window {
                         y: 26px;
                         width: 220px;
                         height: row-menu-layout.preferred-height;
-                        Rectangle {
+                        MenuPopupFrame {
                             width: 100%;
                             height: 100%;
-                            background: #2d2d32;
-                            border-width: 1px;
-                            border-color: #3c3c42;
-                            border-radius: 4px;
                             row-menu-layout := VerticalLayout {
                                 padding: 4px;
-                                QueueMenuRow {
+                                MenuRow {
+                                    compact: true;
                                     text: "Pause selected";
                                     enabled: root.can-pause-selected;
                                     clicked => { row-popup.close(); root.pause-selected(); }
                                 }
-                                QueueMenuRow {
+                                MenuRow {
+                                    compact: true;
                                     text: "Resume selected";
                                     enabled: root.can-resume-selected;
                                     clicked => { row-popup.close(); root.resume-selected(); }
                                 }
-                                QueueMenuRow {
+                                MenuRow {
+                                    compact: true;
                                     text: "Limit selected";
                                     enabled: root.can-limit-selected;
                                     clicked => { row-popup.close(); root.limit-selected(); }
                                 }
-                                QueueMenuRow {
+                                MenuRow {
+                                    compact: true;
                                     text: "Cancel selected";
                                     enabled: root.can-cancel-selected;
                                     clicked => { row-popup.close(); root.cancel-selected(); }
                                 }
-                                QueueMenuRow {
+                                MenuRow {
+                                    compact: true;
                                     text: "Retry selected";
                                     enabled: root.can-retry-selected;
                                     clicked => { row-popup.close(); root.retry-selected(); }
                                 }
                                 Rectangle { height: 1px; background: #3c3c42; }
-                                QueueMenuRow {
+                                MenuRow {
+                                    compact: true;
                                     text: "Open destination";
                                     enabled: root.can-open-destination-selected;
                                     clicked => { row-popup.close(); root.open-destination-selected(); }
                                 }
-                                QueueMenuRow {
+                                MenuRow {
+                                    compact: true;
                                     text: "Copy source path";
                                     clicked => { row-popup.close(); root.copy-source-selected(); }
                                 }
-                                QueueMenuRow {
+                                MenuRow {
+                                    compact: true;
                                     text: "Copy destination path";
                                     clicked => { row-popup.close(); root.copy-dest-selected(); }
                                 }
                                 Rectangle { height: 1px; background: #3c3c42; }
-                                QueueMenuRow {
+                                MenuRow {
+                                    compact: true;
                                     text: "Clear finished";
                                     clicked => { row-popup.close(); root.clear-finished(); }
                                 }
@@ -511,5 +492,3 @@ export component TransferQueueDialog inherits Window {
         }
     }
 }
-
-// One row of the per-row context menu.

@@ -21,12 +21,12 @@ fn main() {
         (
             "main-window.slint",
             "main_window",
-            "slint_generatedHistoryDialog",
+            "slint_generatedMainWindow",
         ),
         (
             "connection-dialog.slint",
             "connection_dialog",
-            "slint_generatedAlertDialog",
+            "slint_generatedConnectionDialog",
         ),
         (
             "transfer-queue.slint",
@@ -54,7 +54,22 @@ fn main() {
             "overwrite_dialog",
             "slint_generatedOverwriteDialog",
         ),
+        // Test-only wrapper around ConsoleView (used by
+        // src/console_view_tests.rs); unlike console.slint it inherits Window,
+        // so it can be compiled as an entry file.
+        (
+            "console-test.slint",
+            "console_test",
+            "slint_generatedConsoleTestWindow",
+        ),
+        // NOTE: ui/console.slint is imported by main-window.slint (and
+        // re-exported there) instead of being compiled on its own: it exports
+        // no Window, which slint_build warns about for entry files.
     ];
+
+    // Test-only modules are never instantiated outside #[cfg(test)] code, so
+    // silence dead-code warnings for them in regular builds.
+    let test_only = ["console-test.slint"];
 
     let mut wrapper = String::new();
     for (input, module, generated) in files {
@@ -72,8 +87,13 @@ fn main() {
         for dep in dependencies {
             println!("cargo:rerun-if-changed={}", dep.display());
         }
+        let dead_code_allow = if test_only.contains(input) {
+            "#[allow(dead_code)]\n"
+        } else {
+            ""
+        };
         wrapper.push_str(&format!(
-            "pub mod {module} {{\n    include!({out_file:?});\n    pub use {generated}::*;\n}}\n",
+            "{dead_code_allow}pub mod {module} {{\n    include!({out_file:?});\n    pub use {generated}::*;\n}}\n",
             out_file = out_file.display().to_string(),
         ));
     }

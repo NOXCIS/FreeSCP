@@ -123,6 +123,8 @@ pub enum TransferState {
 pub enum TransferDirection {
     Download,
     Upload,
+    /// Remote (A) to remote (B), staged through a local temporary file.
+    RemoteToRemote,
 }
 
 /// Immutable snapshot of one queued transfer.
@@ -243,8 +245,25 @@ pub struct Prescan {
 /// this; the rest is worker bookkeeping.
 struct TaskRecord {
     task: TransferTask,
-    /// Owned connection. `None` only while a worker holds it.
+    /// Owned connection for the source side (downloads) or the target side
+    /// (uploads); for remote-to-remote it is the source client.
+    /// `None` only while a worker holds it.
     client: Option<Box<dyn SftpClient>>,
+    /// Second owned connection for [`TransferDirection::RemoteToRemote`]
+    /// (the destination client); always `None` for the other directions.
+    dest_client: Option<Box<dyn SftpClient>>,
+    /// Per-task session options for the source-side remote client, captured
+    /// at enqueue time (retries must not pick up another tab's options).
+    src_options: Option<SessionOptions>,
+    /// Per-task session options for the destination-side remote client
+    /// (uploads and remote-to-remote), captured at enqueue time.
+    dst_options: Option<SessionOptions>,
+    /// Tab session the task belongs to: the destination-side session for
+    /// uploads and remote-to-remote copies, the source session for downloads
+    /// (whose destination is local). Routes the post-upload pane refresh to
+    /// the right tab — a background transfer must not refresh the active
+    /// tab's pane — and scopes [`TransferManager::cancel_for_session`].
+    dst_session_id: Option<u64>,
     /// Cooperative cancel flag, passed to the backend as `should_cancel`.
     cancel_flag: Arc<AtomicBool>,
     /// Cooperative pause flag; distinguishes `Paused` from `Cancelled`.
@@ -275,7 +294,7 @@ struct Shared {
     auto_clear_mode: i32,
     auto_clear_minutes: i32,
     session_options: Option<SessionOptions>,
-    refresh_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+    refresh_hook: Option<Arc<dyn Fn(Option<u64>) + Send + Sync>>,
     notify_hook: Option<Arc<dyn Fn(String) + Send + Sync>>,
     conflict_hook: Option<Arc<dyn Fn(ConflictInfo) -> ConflictChoice + Send + Sync>>,
     /// C++ `UI/showQueueOnEnqueue` (default true).
@@ -325,7 +344,29 @@ struct WorkerArgs {
     source: String,
     dest: String,
     client: Box<dyn SftpClient>,
+    /// Destination client for [`TransferDirection::RemoteToRemote`].
+    dest_client: Option<Box<dyn SftpClient>>,
+    /// Session options for the source-side remote connection.
+    src_options: Option<SessionOptions>,
+    /// Session options for the destination-side remote connection.
+    dst_options: Option<SessionOptions>,
     resume: bool,
+}
+
+/// Clients handed back to the task record when an attempt finishes: the
+/// template client(s) that were taken out of the record in `schedule`.
+struct ReturnedClients {
+    client: Option<Box<dyn SftpClient>>,
+    dest_client: Option<Box<dyn SftpClient>>,
+}
+
+impl ReturnedClients {
+    fn single(client: Option<Box<dyn SftpClient>>) -> Self {
+        ReturnedClients {
+            client,
+            dest_client: None,
+        }
+    }
 }
 
 /// Result of one worker attempt; the finalizer maps this onto the record.
@@ -426,8 +467,16 @@ impl TransferManager {
         remote: String,
         local: String,
         resume: bool,
+        dst_session_id: Option<u64>,
     ) -> u64 {
-        self.enqueue(TransferDirection::Download, client, remote, local, resume)
+        self.enqueue(
+            TransferDirection::Download,
+            client,
+            remote,
+            local,
+            resume,
+            dst_session_id,
+        )
     }
 
     /// Queue a local-to-remote upload. Returns immediately; the transfer
@@ -438,8 +487,55 @@ impl TransferManager {
         local: String,
         remote: String,
         resume: bool,
+        dst_session_id: Option<u64>,
     ) -> u64 {
-        self.enqueue(TransferDirection::Upload, client, local, remote, resume)
+        self.enqueue(
+            TransferDirection::Upload,
+            client,
+            local,
+            remote,
+            resume,
+            dst_session_id,
+        )
+    }
+
+    /// Queue a remote-to-remote copy, staged through a local temporary file
+    /// (`src.get` into the staging area, then `dst.put` to the target). Both
+    /// clients and their session options are owned by the task; the copy
+    /// works across protocols because only the app's local disk is shared.
+    #[allow(clippy::too_many_arguments)] // Mirrors `enqueue`'s endpoint pairs.
+    pub fn enqueue_remote_to_remote(
+        &self,
+        src: Box<dyn SftpClient>,
+        remote_src: String,
+        src_options: Option<SessionOptions>,
+        dst: Box<dyn SftpClient>,
+        remote_dst: String,
+        dst_options: Option<SessionOptions>,
+        dst_session_id: Option<u64>,
+    ) -> u64 {
+        let id = {
+            let mut s = self.shared.lock().unwrap();
+            let id = s.next_id;
+            s.next_id += 1;
+            let mut rec = new_task_record(
+                id,
+                TransferDirection::RemoteToRemote,
+                remote_src,
+                remote_dst,
+                src,
+                false,
+            );
+            rec.dest_client = Some(dst);
+            rec.src_options = src_options;
+            rec.dst_options = dst_options;
+            rec.dst_session_id = dst_session_id;
+            s.tasks.push(rec);
+            id
+        };
+        self.notify_changed();
+        self.schedule();
+        id
     }
 
     fn enqueue(
@@ -449,39 +545,27 @@ impl TransferManager {
         source: String,
         dest: String,
         resume: bool,
+        dst_session_id: Option<u64>,
     ) -> u64 {
         let id = {
             let mut s = self.shared.lock().unwrap();
             let id = s.next_id;
             s.next_id += 1;
-            s.tasks.push(TaskRecord {
-                task: TransferTask {
-                    id,
-                    direction,
-                    source,
-                    dest,
-                    name: String::new(), // refreshed by `tasks()` from source
-                    bytes_done: 0,
-                    bytes_total: 0,
-                    state: TransferState::Queued,
-                    error: None,
-                    created_at: Utc::now(),
-                    attempts: 0,
-                    speed_bps: 0.0,
-                    eta_secs: 0.0,
-                    speed_limit_kbps: 0,
-                    finished_at_ms: 0,
-                },
-                client: Some(client),
-                cancel_flag: Arc::new(AtomicBool::new(false)),
-                pause_flag: Arc::new(AtomicBool::new(false)),
-                resume_hint: resume,
-                attempts: 0,
-                speed_limit_kbps: 0,
-                last_done: 0,
-                last_time: Instant::now(),
-                speed_bps: 0.0,
-            });
+            // Capture the manager-level session options into the task so a
+            // later batch (possibly from another tab) cannot change what a
+            // retry reconnects with.
+            let default_options = s.session_options.clone();
+            let mut rec = new_task_record(id, direction, source, dest, client, resume);
+            match direction {
+                TransferDirection::Download => rec.src_options = default_options,
+                TransferDirection::Upload => rec.dst_options = default_options,
+                TransferDirection::RemoteToRemote => {
+                    rec.src_options = default_options.clone();
+                    rec.dst_options = default_options;
+                }
+            }
+            rec.dst_session_id = dst_session_id;
+            s.tasks.push(rec);
             id
         };
         self.notify_changed();
@@ -520,6 +604,36 @@ impl TransferManager {
         {
             let mut s = self.shared.lock().unwrap();
             for rec in &mut s.tasks {
+                if matches!(
+                    rec.task.state,
+                    TransferState::Queued | TransferState::Active | TransferState::Paused
+                ) {
+                    rec.task.state = TransferState::Cancelled;
+                    rec.task.error = None;
+                    rec.task.finished_at_ms = now_epoch_ms();
+                    rec.cancel_flag.store(true, Ordering::SeqCst);
+                    rec.pause_flag.store(false, Ordering::SeqCst);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.notify_changed();
+        }
+    }
+
+    /// Cancel every queued, active, and paused task owned by `session_id`
+    /// (the destination-side session for uploads / remote-to-remote, the
+    /// source session for downloads). Used when a tab disconnects or closes:
+    /// other tabs' transfers keep running.
+    pub fn cancel_for_session(&self, session_id: u64) {
+        let mut changed = false;
+        {
+            let mut s = self.shared.lock().unwrap();
+            for rec in &mut s.tasks {
+                if rec.dst_session_id != Some(session_id) {
+                    continue;
+                }
                 if matches!(
                     rec.task.state,
                     TransferState::Queued | TransferState::Active | TransferState::Paused
@@ -798,8 +912,10 @@ impl TransferManager {
     }
 
     /// Session options used to create isolated worker connections, port of
-    /// the C++ `setSessionOptions`. When unset, workers transfer directly
-    /// over the client passed to `enqueue_*`.
+    /// the C++ `setSessionOptions`. The value is snapshotted into each task
+    /// at enqueue time, so retries keep the options of the session that
+    /// queued them. When unset, workers transfer directly over the client
+    /// passed to `enqueue_*`.
     pub fn set_session_options(&self, opt: Option<SessionOptions>) {
         let mut s = self.shared.lock().unwrap();
         s.session_options = opt;
@@ -807,10 +923,11 @@ impl TransferManager {
 
     /// Refresh-after-upload hook, port of
     /// `MainWindow::maybeRefreshRemoteAfterCompletedUploads`. Invoked once
-    /// per newly-completed upload (seen-id dedup + 150 ms debounce); the
-    /// main-window workstream sets it to its remote panel refresh and is
+    /// per newly-completed upload (seen-id dedup + 150 ms debounce) with the
+    /// destination tab's session id (`None` for a detached task); the
+    /// main-window workstream refreshes that session's pane and is
     /// responsible for the "upload target inside current root" check.
-    pub fn set_refresh_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+    pub fn set_refresh_hook(&self, hook: Option<Arc<dyn Fn(Option<u64>) + Send + Sync>>) {
         let mut s = self.shared.lock().unwrap();
         s.refresh_hook = hook;
     }
@@ -904,10 +1021,10 @@ impl TransferManager {
             None
         } else if newly == 1 {
             let (_, direction, name) = &fresh[0];
-            Some(if *direction == TransferDirection::Upload {
-                format!("Upload completed: {name}")
-            } else {
-                format!("Download completed: {name}")
+            Some(match direction {
+                TransferDirection::Upload => format!("Upload completed: {name}"),
+                TransferDirection::Download => format!("Download completed: {name}"),
+                TransferDirection::RemoteToRemote => format!("Remote copy completed: {name}"),
             })
         } else {
             Some(format!("{newly} transfers completed"))
@@ -945,6 +1062,49 @@ impl Drop for TransferManager {
 // Scheduler + worker
 // ---------------------------------------------------------------------------
 
+/// Builds the internal record for a newly enqueued task.
+fn new_task_record(
+    id: u64,
+    direction: TransferDirection,
+    source: String,
+    dest: String,
+    client: Box<dyn SftpClient>,
+    resume: bool,
+) -> TaskRecord {
+    TaskRecord {
+        task: TransferTask {
+            id,
+            direction,
+            source,
+            dest,
+            name: String::new(), // refreshed by `tasks()` from source
+            bytes_done: 0,
+            bytes_total: 0,
+            state: TransferState::Queued,
+            error: None,
+            created_at: Utc::now(),
+            attempts: 0,
+            speed_bps: 0.0,
+            eta_secs: 0.0,
+            speed_limit_kbps: 0,
+            finished_at_ms: 0,
+        },
+        client: Some(client),
+        dest_client: None,
+        src_options: None,
+        dst_options: None,
+        dst_session_id: None,
+        cancel_flag: Arc::new(AtomicBool::new(false)),
+        pause_flag: Arc::new(AtomicBool::new(false)),
+        resume_hint: resume,
+        attempts: 0,
+        speed_limit_kbps: 0,
+        last_done: 0,
+        last_time: Instant::now(),
+        speed_bps: 0.0,
+    }
+}
+
 /// Returns the ambient tokio runtime handle, creating a process-wide shared
 /// runtime if `main.rs` has not created one yet.
 fn runtime_handle() -> tokio::runtime::Handle {
@@ -979,12 +1139,22 @@ fn schedule(shared: Arc<Mutex<Shared>>, paused: Arc<AtomicBool>, running: Arc<At
                 .client
                 .take()
                 .expect("queued task always owns its client");
+            let dest_client = rec.dest_client.take();
+            if rec.task.direction == TransferDirection::RemoteToRemote {
+                debug_assert!(
+                    dest_client.is_some(),
+                    "remote-to-remote tasks always own their destination client"
+                );
+            }
             WorkerArgs {
                 id: rec.task.id,
                 direction: rec.task.direction,
                 source: rec.task.source.clone(),
                 dest: rec.task.dest.clone(),
                 client,
+                dest_client,
+                src_options: rec.src_options.clone(),
+                dst_options: rec.dst_options.clone(),
                 resume: rec.resume_hint,
             }
         };
@@ -1041,6 +1211,10 @@ fn prune_seen_sets(s: &mut Shared) {
     s.seen_refreshed.retain(|x| ids.contains(x));
 }
 
+/// Post-transfer refresh callback plus the session id it belongs to
+/// (`None` = the active session).
+type SessionRefreshHook = (Arc<dyn Fn(Option<u64>) + Send + Sync>, Option<u64>);
+
 async fn run_worker(
     shared: Arc<Mutex<Shared>>,
     paused: Arc<AtomicBool>,
@@ -1048,18 +1222,21 @@ async fn run_worker(
     args: WorkerArgs,
 ) {
     let id = args.id;
-    let (outcome, client) = run_one(shared.clone(), paused.clone(), args).await;
+    let (outcome, returned) = run_one(shared.clone(), paused.clone(), args).await;
 
-    // Finalize: map the outcome onto the record, return the client, trigger
+    // Finalize: map the outcome onto the record, return the client(s), trigger
     // the refresh hook for completed uploads, and emit events.
-    let mut hook: Option<Arc<dyn Fn() + Send + Sync>> = None;
+    let mut hook: Option<SessionRefreshHook> = None;
     let events = {
         let mut s = shared.lock().unwrap();
         let mut completed: Option<(TransferDirection, String)> = None;
-        let mut upload_done = false;
+        let mut remote_done = false;
         {
             if let Some(rec) = s.task_mut(id) {
-                rec.client = client;
+                rec.client = returned.client;
+                if returned.dest_client.is_some() {
+                    rec.dest_client = returned.dest_client;
+                }
                 match outcome {
                     Outcome::Done => {
                         rec.task.state = TransferState::Completed;
@@ -1067,8 +1244,11 @@ async fn run_worker(
                         if rec.task.bytes_total > 0 {
                             rec.task.bytes_done = rec.task.bytes_total;
                         }
-                        upload_done = rec.task.direction == TransferDirection::Upload;
-                        let path = if upload_done {
+                        remote_done = matches!(
+                            rec.task.direction,
+                            TransferDirection::Upload | TransferDirection::RemoteToRemote
+                        );
+                        let path = if remote_done {
                             rec.task.source.clone()
                         } else {
                             rec.task.dest.clone()
@@ -1110,8 +1290,9 @@ async fn run_worker(
         let ids: HashSet<u64> = s.tasks.iter().map(|t| t.task.id).collect();
         s.seen_notified.retain(|x| ids.contains(x));
         s.seen_refreshed.retain(|x| ids.contains(x));
-        if upload_done && s.seen_refreshed.insert(id) && s.refresh_hook.is_some() {
-            hook = s.refresh_hook.clone();
+        if remote_done && s.seen_refreshed.insert(id) && s.refresh_hook.is_some() {
+            let session_id = s.task(id).and_then(|rec| rec.dst_session_id);
+            hook = s.refresh_hook.clone().map(|hook| (hook, session_id));
         }
         let mut events = Vec::with_capacity(2);
         events.push(ManagerEvent::Changed);
@@ -1122,11 +1303,11 @@ async fn run_worker(
     };
     notify_subscribers(&shared, events);
 
-    if let Some(hook) = hook {
+    if let Some((hook, session_id)) = hook {
         let rt = runtime_handle();
         rt.spawn(async move {
             tokio::time::sleep(Duration::from_millis(REFRESH_DEBOUNCE_MS)).await;
-            hook();
+            hook(session_id);
         });
     }
 
@@ -1178,19 +1359,21 @@ async fn run_one(
     shared: Arc<Mutex<Shared>>,
     paused: Arc<AtomicBool>,
     args: WorkerArgs,
-) -> (Outcome, Option<Box<dyn SftpClient>>) {
+) -> (Outcome, ReturnedClients) {
     let WorkerArgs {
         id,
         direction,
         ref source,
         ref dest,
         client: base,
+        dest_client: base_dst,
+        ref src_options,
+        ref dst_options,
         resume,
     } = args;
-    let (opts, conflict_hook, global_limit, task_limit) = {
+    let (conflict_hook, global_limit, task_limit) = {
         let s = shared.lock().unwrap();
         (
-            s.session_options.clone(),
             s.conflict_hook.clone(),
             s.global_speed_kbps,
             s.task(id).map(|r| r.speed_limit_kbps).unwrap_or(0),
@@ -1204,6 +1387,31 @@ async fn run_one(
         task_limit.max(global_limit)
     };
 
+    if direction == TransferDirection::RemoteToRemote {
+        let dest_base = base_dst.expect("remote-to-remote tasks own a destination client");
+        return run_remote_to_remote(RemoteToRemoteRun {
+            shared,
+            paused,
+            id,
+            source,
+            dest,
+            src_base: base,
+            dst_base: dest_base,
+            src_options: src_options.clone(),
+            dst_options: dst_options.clone(),
+            conflict_hook,
+            speed_limit_kbps: effective_limit,
+        })
+        .await;
+    }
+
+    // The remote side is the destination for uploads and the source for
+    // downloads; its per-task options drive the isolated worker connection.
+    let opts = match direction {
+        TransferDirection::Upload => dst_options.clone(),
+        _ => src_options.clone(),
+    };
+
     // Prefer an isolated connection created from the template client when
     // session options are available; otherwise transfer over the enqueued
     // client directly.
@@ -1212,7 +1420,10 @@ async fn run_one(
         Some(opt) => match create_worker_client(base.as_ref(), opt, id, &shared, &paused).await {
             Ok(w) => (w, Some(base)),
             Err(err) => {
-                return (Outcome::Failed(transfer_error_for_ui(&err)), Some(base));
+                return (
+                    Outcome::Failed(transfer_error_for_ui(&err)),
+                    ReturnedClients::single(Some(base)),
+                );
             }
         },
     };
@@ -1326,6 +1537,8 @@ async fn run_one(
                 }
             }
         }
+        // Remote-to-remote is handled by `run_remote_to_remote` above.
+        TransferDirection::RemoteToRemote => unreachable!("staged transfers branch earlier"),
     }
 
     // ---- Transfer ----
@@ -1342,6 +1555,8 @@ async fn run_one(
                 .get(source, dest, Some(progress), cancel_cb, resume)
                 .await
         }
+        // Remote-to-remote is handled by `run_remote_to_remote` above.
+        TransferDirection::RemoteToRemote => unreachable!("staged transfers branch earlier"),
     };
 
     match result {
@@ -1375,12 +1590,365 @@ async fn end_run(
     mut worker: Box<dyn SftpClient>,
     mut base: Option<Box<dyn SftpClient>>,
     outcome: Outcome,
-) -> (Outcome, Option<Box<dyn SftpClient>>) {
+) -> (Outcome, ReturnedClients) {
     let _ = tokio::time::timeout(Duration::from_secs(5), worker.disconnect()).await;
     if base.is_none() {
         base = Some(worker);
     }
-    (outcome, base)
+    (outcome, ReturnedClients::single(base))
+}
+
+/// Disconnect both staged-transfer worker connections and return the
+/// template clients to the task record.
+async fn end_run_staged(
+    mut src_worker: Box<dyn SftpClient>,
+    mut src_base: Option<Box<dyn SftpClient>>,
+    mut dst_worker: Box<dyn SftpClient>,
+    mut dst_base: Option<Box<dyn SftpClient>>,
+    outcome: Outcome,
+) -> (Outcome, ReturnedClients) {
+    let _ = tokio::time::timeout(Duration::from_secs(5), src_worker.disconnect()).await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), dst_worker.disconnect()).await;
+    if src_base.is_none() {
+        src_base = Some(src_worker);
+    }
+    if dst_base.is_none() {
+        dst_base = Some(dst_worker);
+    }
+    (
+        outcome,
+        ReturnedClients {
+            client: src_base,
+            dest_client: dst_base,
+        },
+    )
+}
+
+/// Inputs of one remote-to-remote staged attempt.
+struct RemoteToRemoteRun<'a> {
+    shared: Arc<Mutex<Shared>>,
+    paused: Arc<AtomicBool>,
+    id: u64,
+    source: &'a str,
+    dest: &'a str,
+    src_base: Box<dyn SftpClient>,
+    dst_base: Box<dyn SftpClient>,
+    src_options: Option<SessionOptions>,
+    dst_options: Option<SessionOptions>,
+    conflict_hook: Option<Arc<dyn Fn(ConflictInfo) -> ConflictChoice + Send + Sync>>,
+    speed_limit_kbps: i64,
+}
+
+/// Staging directory for one remote-to-remote transfer. Task ids restart with
+/// the process, so the process id keeps two running instances apart.
+fn staging_dir_for(id: u64) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("freescp-staging-{}-{id}", std::process::id()))
+}
+
+/// Creates the staging directory with owner-only permissions where the
+/// platform supports them. `create_dir` rather than `create_dir_all`: failing
+/// on an existing path means a pre-created directory or symlink is never
+/// written through, which matters because the staged file holds file contents
+/// in transit.
+fn create_staging_dir(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new().mode(0o700).create(path)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir(path)
+    }
+}
+
+/// Remote(A) → remote(B) copy: download the source file into a private local
+/// staging directory, upload it to the destination, then delete the staged
+/// file. Progress is mapped onto a single 0..100 % bar (download = first
+/// half, upload = second half). The overwrite policy applies on the
+/// destination side, like a regular upload.
+async fn run_remote_to_remote(run: RemoteToRemoteRun<'_>) -> (Outcome, ReturnedClients) {
+    let RemoteToRemoteRun {
+        shared,
+        paused,
+        id,
+        source,
+        dest,
+        src_base,
+        dst_base,
+        src_options,
+        dst_options,
+        conflict_hook,
+        speed_limit_kbps,
+    } = run;
+
+    // Isolated worker connections when options are available; otherwise the
+    // enqueued clients are used directly.
+    let (mut src_worker, src_base): (Box<dyn SftpClient>, Option<Box<dyn SftpClient>>) =
+        match &src_options {
+            None => (src_base, None),
+            Some(opt) => {
+                match create_worker_client(src_base.as_ref(), opt, id, &shared, &paused).await {
+                    Ok(worker) => (worker, Some(src_base)),
+                    Err(err) => {
+                        return (
+                            Outcome::Failed(transfer_error_for_ui(&err)),
+                            ReturnedClients {
+                                client: Some(src_base),
+                                dest_client: Some(dst_base),
+                            },
+                        );
+                    }
+                }
+            }
+        };
+    let (mut dst_worker, dst_base): (Box<dyn SftpClient>, Option<Box<dyn SftpClient>>) =
+        match &dst_options {
+            None => (dst_base, None),
+            Some(opt) => {
+                match create_worker_client(dst_base.as_ref(), opt, id, &shared, &paused).await {
+                    Ok(worker) => (worker, Some(dst_base)),
+                    Err(err) => {
+                        return end_run_staged(
+                            src_worker,
+                            src_base,
+                            dst_base,
+                            None,
+                            Outcome::Failed(transfer_error_for_ui(&err)),
+                        )
+                        .await;
+                    }
+                }
+            }
+        };
+
+    let cancel_flag = {
+        let s = shared.lock().unwrap();
+        s.task(id)
+            .map(|r| r.cancel_flag.clone())
+            .unwrap_or_default()
+    };
+    let should_cancel = {
+        let paused = paused.clone();
+        let flag = cancel_flag.clone();
+        move || paused.load(Ordering::SeqCst) || flag.load(Ordering::SeqCst)
+    };
+
+    // Staging directory (per task and process: task ids restart with the
+    // process, so a bare id could collide between two running instances).
+    let staging_dir = staging_dir_for(id);
+    if let Err(err) = create_staging_dir(&staging_dir) {
+        return end_run_staged(
+            src_worker,
+            src_base,
+            dst_worker,
+            dst_base,
+            Outcome::Failed(format!("Could not create the staging folder: {err}")),
+        )
+        .await;
+    }
+    let staged_path = staging_dir.join(display_name(source));
+    let staged_local = staged_path.to_string_lossy().into_owned();
+
+    let finish = |outcome: Outcome,
+                  src_worker: Box<dyn SftpClient>,
+                  src_base: Option<Box<dyn SftpClient>>,
+                  dst_worker: Box<dyn SftpClient>,
+                  dst_base: Option<Box<dyn SftpClient>>,
+                  staged_path: std::path::PathBuf,
+                  staging_dir: std::path::PathBuf| async move {
+        // The staged copy is temporary in every outcome.
+        let _ = std::fs::remove_file(&staged_path);
+        let _ = std::fs::remove_dir(&staging_dir);
+        end_run_staged(src_worker, src_base, dst_worker, dst_base, outcome).await
+    };
+
+    // ---- Destination precheck (exists + overwrite policy, like an upload) --
+    let dst_caps = dst_worker.capabilities();
+    let skip_destination =
+        staged_conflict_choice(&mut *dst_worker, &dst_caps, source, dest, &conflict_hook).await;
+    if should_cancel() {
+        return finish(
+            Outcome::Stopped,
+            src_worker,
+            src_base,
+            dst_worker,
+            dst_base,
+            staged_path,
+            staging_dir,
+        )
+        .await;
+    }
+    if skip_destination {
+        return finish(
+            Outcome::Done,
+            src_worker,
+            src_base,
+            dst_worker,
+            dst_base,
+            staged_path,
+            staging_dir,
+        )
+        .await;
+    }
+    if let Err(msg) = ensure_remote_dir(&mut *dst_worker, &parent_dir(dest)).await {
+        if should_cancel() {
+            return finish(
+                Outcome::Stopped,
+                src_worker,
+                src_base,
+                dst_worker,
+                dst_base,
+                staged_path,
+                staging_dir,
+            )
+            .await;
+        }
+        return finish(
+            Outcome::Failed(msg),
+            src_worker,
+            src_base,
+            dst_worker,
+            dst_base,
+            staged_path,
+            staging_dir,
+        )
+        .await;
+    }
+
+    // ---- Phase 1: remote source -> local staging file ----
+    let progress = make_staged_progress_cb(shared.clone(), id, speed_limit_kbps);
+    let cancel_cb = || -> Option<Box<dyn Fn() -> bool + Send + Sync>> {
+        let paused = paused.clone();
+        let flag = cancel_flag.clone();
+        Some(Box::new(move || {
+            paused.load(Ordering::SeqCst) || flag.load(Ordering::SeqCst)
+        }))
+    };
+    let download = src_worker
+        .get(
+            source,
+            &staged_local,
+            Some(progress.download),
+            cancel_cb(),
+            false,
+        )
+        .await;
+    if let Err(err) = download {
+        let outcome = if matches!(err, ClientError::Cancelled) {
+            Outcome::Stopped
+        } else {
+            Outcome::Failed(transfer_error_for_ui(&err))
+        };
+        return finish(
+            outcome,
+            src_worker,
+            src_base,
+            dst_worker,
+            dst_base,
+            staged_path,
+            staging_dir,
+        )
+        .await;
+    }
+
+    // ---- Phase 2: local staging file -> remote destination ----
+    let upload = dst_worker
+        .put(
+            &staged_local,
+            dest,
+            Some(progress.upload),
+            cancel_cb(),
+            false,
+        )
+        .await;
+    let outcome = match upload {
+        Ok(()) => Outcome::Done,
+        Err(ClientError::Cancelled) => Outcome::Stopped,
+        Err(err) => Outcome::Failed(transfer_error_for_ui(&err)),
+    };
+    finish(
+        outcome,
+        src_worker,
+        src_base,
+        dst_worker,
+        dst_base,
+        staged_path,
+        staging_dir,
+    )
+    .await
+}
+
+/// Checks whether `dest` already exists on the destination and asks the
+/// overwrite policy. Returns true when the file must be skipped. Precheck
+/// transport errors are treated as "continue"; the upload phase reports them.
+async fn staged_conflict_choice(
+    dst: &mut dyn SftpClient,
+    caps: &freescp_core::types::ProtocolCapabilities,
+    source: &str,
+    dest: &str,
+    conflict_hook: &Option<Arc<dyn Fn(ConflictInfo) -> ConflictChoice + Send + Sync>>,
+) -> bool {
+    if !caps.supports_metadata {
+        return false;
+    }
+    match dst.exists(dest).await {
+        Ok(Some(_)) => {
+            let name = display_name(source);
+            let src_info = format!("remote: {source}");
+            let dst_info = match dst.stat(dest).await {
+                Ok(fi) => format!("{} bytes, {}", fi.size, local_short_time(fi.mtime as i64)),
+                Err(_) => "? bytes, ?".to_string(),
+            };
+            let choice = prompt_conflict(
+                conflict_hook,
+                ConflictInfo {
+                    name,
+                    source_info: src_info,
+                    dest_info: dst_info,
+                    direction: TransferDirection::RemoteToRemote,
+                },
+            );
+            matches!(choice, ConflictChoice::Skip | ConflictChoice::SkipAll)
+        }
+        Ok(None) => false,
+        Err(err) => {
+            tracing::debug!("remote-to-remote destination precheck failed: {err}");
+            false
+        }
+    }
+}
+
+/// Progress callbacks for a staged transfer: the download fills the first
+/// half of the bar (total doubled), the upload the second half.
+struct StagedProgress {
+    download: Box<dyn Fn(u64, u64) + Send + Sync>,
+    upload: Box<dyn Fn(u64, u64) + Send + Sync>,
+}
+
+fn make_staged_progress_cb(
+    shared: Arc<Mutex<Shared>>,
+    id: u64,
+    speed_limit_kbps: i64,
+) -> StagedProgress {
+    let first_total = Arc::new(AtomicU64::new(0));
+    let download_cb = make_progress_cb(shared.clone(), id, speed_limit_kbps);
+    let download_total = first_total.clone();
+    let download = Box::new(move |done: u64, total: u64| {
+        if total > 0 {
+            download_total.store(total, Ordering::Relaxed);
+            download_cb(done, total.saturating_mul(2));
+        } else {
+            download_cb(done, total);
+        }
+    });
+    let upload_cb = make_progress_cb(shared, id, speed_limit_kbps);
+    let upload_total = first_total;
+    let upload = Box::new(move |done: u64, total: u64| {
+        let base = upload_total.load(Ordering::Relaxed);
+        upload_cb(base.saturating_add(done), base.saturating_add(total));
+    });
+    StagedProgress { download, upload }
 }
 
 fn prompt_conflict(
@@ -2099,6 +2667,7 @@ fn task_to_row(t: &TransferTask, selected: bool) -> QueueRow {
         direction: match t.direction {
             TransferDirection::Upload => "Upload".into(),
             TransferDirection::Download => "Download".into(),
+            TransferDirection::RemoteToRemote => "Remote -> Remote".into(),
         },
         name: t.name.clone().into(),
         source: t.source.clone().into(),
@@ -2597,5 +3166,380 @@ mod tests {
         assert_eq!(parent_dir("/a"), "/");
         assert_eq!(parent_dir("a"), "");
         assert_eq!(parent_dir(""), "");
+    }
+
+    // ---- Remote-to-remote staging ------------------------------------------
+
+    use std::collections::HashMap;
+
+    /// Minimal in-memory remote backend for the staged-transfer tests: `files`
+    /// maps absolute remote paths to their contents and is shared with the
+    /// test, which seeds the source "server" and inspects the destination one.
+    struct MemoryClient {
+        files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+        dirs: Arc<Mutex<HashSet<String>>>,
+        connected: bool,
+        fail_put: bool,
+    }
+
+    impl MemoryClient {
+        fn new(files: Arc<Mutex<HashMap<String, Vec<u8>>>>) -> Self {
+            MemoryClient {
+                files,
+                dirs: Arc::new(Mutex::new(HashSet::from(["/".to_string()]))),
+                connected: false,
+                fail_put: false,
+            }
+        }
+
+        /// Simulates an upload failure on the destination side.
+        fn failing_put(mut self) -> Self {
+            self.fail_put = true;
+            self
+        }
+    }
+
+    /// Calls the progress callback in halves so the staged download/upload
+    /// mapping (0-50 % / 50-100 %) is observable in the task counters.
+    fn report_in_steps(progress: &dyn Fn(u64, u64), total: u64) {
+        progress(0, total);
+        progress(total / 2, total);
+        progress(total, total);
+    }
+
+    #[async_trait::async_trait]
+    impl SftpClient for MemoryClient {
+        fn is_connected(&self) -> bool {
+            self.connected
+        }
+
+        async fn connect(&mut self, _opt: &SessionOptions) -> Result<(), ClientError> {
+            self.connected = true;
+            Ok(())
+        }
+
+        async fn disconnect(&mut self) -> Result<(), ClientError> {
+            self.connected = false;
+            Ok(())
+        }
+
+        async fn list(
+            &mut self,
+            _remote_path: &str,
+        ) -> Result<Vec<freescp_core::FileInfo>, ClientError> {
+            Err(ClientError::Unsupported("list".into()))
+        }
+
+        async fn get(
+            &mut self,
+            remote: &str,
+            local: &str,
+            progress: Option<freescp_core::client::ProgressCb>,
+            _should_cancel: Option<freescp_core::client::CancelCb>,
+            _resume: bool,
+        ) -> Result<(), ClientError> {
+            let data = self
+                .files
+                .lock()
+                .unwrap()
+                .get(remote)
+                .cloned()
+                .ok_or_else(|| ClientError::OperationFailed(format!("missing {remote}")))?;
+            std::fs::write(local, &data)?;
+            if let Some(progress) = progress.as_deref() {
+                report_in_steps(progress, data.len() as u64);
+            }
+            Ok(())
+        }
+
+        async fn put(
+            &mut self,
+            local: &str,
+            remote: &str,
+            progress: Option<freescp_core::client::ProgressCb>,
+            _should_cancel: Option<freescp_core::client::CancelCb>,
+            _resume: bool,
+        ) -> Result<(), ClientError> {
+            if self.fail_put {
+                return Err(ClientError::OperationFailed(
+                    "simulated upload failure".into(),
+                ));
+            }
+            let data = std::fs::read(local)?;
+            self.files
+                .lock()
+                .unwrap()
+                .insert(remote.to_string(), data.clone());
+            if let Some(progress) = progress.as_deref() {
+                report_in_steps(progress, data.len() as u64);
+            }
+            Ok(())
+        }
+
+        async fn exists(&mut self, remote_path: &str) -> Result<Option<bool>, ClientError> {
+            if self.files.lock().unwrap().contains_key(remote_path) {
+                return Ok(Some(false));
+            }
+            if self.dirs.lock().unwrap().contains(remote_path) {
+                return Ok(Some(true));
+            }
+            Ok(None)
+        }
+
+        async fn stat(&mut self, remote_path: &str) -> Result<freescp_core::FileInfo, ClientError> {
+            let files = self.files.lock().unwrap();
+            let data = files
+                .get(remote_path)
+                .ok_or_else(|| ClientError::OperationFailed(format!("missing {remote_path}")))?;
+            Ok(freescp_core::FileInfo {
+                name: display_name(remote_path).to_string(),
+                is_dir: false,
+                size: data.len() as u64,
+                has_size: true,
+                ..Default::default()
+            })
+        }
+
+        async fn chmod(&mut self, _remote_path: &str, _mode: u32) -> Result<(), ClientError> {
+            Ok(())
+        }
+
+        async fn chown(
+            &mut self,
+            _remote_path: &str,
+            _uid: u32,
+            _gid: u32,
+        ) -> Result<(), ClientError> {
+            Ok(())
+        }
+
+        async fn set_times(
+            &mut self,
+            _remote_path: &str,
+            _atime: u64,
+            _mtime: u64,
+        ) -> Result<(), ClientError> {
+            Ok(())
+        }
+
+        async fn mkdir(&mut self, remote_dir: &str, _mode: u32) -> Result<(), ClientError> {
+            self.dirs.lock().unwrap().insert(remote_dir.to_string());
+            Ok(())
+        }
+
+        async fn remove_file(&mut self, remote_path: &str) -> Result<(), ClientError> {
+            self.files.lock().unwrap().remove(remote_path);
+            Ok(())
+        }
+
+        async fn remove_dir(&mut self, remote_dir: &str) -> Result<(), ClientError> {
+            self.dirs.lock().unwrap().remove(remote_dir);
+            Ok(())
+        }
+
+        async fn rename(
+            &mut self,
+            from: &str,
+            to: &str,
+            _overwrite: bool,
+        ) -> Result<(), ClientError> {
+            let data = self
+                .files
+                .lock()
+                .unwrap()
+                .remove(from)
+                .ok_or_else(|| ClientError::OperationFailed(format!("missing {from}")))?;
+            self.files.lock().unwrap().insert(to.to_string(), data);
+            Ok(())
+        }
+
+        async fn new_connection_like(
+            &self,
+            _opt: &SessionOptions,
+        ) -> Result<Box<dyn SftpClient>, ClientError> {
+            Err(ClientError::Unsupported("new_connection_like".into()))
+        }
+    }
+
+    /// A manager whose task ids start at `first_id`, so tests running in
+    /// parallel never share a staging directory.
+    fn manager_with_ids_from(first_id: u64) -> TransferManager {
+        let mgr = TransferManager::new();
+        mgr.shared.lock().unwrap().next_id = first_id;
+        mgr
+    }
+
+    /// The production path builder (`super::staging_dir_for`), not a copy of
+    /// it: these assertions must fail if `finish` ever stops removing the
+    /// directory.
+    fn staged_dir(id: u64) -> std::path::PathBuf {
+        super::staging_dir_for(id)
+    }
+
+    async fn wait_for_final_state(mgr: &TransferManager, id: u64) -> TransferTask {
+        for _ in 0..1000 {
+            if let Some(task) = mgr.tasks().into_iter().find(|task| task.id == id) {
+                if matches!(
+                    task.state,
+                    TransferState::Completed | TransferState::Failed | TransferState::Cancelled
+                ) {
+                    return task;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("transfer {id} never reached a final state");
+    }
+
+    fn seed(files: &Arc<Mutex<HashMap<String, Vec<u8>>>>, path: &str, data: &[u8]) {
+        files
+            .lock()
+            .unwrap()
+            .insert(path.to_string(), data.to_vec());
+    }
+
+    #[tokio::test]
+    async fn remote_to_remote_stages_through_local_temp_and_maps_progress() {
+        let mgr = manager_with_ids_from(100);
+        let src_files = Arc::new(Mutex::new(HashMap::new()));
+        let dst_files = Arc::new(Mutex::new(HashMap::new()));
+        seed(&src_files, "/srv/a/report.txt", b"hello");
+        let id = mgr.enqueue_remote_to_remote(
+            Box::new(MemoryClient::new(Arc::clone(&src_files))),
+            "/srv/a/report.txt".to_string(),
+            None,
+            Box::new(MemoryClient::new(Arc::clone(&dst_files))),
+            "/srv/b/report.txt".to_string(),
+            None,
+            Some(7),
+        );
+
+        let task = wait_for_final_state(&mgr, id).await;
+
+        assert_eq!(task.state, TransferState::Completed);
+        assert_eq!(
+            dst_files.lock().unwrap().get("/srv/b/report.txt"),
+            Some(&b"hello".to_vec())
+        );
+        // Download fills 0-50 %, upload 50-100 %: the bar spans twice the file.
+        assert_eq!(task.bytes_total, 10);
+        assert_eq!(task.bytes_done, 10);
+        // The staged copy never outlives the task, and the source stays put.
+        assert!(!staged_dir(id).exists());
+        assert!(src_files.lock().unwrap().contains_key("/srv/a/report.txt"));
+    }
+
+    #[tokio::test]
+    async fn remote_to_remote_cleans_up_when_the_upload_fails() {
+        let mgr = manager_with_ids_from(200);
+        let src_files = Arc::new(Mutex::new(HashMap::new()));
+        let dst_files = Arc::new(Mutex::new(HashMap::new()));
+        seed(&src_files, "/srv/a/report.txt", b"hello");
+        let id = mgr.enqueue_remote_to_remote(
+            Box::new(MemoryClient::new(Arc::clone(&src_files))),
+            "/srv/a/report.txt".to_string(),
+            None,
+            Box::new(MemoryClient::new(Arc::clone(&dst_files)).failing_put()),
+            "/srv/b/report.txt".to_string(),
+            None,
+            None,
+        );
+
+        let task = wait_for_final_state(&mgr, id).await;
+
+        assert_eq!(task.state, TransferState::Failed);
+        assert!(task
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("simulated upload failure"));
+        assert!(dst_files.lock().unwrap().is_empty());
+        assert!(!staged_dir(id).exists());
+    }
+
+    #[tokio::test]
+    async fn remote_to_remote_skips_an_existing_destination_without_a_conflict_hook() {
+        // No conflict hook installed means `prompt_conflict` falls back to
+        // Skip, so the destination file must be left untouched.
+        let mgr = manager_with_ids_from(300);
+        let src_files = Arc::new(Mutex::new(HashMap::new()));
+        let dst_files = Arc::new(Mutex::new(HashMap::new()));
+        seed(&src_files, "/srv/a/report.txt", b"new contents");
+        seed(&dst_files, "/srv/b/report.txt", b"existing");
+        let id = mgr.enqueue_remote_to_remote(
+            Box::new(MemoryClient::new(Arc::clone(&src_files))),
+            "/srv/a/report.txt".to_string(),
+            None,
+            Box::new(MemoryClient::new(Arc::clone(&dst_files))),
+            "/srv/b/report.txt".to_string(),
+            None,
+            None,
+        );
+
+        let task = wait_for_final_state(&mgr, id).await;
+
+        assert_eq!(task.state, TransferState::Completed);
+        assert_eq!(
+            dst_files.lock().unwrap().get("/srv/b/report.txt"),
+            Some(&b"existing".to_vec())
+        );
+        assert!(!staged_dir(id).exists());
+    }
+
+    /// Disconnecting one tab must cancel only that session's transfers; the
+    /// queue holds tasks from several tabs at once.
+    #[test]
+    fn cancel_for_session_leaves_other_tabs_transfers_alone() {
+        let mgr = manager_with_ids_from(400);
+        // Keep the scheduler from starting the tasks so their states stay put.
+        mgr.pause_all();
+        let empty = || Arc::new(Mutex::new(HashMap::new()));
+        let (alpha_src, alpha_dst, beta_src, beta_dst) = (empty(), empty(), empty(), empty());
+        let make_src = |files: &Arc<Mutex<HashMap<String, Vec<u8>>>>| {
+            Box::new(MemoryClient::new(Arc::clone(files))) as Box<dyn SftpClient>
+        };
+        let first = mgr.enqueue_remote_to_remote(
+            make_src(&alpha_src),
+            "/a".to_string(),
+            None,
+            make_src(&alpha_dst),
+            "/b".to_string(),
+            None,
+            Some(11),
+        );
+        let other = mgr.enqueue_remote_to_remote(
+            make_src(&beta_src),
+            "/c".to_string(),
+            None,
+            make_src(&beta_dst),
+            "/d".to_string(),
+            None,
+            Some(22),
+        );
+        let last = mgr.enqueue_remote_to_remote(
+            make_src(&alpha_src),
+            "/e".to_string(),
+            None,
+            make_src(&alpha_dst),
+            "/f".to_string(),
+            None,
+            Some(11),
+        );
+
+        let state_of = |id: u64| {
+            mgr.tasks()
+                .into_iter()
+                .find(|task| task.id == id)
+                .expect("task")
+                .state
+        };
+        // A session id nobody owns changes nothing.
+        mgr.cancel_for_session(99);
+        assert_eq!(state_of(other), TransferState::Queued);
+
+        mgr.cancel_for_session(11);
+        assert_eq!(state_of(first), TransferState::Cancelled);
+        assert_eq!(state_of(last), TransferState::Cancelled);
+        assert_eq!(state_of(other), TransferState::Queued);
     }
 }

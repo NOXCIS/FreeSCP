@@ -7,6 +7,35 @@
 
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, SpinBox } from "std-widgets.slint";
 import { Palette } from "std-widgets.slint";
+import { PasswordEdit, BrowseEdit } from "widgets.slint";
+import { Labels } from "labels.slint";
+
+// One clickable column header cell (sort direction glyph included). The
+// table's four headers share it; each call site sets its share of the row
+// width (`width: 34%`, ...).
+component SortHeader inherits TouchArea {
+    in property <string> text;
+    in property <int> column;
+    in property <int> sort-column;
+    in property <bool> sort-ascending;
+    callback sort-requested(int);
+    mouse-cursor: pointer;
+    clicked => { root.sort-requested(root.column); }
+    HorizontalLayout {
+        spacing: 2px;
+        Text {
+            text: root.text;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.sort-column == root.column ? (root.sort-ascending ? "▲" : "▼") : "";
+            font-size: 10px;
+            vertical-alignment: center;
+            color: Palette.foreground;
+        }
+    }
+}
 
 // One row of the site table (subset of SessionOptions for display).
 export struct SiteRow {
@@ -30,7 +59,7 @@ export component SiteManagerDialog inherits Window {
 
     // Inline editor fields (mirroring the SessionOptions essentials).
     in-out property <string> editor-name;
-    in-out property <string> editor-protocol; // storage name: sftp/scp/ftp/ftps/webdav
+    in-out property <string> editor-protocol; // storage name: sftp/scp/ftp/ftps/webdav/smb/telnet
     in-out property <string> editor-host;
     in-out property <int> editor-port;
     in-out property <string> editor-username;
@@ -47,6 +76,11 @@ export component SiteManagerDialog inherits Window {
     in-out property <string> editor-ftps-ca-cert;
     in-out property <bool> editor-webdav-verify-peer: true;
     in-out property <string> editor-webdav-ca-cert;
+    in-out property <string> editor-smb-domain;
+    in-out property <bool> editor-telnet-tls;
+    in-out property <bool> editor-telnet-verify-peer: true;
+    in-out property <string> editor-telnet-ca-cert;
+    in-out property <bool> editor-telnet-auto-login: true;
     in-out property <int> editor-proxy-type; // 0 none, 1 socks5, 2 http-connect
     in-out property <string> editor-proxy-host;
     in-out property <int> editor-proxy-port;
@@ -113,6 +147,9 @@ export component SiteManagerDialog inherits Window {
     // Fired when the user switches the WebDAV scheme (Rust follows the port
     // 443<->80 when it still holds the previous scheme default).
     callback webdav-scheme-changed();
+    // Fired when the user toggles Telnet TLS (Rust follows the port 23<->992
+    // when it still holds the previous default).
+    callback telnet-tls-changed();
     // Fired from the header cells (0 name, 1 protocol, 2 host, 3 user).
     callback sort-requested(int);
 
@@ -139,131 +176,6 @@ export component SiteManagerDialog inherits Window {
         );
     }
 
-    pure function protocol-label(storage: string) -> string {
-        if storage == "scp" {
-            return "SCP";
-        }
-        if storage == "ftp" {
-            return "FTP";
-        }
-        if storage == "ftps" {
-            return "FTPS";
-        }
-        if storage == "webdav" {
-            return "WebDAV";
-        }
-        return "SFTP";
-    }
-
-    pure function protocol-storage-name(label: string) -> string {
-        if label == "SCP" {
-            return "scp";
-        }
-        if label == "FTP" {
-            return "ftp";
-        }
-        if label == "FTPS" {
-            return "ftps";
-        }
-        if label == "WebDAV" {
-            return "webdav";
-        }
-        return "sftp";
-    }
-
-    pure function kh-policy-label(value: int) -> string {
-        if value == 1 {
-            return @tr("Accept new (TOFU)");
-        }
-        if value == 2 {
-            return @tr("No verification (double confirmation, expires in 15 min)");
-        }
-        return @tr("Strict");
-    }
-
-    pure function kh-policy-index(label: string) -> int {
-        if label == @tr("Accept new (TOFU)") {
-            return 1;
-        }
-        if label == @tr("No verification (double confirmation, expires in 15 min)") {
-            return 2;
-        }
-        return 0;
-    }
-
-    pure function integrity-label(value: int) -> string {
-        if value == 0 {
-            return @tr("Off (not recommended)");
-        }
-        if value == 2 {
-            return @tr("Required (strict)");
-        }
-        return @tr("Optional (recommended)");
-    }
-
-    pure function integrity-index(label: string) -> int {
-        if label == @tr("Off (not recommended)") {
-            return 0;
-        }
-        if label == @tr("Required (strict)") {
-            return 2;
-        }
-        return 1;
-    }
-
-    pure function proxy-label(value: int) -> string {
-        if value == 1 {
-            return "SOCKS5";
-        }
-        if value == 2 {
-            return "HTTP CONNECT";
-        }
-        return @tr("Direct (no proxy)");
-    }
-
-    pure function proxy-index(label: string) -> int {
-        if label == "SOCKS5" {
-            return 1;
-        }
-        if label == "HTTP CONNECT" {
-            return 2;
-        }
-        return 0;
-    }
-
-    // WebDAV scheme combo: display labels from ConnectionDialog.cpp
-    // ("HTTPS (recommended)" / "HTTP (insecure)") mapped to storage names.
-    pure function webdav-scheme-label(storage: string) -> string {
-        if storage == "http" {
-            return @tr("HTTP (insecure)");
-        }
-        return @tr("HTTPS (recommended)");
-    }
-
-    pure function webdav-scheme-storage(label: string) -> string {
-        if label == @tr("HTTP (insecure)") {
-            return "http";
-        }
-        return "https";
-    }
-
-    // Per-protocol host placeholder (Qt updateProtocolUi setPlaceholderText).
-    pure function host-placeholder(storage: string) -> string {
-        if storage == "scp" {
-            return @tr("scp.example.com");
-        }
-        if storage == "ftp" {
-            return @tr("ftp.example.com");
-        }
-        if storage == "ftps" {
-            return @tr("ftps.example.com");
-        }
-        if storage == "webdav" {
-            return @tr("webdav.example.com");
-        }
-        return @tr("sftp.example.com");
-    }
-
     VerticalLayout {
         padding: 12px;
         spacing: 10px;
@@ -271,81 +183,37 @@ export component SiteManagerDialog inherits Window {
         // Header row (click a header to sort, like the Qt table).
         HorizontalLayout {
             spacing: 0px;
-            TouchArea {
+            SortHeader {
                 width: 34%;
-                mouse-cursor: pointer;
-                clicked => { root.sort-requested(0); }
-                HorizontalLayout {
-                    spacing: 2px;
-                    Text {
-                        text: @tr("Name");
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: root.sort-column == 0 ? (root.sort-ascending ? "▲" : "▼") : "";
-                        font-size: 10px;
-                        vertical-alignment: center;
-                        color: Palette.foreground;
-                    }
-                }
+                text: @tr("Name");
+                column: 0;
+                sort-column: root.sort-column;
+                sort-ascending: root.sort-ascending;
+                sort-requested(col) => { root.sort-requested(col); }
             }
-            TouchArea {
+            SortHeader {
                 width: 18%;
-                mouse-cursor: pointer;
-                clicked => { root.sort-requested(1); }
-                HorizontalLayout {
-                    spacing: 2px;
-                    Text {
-                        text: @tr("Protocol");
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: root.sort-column == 1 ? (root.sort-ascending ? "▲" : "▼") : "";
-                        font-size: 10px;
-                        vertical-alignment: center;
-                        color: Palette.foreground;
-                    }
-                }
+                text: @tr("Protocol");
+                column: 1;
+                sort-column: root.sort-column;
+                sort-ascending: root.sort-ascending;
+                sort-requested(col) => { root.sort-requested(col); }
             }
-            TouchArea {
+            SortHeader {
                 width: 30%;
-                mouse-cursor: pointer;
-                clicked => { root.sort-requested(2); }
-                HorizontalLayout {
-                    spacing: 2px;
-                    Text {
-                        text: @tr("Host");
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: root.sort-column == 2 ? (root.sort-ascending ? "▲" : "▼") : "";
-                        font-size: 10px;
-                        vertical-alignment: center;
-                        color: Palette.foreground;
-                    }
-                }
+                text: @tr("Host");
+                column: 2;
+                sort-column: root.sort-column;
+                sort-ascending: root.sort-ascending;
+                sort-requested(col) => { root.sort-requested(col); }
             }
-            TouchArea {
+            SortHeader {
                 width: 18%;
-                mouse-cursor: pointer;
-                clicked => { root.sort-requested(3); }
-                HorizontalLayout {
-                    spacing: 2px;
-                    Text {
-                        text: @tr("User");
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: root.sort-column == 3 ? (root.sort-ascending ? "▲" : "▼") : "";
-                        font-size: 10px;
-                        vertical-alignment: center;
-                        color: Palette.foreground;
-                    }
-                }
+                text: @tr("User");
+                column: 3;
+                sort-column: root.sort-column;
+                sort-ascending: root.sort-ascending;
+                sort-requested(col) => { root.sort-requested(col); }
             }
         }
 
@@ -466,14 +334,14 @@ export component SiteManagerDialog inherits Window {
                                 vertical-alignment: center;
                             }
                             ComboBox {
-                                model: ["SFTP", "SCP", "FTP", "FTPS", "WebDAV"];
-                                current-value: root.protocol-label(root.editor-protocol);
+                                model: ["SFTP", "SCP", "FTP", "FTPS", "WebDAV", "SMB", "Telnet"];
+                                current-value: Labels.protocol-label(root.editor-protocol);
                                 horizontal-stretch: 1;
                                 selected(value) => {
                                     // Only fire when the protocol actually
                                     // changes (Qt currentIndexChanged).
-                                    if (root.editor-protocol != root.protocol-storage-name(value)) {
-                                        root.editor-protocol = root.protocol-storage-name(value);
+                                    if (root.editor-protocol != Labels.protocol-storage-name(value)) {
+                                        root.editor-protocol = Labels.protocol-storage-name(value);
                                         root.protocol-changed();
                                     }
                                 }
@@ -514,7 +382,7 @@ export component SiteManagerDialog inherits Window {
                                 horizontal-stretch: 1;
                                 LineEdit {
                                     text <=> root.editor-host;
-                                    placeholder-text: root.host-placeholder(root.editor-protocol);
+                                    placeholder-text: Labels.host-placeholder(root.editor-protocol);
                                     horizontal-stretch: 1;
                                 }
                                 SpinBox {
@@ -544,19 +412,10 @@ export component SiteManagerDialog inherits Window {
                                 width: 190px;
                                 vertical-alignment: center;
                             }
-                            HorizontalLayout {
-                                spacing: 6px;
+                            PasswordEdit {
+                                text <=> root.editor-password;
+                                show <=> root.show-password;
                                 horizontal-stretch: 1;
-                                LineEdit {
-                                    text <=> root.editor-password;
-                                    placeholder-text: @tr("optional");
-                                    input-type: root.show-password ? InputType.text : InputType.password;
-                                    horizontal-stretch: 1;
-                                }
-                                Button {
-                                    text: root.show-password ? @tr("Hide") : @tr("Show");
-                                    clicked => { root.show-password = !root.show-password; }
-                                }
                             }
                         }
                         Row {
@@ -570,14 +429,11 @@ export component SiteManagerDialog inherits Window {
                                 spacing: 6px;
                                 horizontal-stretch: 1;
                                 visible: root.editor-is-ssh;
-                                LineEdit {
+                                BrowseEdit {
                                     text <=> root.editor-key-path;
-                                    placeholder-text: "~/.ssh/id_ed25519";
+                                    placeholder: "~/.ssh/id_ed25519";
                                     horizontal-stretch: 1;
-                                }
-                                Button {
-                                    text: @tr("Choose…");
-                                    clicked => { root.browse-path-requested("private-key"); }
+                                    browse-requested => { root.browse-path-requested("private-key"); }
                                 }
                             }
                         }
@@ -592,15 +448,10 @@ export component SiteManagerDialog inherits Window {
                                 spacing: 6px;
                                 horizontal-stretch: 1;
                                 visible: root.editor-is-ssh;
-                                LineEdit {
+                                PasswordEdit {
                                     text <=> root.editor-key-passphrase;
-                                    placeholder-text: @tr("optional");
-                                    input-type: root.show-key-passphrase ? InputType.text : InputType.password;
+                                    show <=> root.show-key-passphrase;
                                     horizontal-stretch: 1;
-                                }
-                                Button {
-                                    text: root.show-key-passphrase ? @tr("Hide") : @tr("Show");
-                                    clicked => { root.show-key-passphrase = !root.show-key-passphrase; }
                                 }
                             }
                         }
@@ -612,10 +463,10 @@ export component SiteManagerDialog inherits Window {
                             }
                             ComboBox {
                                 model: [@tr("Direct (no proxy)"), "SOCKS5", "HTTP CONNECT"];
-                                current-value: root.proxy-label(root.editor-proxy-type);
+                                current-value: Labels.proxy-label(root.editor-proxy-type);
                                 horizontal-stretch: 1;
                                 selected(value) => {
-                                    root.editor-proxy-type = root.proxy-index(value);
+                                    root.editor-proxy-type = Labels.proxy-index(value);
                                     root.proxy-type-changed();
                                 }
                             }
@@ -669,15 +520,10 @@ export component SiteManagerDialog inherits Window {
                                 spacing: 6px;
                                 horizontal-stretch: 1;
                                 visible: root.editor-proxy-type > 0;
-                                LineEdit {
+                                PasswordEdit {
                                     text <=> root.editor-proxy-password;
-                                    placeholder-text: @tr("optional");
-                                    input-type: root.show-proxy-password ? InputType.text : InputType.password;
+                                    show <=> root.show-proxy-password;
                                     horizontal-stretch: 1;
-                                }
-                                Button {
-                                    text: root.show-proxy-password ? @tr("Hide") : @tr("Show");
-                                    clicked => { root.show-proxy-password = !root.show-proxy-password; }
                                 }
                             }
                         }
@@ -745,14 +591,11 @@ export component SiteManagerDialog inherits Window {
                                 spacing: 6px;
                                 horizontal-stretch: 1;
                                 visible: root.editor-is-ssh && root.editor-jump-enabled;
-                                LineEdit {
+                                BrowseEdit {
                                     text <=> root.editor-jump-key-path;
-                                    placeholder-text: @tr("optional");
+                                    placeholder: @tr("optional");
                                     horizontal-stretch: 1;
-                                }
-                                Button {
-                                    text: @tr("Choose…");
-                                    clicked => { root.browse-path-requested("jump-key"); }
+                                    browse-requested => { root.browse-path-requested("jump-key"); }
                                 }
                             }
                         }
@@ -767,14 +610,11 @@ export component SiteManagerDialog inherits Window {
                                 spacing: 6px;
                                 horizontal-stretch: 1;
                                 visible: root.editor-is-ssh;
-                                LineEdit {
+                                BrowseEdit {
                                     text <=> root.editor-known-hosts-path;
-                                    placeholder-text: "~/.ssh/known_hosts";
+                                    placeholder: "~/.ssh/known_hosts";
                                     horizontal-stretch: 1;
-                                }
-                                Button {
-                                    text: @tr("Choose…");
-                                    clicked => { root.browse-path-requested("known-hosts"); }
+                                    browse-requested => { root.browse-path-requested("known-hosts"); }
                                 }
                             }
                         }
@@ -791,11 +631,11 @@ export component SiteManagerDialog inherits Window {
                                     @tr("Accept new (TOFU)"),
                                     @tr("No verification (double confirmation, expires in 15 min)"),
                                 ];
-                                current-value: root.kh-policy-label(root.editor-known-hosts-policy);
+                                current-value: Labels.kh-policy-label(root.editor-known-hosts-policy);
                                 horizontal-stretch: 1;
                                 visible: root.editor-is-ssh;
                                 selected(value) => {
-                                    root.editor-known-hosts-policy = root.kh-policy-index(value);
+                                    root.editor-known-hosts-policy = Labels.kh-policy-index(value);
                                 }
                             }
                         }
@@ -812,11 +652,11 @@ export component SiteManagerDialog inherits Window {
                                     @tr("Optional (recommended)"),
                                     @tr("Required (strict)"),
                                 ];
-                                current-value: root.integrity-label(root.editor-integrity-policy);
+                                current-value: Labels.integrity-label(root.editor-integrity-policy);
                                 horizontal-stretch: 1;
                                 visible: root.editor-protocol == "sftp";
                                 selected(value) => {
-                                    root.editor-integrity-policy = root.integrity-index(value);
+                                    root.editor-integrity-policy = Labels.integrity-index(value);
                                 }
                                 Tooltip {
                                     text: @markdown("Checksum verification for resume and final transfer validation.");
@@ -848,14 +688,11 @@ export component SiteManagerDialog inherits Window {
                                 spacing: 6px;
                                 horizontal-stretch: 1;
                                 visible: root.editor-protocol == "ftps";
-                                LineEdit {
+                                BrowseEdit {
                                     text <=> root.editor-ftps-ca-cert;
-                                    placeholder-text: @tr("System CA bundle");
+                                    placeholder: @tr("System CA bundle");
                                     horizontal-stretch: 1;
-                                }
-                                Button {
-                                    text: @tr("Choose…");
-                                    clicked => { root.browse-path-requested("ftps-ca"); }
+                                    browse-requested => { root.browse-path-requested("ftps-ca"); }
                                 }
                             }
                         }
@@ -871,11 +708,11 @@ export component SiteManagerDialog inherits Window {
                                     @tr("HTTPS (recommended)"),
                                     @tr("HTTP (insecure)"),
                                 ];
-                                current-value: root.webdav-scheme-label(root.editor-webdav-scheme);
+                                current-value: Labels.webdav-scheme-label(root.editor-webdav-scheme);
                                 horizontal-stretch: 1;
                                 visible: root.editor-protocol == "webdav";
                                 selected(value) => {
-                                    root.editor-webdav-scheme = root.webdav-scheme-storage(value);
+                                    root.editor-webdav-scheme = Labels.webdav-scheme-storage(value);
                                     root.webdav-scheme-changed();
                                 }
                             }
@@ -905,15 +742,88 @@ export component SiteManagerDialog inherits Window {
                                 spacing: 6px;
                                 horizontal-stretch: 1;
                                 visible: root.editor-protocol == "webdav" && root.editor-webdav-scheme == "https";
-                                LineEdit {
+                                BrowseEdit {
                                     text <=> root.editor-webdav-ca-cert;
-                                    placeholder-text: @tr("System CA bundle");
+                                    placeholder: @tr("System CA bundle");
                                     horizontal-stretch: 1;
+                                    browse-requested => { root.browse-path-requested("webdav-ca"); }
                                 }
-                                Button {
-                                    text: @tr("Choose…");
-                                    clicked => { root.browse-path-requested("webdav-ca"); }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Domain (workgroup):");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-protocol == "smb";
+                            }
+                            LineEdit {
+                                text <=> root.editor-smb-domain;
+                                placeholder-text: @tr("optional");
+                                horizontal-stretch: 1;
+                                visible: root.editor-protocol == "smb";
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "";
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-protocol == "telnet";
+                            }
+                            CheckBox {
+                                text: @tr("Telnet over TLS (secure telnet, port 992)");
+                                checked <=> root.editor-telnet-tls;
+                                horizontal-stretch: 1;
+                                visible: root.editor-protocol == "telnet";
+                                toggled => { root.telnet-tls-changed(); }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "";
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-protocol == "telnet" && root.editor-telnet-tls;
+                            }
+                            CheckBox {
+                                text: @tr("Verify TLS server certificate (recommended)");
+                                checked <=> root.editor-telnet-verify-peer;
+                                horizontal-stretch: 1;
+                                visible: root.editor-protocol == "telnet" && root.editor-telnet-tls;
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Telnet CA bundle:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-protocol == "telnet" && root.editor-telnet-tls;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                visible: root.editor-protocol == "telnet" && root.editor-telnet-tls;
+                                BrowseEdit {
+                                    text <=> root.editor-telnet-ca-cert;
+                                    placeholder: @tr("System CA bundle");
+                                    horizontal-stretch: 1;
+                                    browse-requested => { root.browse-path-requested("telnet-ca"); }
                                 }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "";
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-protocol == "telnet";
+                            }
+                            CheckBox {
+                                text: @tr("Log in automatically using the stored credentials");
+                                checked <=> root.editor-telnet-auto-login;
+                                horizontal-stretch: 1;
+                                visible: root.editor-protocol == "telnet";
                             }
                         }
                         Row {

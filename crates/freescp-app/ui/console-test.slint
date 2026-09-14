@@ -1,0 +1,32 @@
+// Test-only Window wrapper around ConsoleView: the component itself is a plain
+// Rectangle, so it needs a window root to take part in layout and to receive
+// pointer events under the Slint testing backend. Only the properties the
+// view tests (src/console_view_tests.rs) inspect are forwarded.
+
+import { ConsoleRow, ConsoleView } from "console.slint";
+
+export component ConsoleTestWindow inherits Window {
+    callback probe(string, int);
+
+    console := ConsoleView {
+        width: 100%;
+        height: 100%;
+        key-text(text, ctrl, alt, shift) => { root.probe(text, (ctrl ? 1 : 0) + (alt ? 2 : 0) + (shift ? 4 : 0)); }
+        special-key(code) => { root.probe("", code); }
+    }
+
+    out property <length> cell-width <=> console.cell-width;
+    out property <length> cell-height <=> console.cell-height;
+    out property <int> grid-cols <=> console.grid-cols;
+    out property <int> grid-rows <=> console.grid-rows;
+
+    in-out property <[ConsoleRow]> rows <=> console.rows;
+    in-out property <int> sel-start-row <=> console.sel-start-row;
+    in-out property <int> sel-start-col <=> console.sel-start-col;
+    in-out property <int> sel-end-row <=> console.sel-end-row;
+    in-out property <int> sel-end-col <=> console.sel-end-col;
+
+    public function take-focus() {
+        console.focus-console();
+    }
+}

@@ -12,6 +12,13 @@ AuthKey_*.p8
 .env
 .env.*
 
+# Website deploy state
+website/.wrangler/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
 # Editor / OS
 .DS_Store
 .idea/

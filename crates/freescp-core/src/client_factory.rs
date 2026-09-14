@@ -2,7 +2,7 @@
 //! `core/src/libssh2/ClientFactory.cpp`.
 //!
 //! NOTE (integration): the backend modules referenced below
-//! (`crate::backends::{sftp, scp, ftp, webdav}`) are written by sibling
+//! (`crate::backends::{sftp, scp, ftp, webdav, smb}`) are written by sibling
 //! workstreams with constructors `pub fn new() -> Self`; this module only
 //! compiles once those modules land.
 
@@ -23,6 +23,12 @@ pub fn create_client(protocol: Protocol) -> Result<Box<dyn SftpClient>, ClientEr
         Protocol::Scp => Box::new(crate::backends::scp::ScpClient::new()),
         Protocol::Ftp | Protocol::Ftps => Box::new(crate::backends::ftp::FtpClient::new()),
         Protocol::WebDav => Box::new(crate::backends::webdav::WebDavClient::new()),
+        Protocol::Smb => Box::new(crate::backends::smb::SmbClient::new()),
+        Protocol::Telnet => {
+            return Err(ClientError::Unsupported(
+                "telnet is an interactive console; use TelnetSession".to_string(),
+            ));
+        }
     };
     Ok(client)
 }

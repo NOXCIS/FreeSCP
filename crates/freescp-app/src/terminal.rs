@@ -1344,7 +1344,12 @@ mod tests {
 
     #[test]
     fn open_remote_terminal_rejects_non_ssh_protocols() {
-        for protocol in [Protocol::Ftp, Protocol::Ftps, Protocol::WebDav] {
+        for protocol in [
+            Protocol::Ftp,
+            Protocol::Ftps,
+            Protocol::WebDav,
+            Protocol::Smb,
+        ] {
             let session = SessionOptions {
                 protocol,
                 ..base_session()

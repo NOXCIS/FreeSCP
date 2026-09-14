@@ -40,10 +40,13 @@ use tokio::sync::mpsc::UnboundedSender;
 /// `slint::spawn_local` loop (non-`Send`, so it has full access to the
 /// `Rc<RefCell<AppState>>` and the main window).
 pub enum UiEvent {
-    /// A freshly connected session ready to install into the right pane
+    /// A freshly connected session ready to install into a tab's right pane
     /// (port of `applyRemoteConnectedUI`). `opt` is boxed to keep the
-    /// event small (the channel is unbounded).
+    /// event small (the channel is unbounded). `tab` names the tab the
+    /// session belongs to; `None` means "the active tab when it is free,
+    /// else a new tab".
     Session {
+        tab: Option<u64>,
         opt: Box<SessionOptions>,
         client: Box<dyn SftpClient>,
     },
@@ -55,21 +58,50 @@ pub enum UiEvent {
     /// A watched local directory changed on disk; refresh `pane` (0 = left,
     /// 1 = right) only if it still shows `path` (stale watcher guard).
     LocalDirChanged { pane: usize, path: String },
-    /// Reload the remote pane (upload-completion refresh hook).
+    /// Reload the remote pane of the active tab (upload-completion refresh
+    /// hook).
     ReloadRemote,
+    /// Reload the remote pane after an operation on `session_id` finished:
+    /// the owning tab is refreshed when it is active, otherwise marked dirty
+    /// and refreshed on the next activation. (Background ops must not touch
+    /// the active tab's pane.)
+    ReloadSession { session_id: u64 },
     /// Re-raise the transfer queue dialog (show-on-enqueue preference).
     ShowQueue,
-    /// Navigate the remote pane to `path` (used by the text-based
-    /// server-side directory chooser).
+    /// Navigate the remote pane of the active tab to `path` (used by the
+    /// text-based server-side directory chooser).
     NavigateRemote { path: String },
     /// Update the status line.
     Status { message: String },
     /// Invalidate the cached writeability verdict for a remote directory
     /// (after a remote operation reported a denied write).
     InvalidateWriteability { dir: String },
-    /// Put a client taken from the UI thread back into `AppState` (a newer
-    /// session wins, so a stale return is dropped).
-    ReturnClient(Box<dyn SftpClient>),
+    /// Put a client taken from the UI thread back into its session record
+    /// (a session closed in the meantime wins, so a stale return is
+    /// dropped).
+    ReturnClient {
+        session_id: u64,
+        client: Box<dyn SftpClient>,
+    },
+    /// A dialog-driven connect against `tab` ended without a session (cancel,
+    /// failure, or dismissed dialog): clears the tab's `connecting` flag.
+    ConnectFailed { tab: Option<u64> },
+    /// A Telnet (console) session finished connecting: installs an embedded
+    /// terminal into the tab's right pane. Console sessions never enter
+    /// `AppState::sessions` (they have no `SftpClient`); the UI thread keeps
+    /// them in `crate::console`.
+    ConsoleSession {
+        tab: Option<u64>,
+        opt: Box<SessionOptions>,
+        session: freescp_core::telnet::TelnetSession,
+        events: tokio::sync::mpsc::UnboundedReceiver<freescp_core::telnet::TelnetEvent>,
+    },
+    /// Decoded terminal output for the console of tab `tab` (the forwarding
+    /// task keeps running while the tab is in the background).
+    ConsoleData { tab: u64, bytes: Vec<u8> },
+    /// The console session of tab `tab` ended: `message` is `None` for a
+    /// clean close. The last screen stays on show.
+    ConsoleClosed { tab: u64, message: Option<String> },
 }
 
 /// Maximum number of entries kept per history list (mirrors the C++
@@ -200,16 +232,143 @@ impl WindowState {
     }
 }
 
+/// One remote session owned by a tab (the counterpart of the old single
+/// `client`/`session` slots, now keyed by [`AppState::sessions`]).
+pub struct SessionRecord {
+    /// Stable id used to route [`UiEvent`]s, pane operations, and queued
+    /// transfers ([`crate::transfer::TransferManager::cancel_for_session`]).
+    /// It matches the [`AppState::sessions`] key; kept on the record so a
+    /// record handed around can name itself (log lines, transfer tasks).
+    pub id: u64,
+    /// Options of the session (for reconnects, history, TOFU state).
+    pub options: SessionOptions,
+    /// The live connection; `None` only while a UI-thread operation borrows it
+    /// through `take_session_client` (or briefly while the transfer queue's
+    /// teardown runs).
+    pub client: Option<Box<dyn SftpClient>>,
+    /// True while the client is borrowed by a background operation; concurrent
+    /// remote requests for that session are dropped instead of queued.
+    pub busy: bool,
+    /// Install time; drives the status-bar elapsed timer.
+    pub started_at: Instant,
+    /// True when the session runs without host-key verification; drives the
+    /// status-bar risk banner.
+    pub no_host_verification: bool,
+}
+
+/// Rust-side mirror of one pane's visible state (the flat `left-*` /
+/// `right-*` window properties). Used to stash the outgoing tab and load the
+/// incoming one on a tab switch.
+#[derive(Clone)]
+pub struct PaneState {
+    pub path: String,
+    pub entries: Vec<crate::ui::main_window::FileEntry>,
+    pub sort_column: i32,
+    pub sort_ascending: bool,
+    /// Current/anchor row (-1 = none).
+    pub selected_row: i32,
+    /// Sorted set of selected view rows (never the synthetic `..` row).
+    pub selected_rows: Vec<i32>,
+    /// Per-row render flags, parallel to `entries`.
+    pub selected_flags: Vec<bool>,
+    pub selected_is_parent: bool,
+}
+
+impl Default for PaneState {
+    fn default() -> Self {
+        PaneState {
+            path: String::new(),
+            entries: Vec::new(),
+            sort_column: 0,
+            sort_ascending: true,
+            selected_row: -1,
+            selected_rows: Vec::new(),
+            selected_flags: Vec::new(),
+            selected_is_parent: false,
+        }
+    }
+}
+
+/// One session tab: a left (local) + right (remote or local) pane pair, plus
+/// the status/title the tab bar shows while it is not the active tab.
+pub struct TabState {
+    /// Stable id used by the Slint tab bar and the drop callbacks.
+    pub id: u64,
+    /// Connected session, if any.
+    pub session_id: Option<u64>,
+    /// True while the right pane shows an embedded Telnet terminal instead of
+    /// a file browser; the terminal itself is UI-thread-local state kept in
+    /// `crate::console`, keyed by this tab's [`Self::id`]. Set while a console
+    /// session is installed (including after the remote hangs up, so the last
+    /// screen stays readable), cleared by Disconnect.
+    pub console: bool,
+    /// True while a dialog-driven connect attempt targets this tab.
+    pub connecting: bool,
+    /// Last status-line message of this tab (restored on tab switch).
+    pub status: String,
+    /// True while the right pane browses local folders (before connect and
+    /// after disconnect).
+    pub right_is_local: bool,
+    /// Last local directory shown in the right pane (restored on disconnect).
+    pub right_local_root: Option<String>,
+    /// True when the SCP-only transfer panel replaces the remote file list.
+    pub scp_panel: bool,
+    /// True when the session protocol supports the permissions actions.
+    pub supports_permissions: bool,
+    /// Set when a background operation changed the remote pane while another
+    /// tab was active; the pane is reloaded on the next activation.
+    pub remote_dirty: bool,
+    pub left: PaneState,
+    pub right: PaneState,
+}
+
+impl TabState {
+    /// A blank local/local tab rooted at `local_path`.
+    pub fn blank(id: u64, local_path: &str) -> Self {
+        let left = PaneState {
+            path: local_path.to_string(),
+            ..PaneState::default()
+        };
+        let right = PaneState {
+            path: local_path.to_string(),
+            ..PaneState::default()
+        };
+        TabState {
+            id,
+            session_id: None,
+            console: false,
+            connecting: false,
+            status: "Ready".to_string(),
+            right_is_local: true,
+            right_local_root: Some(local_path.to_string()),
+            scp_panel: false,
+            supports_permissions: true,
+            remote_dirty: false,
+            left,
+            right,
+        }
+    }
+
+    /// True while the tab's right pane drives a remote session (an
+    /// `SftpClient`-backed session, or an embedded Telnet console).
+    pub fn is_connected(&self) -> bool {
+        (self.session_id.is_some() || self.console) && !self.right_is_local
+    }
+}
+
 /// Application-wide state shared by the UI and the sibling workstreams.
 pub struct AppState {
     /// Async runtime for all network backends (shared via `Arc` so the
     /// state stays cheaply cloneable for worker tasks).
     pub runtime: Arc<tokio::runtime::Runtime>,
-    /// The active remote session, if any.
-    pub client: Option<Box<dyn SftpClient>>,
-    /// Options of the active session (for reconnects, history, TOFU state).
-    pub session: Option<SessionOptions>,
-    /// User preferences (see [`AppPreferences`]).
+    /// Live remote sessions, keyed by [`SessionRecord::id`]. Multiple tabs can
+    /// hold independent sessions at the same time.
+    pub sessions: std::collections::HashMap<u64, SessionRecord>,
+    /// Open session tabs, in tab-bar order. Always at least one.
+    pub tabs: Vec<TabState>,
+    /// Index of the tab whose panes the Slint properties currently render.
+    pub active_tab: usize,
+    /// Preferences (see [`AppPreferences`]).
     pub prefs: AppPreferences,
     /// Most recently used local paths (newest first).
     pub recent_local_paths: Vec<String>,
@@ -223,12 +382,9 @@ pub struct AppState {
     pub window_state: WindowState,
     /// Directory holding persisted app state (window-state.toml, settings).
     pub settings_dir: PathBuf,
-    /// Set when a session connects; drives the status-bar elapsed timer in
-    /// `main.rs`.
-    pub connection_started_at: Option<Instant>,
-    /// True while the active session runs without host-key verification;
-    /// drives the status-bar risk banner.
-    pub session_no_host_verification: bool,
+    /// Monotonic id sources for sessions and tabs.
+    next_session_id: u64,
+    next_tab_id: u64,
     /// Weak handle to the main window, attached by `main.rs` right after the
     /// window is created. Lets sibling modules (`connect`, ...) update the
     /// status bar from any thread via [`AppState::set_status`].
@@ -238,9 +394,6 @@ pub struct AppState {
     pub transfer_manager: Arc<crate::transfer::TransferManager>,
     /// Cached remote writeability probe results (see `remote.rs`).
     pub writeability: crate::remote::RemoteWriteabilityCache,
-    /// Last local directory shown in the right pane (the C++ `rightLocalModel_`
-    /// root, restored when a session disconnects).
-    pub right_local_path: Option<String>,
     /// Sender half of the UI event channel; the receiver loop lives in
     /// `main.rs` (see [`UiEvent`]).
     ui_events_tx: Option<UnboundedSender<UiEvent>>,
@@ -248,26 +401,26 @@ pub struct AppState {
 
 impl Clone for AppState {
     /// Hand-written clone: the tokio runtime is shared (`Arc`), and the
-    /// session fields — which are not `Clone` and must stay owned by the
-    /// UI-thread original — are reset on the copy. Sibling workstreams hold
+    /// session/tab registry — which is not `Clone` and must stay owned by the
+    /// UI-thread original — is reset on the copy. Sibling workstreams hold
     /// such copies for status updates and tokio tasks.
     fn clone(&self) -> Self {
         AppState {
             runtime: Arc::clone(&self.runtime),
-            client: None,
-            session: None,
+            sessions: std::collections::HashMap::new(),
+            tabs: Vec::new(),
+            active_tab: 0,
             prefs: self.prefs.clone(),
             recent_local_paths: self.recent_local_paths.clone(),
             recent_remote_paths: self.recent_remote_paths.clone(),
             recent_servers: self.recent_servers.clone(),
             window_state: self.window_state.clone(),
             settings_dir: self.settings_dir.clone(),
-            connection_started_at: None,
-            session_no_host_verification: self.session_no_host_verification,
+            next_session_id: self.next_session_id,
+            next_tab_id: self.next_tab_id,
             ui: self.ui.clone(),
             transfer_manager: Arc::clone(&self.transfer_manager),
             writeability: self.writeability.clone(),
-            right_local_path: self.right_local_path.clone(),
             ui_events_tx: self.ui_events_tx.clone(),
         }
     }
@@ -292,24 +445,132 @@ impl AppState {
         let preferences = crate::settings::Preferences::load();
         AppState {
             runtime: Arc::new(runtime),
-            client: None,
-            session: None,
+            sessions: std::collections::HashMap::new(),
+            tabs: Vec::new(),
+            active_tab: 0,
             prefs: AppPreferences::from_settings(&preferences),
             recent_local_paths: crate::history::recent_local_paths(),
             recent_remote_paths: crate::history::recent_remote_paths(),
             recent_servers: Vec::new(),
             window_state,
             settings_dir,
-            connection_started_at: None,
-            session_no_host_verification: false,
+            next_session_id: 1,
+            next_tab_id: 1,
             ui: None,
             transfer_manager: Arc::new(crate::transfer::TransferManager::new()),
             writeability: crate::remote::RemoteWriteabilityCache::with_ttl_ms(
                 preferences.remote_writeability_ttl_ms,
             ),
-            right_local_path: None,
             ui_events_tx: None,
         }
+    }
+
+    /// Allocates a fresh session id.
+    pub fn alloc_session_id(&mut self) -> u64 {
+        let id = self.next_session_id;
+        self.next_session_id += 1;
+        id
+    }
+
+    /// Allocates a fresh tab id.
+    pub fn alloc_tab_id(&mut self) -> u64 {
+        let id = self.next_tab_id;
+        self.next_tab_id += 1;
+        id
+    }
+
+    /// The active tab, if any.
+    pub fn active_tab(&self) -> Option<&TabState> {
+        self.tabs.get(self.active_tab)
+    }
+
+    /// The active tab, mutably.
+    pub fn active_tab_mut(&mut self) -> Option<&mut TabState> {
+        let index = self.active_tab;
+        self.tabs.get_mut(index)
+    }
+
+    /// Index of the tab carrying `id`.
+    pub fn tab_index_by_id(&self, id: u64) -> Option<usize> {
+        self.tabs.iter().position(|tab| tab.id == id)
+    }
+
+    /// Index of the tab owning session `session_id`.
+    pub fn tab_index_for_session(&self, session_id: u64) -> Option<usize> {
+        self.tabs
+            .iter()
+            .position(|tab| tab.session_id == Some(session_id))
+    }
+
+    /// Session id of the active tab, when it has a connected session.
+    pub fn active_session_id(&self) -> Option<u64> {
+        self.active_tab()?.session_id
+    }
+
+    /// The active tab's session record, when connected.
+    pub fn active_session(&self) -> Option<&SessionRecord> {
+        self.sessions.get(&self.active_session_id()?)
+    }
+
+    /// The active tab's session options, when connected.
+    pub fn active_session_options(&self) -> Option<SessionOptions> {
+        self.active_session().map(|record| record.options.clone())
+    }
+
+    /// A session record by id.
+    pub fn session(&self, id: u64) -> Option<&SessionRecord> {
+        self.sessions.get(&id)
+    }
+
+    /// Borrows a session's client for a background operation. Returns `None`
+    /// when the session is gone or already has an operation in flight (the
+    /// caller should leave its reload to the running operation).
+    pub fn take_session_client(&mut self, id: u64) -> Option<Box<dyn SftpClient>> {
+        let record = self.sessions.get_mut(&id)?;
+        if record.busy {
+            return None;
+        }
+        let client = record.client.take()?;
+        record.busy = true;
+        Some(client)
+    }
+
+    /// Puts a borrowed client back. A session closed while the operation ran
+    /// simply drops the client (its connection is disconnected on drop).
+    pub fn return_session_client(&mut self, id: u64, client: Box<dyn SftpClient>) {
+        if let Some(record) = self.sessions.get_mut(&id) {
+            record.busy = false;
+            if record.client.is_none() {
+                record.client = Some(client);
+            }
+        }
+    }
+
+    /// Appends a blank local/local tab rooted at `local_path` and returns its
+    /// index. The caller decides whether to make it active.
+    pub fn push_blank_tab(&mut self, local_path: &str) -> usize {
+        let id = self.alloc_tab_id();
+        self.tabs.push(TabState::blank(id, local_path));
+        self.tabs.len() - 1
+    }
+
+    /// Removes the tab at `index`, returning the removed state. The session
+    /// record (and its client) is returned to the caller for a clean
+    /// disconnect; the last remaining tab is never removed — callers reset it
+    /// instead. A Telnet console hosted by the tab is left for the caller
+    /// (`crate::console::remove`), which owns the UI-thread terminal state.
+    pub fn remove_tab(&mut self, index: usize) -> Option<(TabState, Option<SessionRecord>)> {
+        if index >= self.tabs.len() || self.tabs.len() <= 1 {
+            return None;
+        }
+        let tab = self.tabs.remove(index);
+        let session = tab.session_id.and_then(|id| self.sessions.remove(&id));
+        if self.active_tab >= self.tabs.len() {
+            self.active_tab = self.tabs.len() - 1;
+        } else if index < self.active_tab {
+            self.active_tab -= 1;
+        }
+        Some((tab, session))
     }
 
     /// Convenience: the tokio `Handle` for spawning background work.
@@ -453,22 +714,69 @@ impl AppState {
     }
 
     /// Installs a freshly connected session by forwarding it to the UI event
-    /// loop; the main window switches the right pane into remote mode there
-    /// (port of `applyRemoteConnectedUI`). Safe to call from any thread:
-    /// `self` may be a clone of the UI-thread original.
-    pub fn install_session(&self, opt: SessionOptions, client: Box<dyn SftpClient>) {
+    /// loop; the main window links it to `tab` (or the active tab / a new tab
+    /// when `tab` is `None`) and switches the right pane into remote mode
+    /// there (port of `applyRemoteConnectedUI`). Safe to call from any
+    /// thread: `self` may be a clone of the UI-thread original.
+    pub fn install_session(
+        &self,
+        tab: Option<u64>,
+        opt: SessionOptions,
+        client: Box<dyn SftpClient>,
+    ) {
         let Some(tx) = &self.ui_events_tx else {
             tracing::warn!("session dropped: UI event channel not attached");
             return;
         };
         if tx
             .send(UiEvent::Session {
+                tab,
                 opt: Box::new(opt),
                 client,
             })
             .is_err()
         {
             tracing::warn!("session dropped: UI event loop gone");
+        }
+    }
+
+    /// Reports that a connect attempt reserved for `tab` ended without a
+    /// session; the UI clears the tab's "Connecting…" state. Safe to call
+    /// from any thread (the UI event loop owns the tab registry).
+    pub fn connect_failed(&self, tab: Option<u64>) {
+        let Some(tx) = &self.ui_events_tx else {
+            return;
+        };
+        if tx.send(UiEvent::ConnectFailed { tab }).is_err() {
+            tracing::debug!("connect-failed notice dropped (event loop gone)");
+        }
+    }
+
+    /// Installs a freshly connected Telnet console session by forwarding it to
+    /// the UI event loop; the main window then links it to `tab` (or the
+    /// active tab / a new tab when `tab` is `None`). Safe to call from any
+    /// thread: `self` may be a clone of the UI-thread original.
+    pub fn install_console_session(
+        &self,
+        tab: Option<u64>,
+        opt: SessionOptions,
+        session: freescp_core::telnet::TelnetSession,
+        events: tokio::sync::mpsc::UnboundedReceiver<freescp_core::telnet::TelnetEvent>,
+    ) {
+        let Some(tx) = &self.ui_events_tx else {
+            tracing::warn!("console session dropped: UI event channel not attached");
+            return;
+        };
+        if tx
+            .send(UiEvent::ConsoleSession {
+                tab,
+                opt: Box::new(opt),
+                session,
+                events,
+            })
+            .is_err()
+        {
+            tracing::warn!("console session dropped: UI event loop gone");
         }
     }
 }
@@ -483,4 +791,91 @@ fn prepend_recent(list: &mut Vec<String>, value: String) {
     list.retain(|entry| entry != &trimmed);
     list.insert(0, trimmed);
     list.truncate(MAX_RECENT_ENTRIES);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use freescp_core::backends::mock::MockSftpClient;
+
+    fn record(id: u64, host: &str) -> SessionRecord {
+        let options = SessionOptions {
+            host: host.to_string(),
+            username: "luis".to_string(),
+            ..SessionOptions::default()
+        };
+        SessionRecord {
+            id,
+            options,
+            client: None,
+            busy: false,
+            started_at: Instant::now(),
+            no_host_verification: false,
+        }
+    }
+
+    /// A borrowed client must come back to the session that lent it, even
+    /// while another tab is active — the `UiEvent::ReturnClient { session_id }`
+    /// routing rule.
+    #[test]
+    fn clients_return_to_the_session_that_borrowed_them() {
+        let mut state = AppState::new();
+        state.push_blank_tab("/tmp");
+        let alpha = state.alloc_session_id();
+        let beta = state.alloc_session_id();
+        state.sessions.insert(alpha, record(alpha, "alpha.example"));
+        state.sessions.insert(beta, record(beta, "beta.example"));
+        state.sessions.get_mut(&alpha).unwrap().client = Some(Box::new(MockSftpClient::new()));
+        state.sessions.get_mut(&beta).unwrap().client = Some(Box::new(MockSftpClient::new()));
+        state.active_tab = 0;
+
+        let alpha_client = state
+            .take_session_client(alpha)
+            .expect("alpha has a client");
+        assert!(state.session(alpha).unwrap().client.is_none());
+        assert!(state.session(alpha).unwrap().busy);
+        assert!(!state.session(beta).unwrap().busy);
+
+        state.return_session_client(alpha, alpha_client);
+        assert!(state.session(alpha).unwrap().client.is_some());
+        assert!(!state.session(alpha).unwrap().busy);
+        assert!(state.session(beta).unwrap().client.is_some());
+
+        // A session with an operation in flight refuses a second borrow, and
+        // clients of closed sessions are simply dropped on return.
+        let beta_client = state.take_session_client(beta).unwrap();
+        assert!(state.take_session_client(beta).is_none());
+        state.sessions.remove(&beta);
+        state.return_session_client(beta, beta_client);
+        assert!(!state.sessions.contains_key(&beta));
+    }
+
+    /// Removing a tab detaches its session and keeps the active index valid.
+    #[test]
+    fn remove_tab_detaches_its_session() {
+        let mut state = AppState::new();
+        state.push_blank_tab("/tmp/one");
+        state.push_blank_tab("/tmp/two");
+        state.push_blank_tab("/tmp/three");
+        let session_id = state.alloc_session_id();
+        state
+            .sessions
+            .insert(session_id, record(session_id, "host.example"));
+        state.tabs[0].session_id = Some(session_id);
+        state.tabs[0].right_is_local = false;
+        state.active_tab = 2;
+
+        let (tab, session) = state.remove_tab(0).expect("tab 0 is removable");
+
+        assert_eq!(tab.id, 1);
+        assert!(!state.sessions.contains_key(&session_id));
+        assert!(session.is_some());
+        assert_eq!(state.tabs.len(), 2);
+        assert_eq!(state.active_tab, 1, "the active index follows the shift");
+        let (_, session) = state.remove_tab(1).expect("the second tab is removable");
+        assert!(session.is_none());
+        assert_eq!(state.tabs.len(), 1);
+        // The last remaining tab is never removed.
+        assert!(state.remove_tab(0).is_none());
+    }
 }

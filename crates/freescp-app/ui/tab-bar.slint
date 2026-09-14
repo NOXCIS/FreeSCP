@@ -1,0 +1,152 @@
+// Session tab bar (WinSCP-style): one tab per local+remote pane pair.
+//
+// Each tab header is a drop target: dropping the active pane selection onto
+// it copies the selected remote entries into that tab (staged through a
+// local temporary directory, see main.rs `queue_remote_to_remote`).
+// The payload itself is opaque in Slint code (installed once from Rust); the
+// source pane is read from the main window's `drag-source-pane` property, so
+// the tab only reports which tab was targeted.
+
+import { ToolIcon } from "widgets.slint";
+
+// One tab-bar row. `subtitle` carries the protocol/host summary (empty while
+// the tab browses local folders only).
+export struct TabRow {
+    title: string,
+    subtitle: string,
+    active: bool,
+    connected: bool,
+    busy: bool,
+}
+
+export component SessionTabBar inherits Rectangle {
+    in property <[TabRow]> tabs;
+    in property <int> active-tab: 0;
+    // True while an in-app pane drag is in flight; gates the drop targets so
+    // external drags (files from the desktop) are ignored.
+    in property <bool> drag-active: false;
+
+    callback tab-selected(int);
+    callback tab-close-requested(int);
+    callback new-tab-requested();
+    callback tab-drop-received(int);
+
+    height: 30px;
+    background: #26262a;
+
+    HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 4px;
+        spacing: 2px;
+        vertical-stretch: 1;
+
+        for tab-row[i] in root.tabs : tab := Rectangle {
+            // Tab width follows the title, clamped so long host names elide
+            // instead of pushing the other tabs out of view.
+            width: min(220px, max(120px, title.preferred-width + subtitle.preferred-width + 52px));
+            height: 26px;
+            background: tab-row.active ? (tab-area.has-hover ? #34343b : #313136)
+                                       : (tab-area.has-hover ? #2c2c31 : #26262a);
+            border-radius: 4px;
+
+            // Drop target first so the title/close hit areas painted in front
+            // still win pointer events; Slint routes drops to the DropArea
+            // regardless of z-order.
+            tab-drop := DropArea {
+                width: parent.width;
+                height: parent.height;
+                can-drop(event) => {
+                    return root.drag-active ? event.proposed-action : DragAction.none;
+                }
+                dropped(event) => {
+                    root.tab-drop-received(i);
+                    return event.proposed-action;
+                }
+            }
+
+            // Active-tab underline.
+            Rectangle {
+                y: parent.height - 2px;
+                width: parent.width;
+                height: 2px;
+                background: tab-row.active ? #4a90d9 : #00000000;
+                border-radius: 1px;
+            }
+
+            // Connection state dot (green connected, amber busy, grey local).
+            Rectangle {
+                x: 8px;
+                y: (parent.height - self.height) / 2;
+                width: 7px;
+                height: 7px;
+                border-radius: 3.5px;
+                background: tab-row.busy ? #e0a858
+                          : (tab-row.connected ? #5cb85c : #6f6f77);
+            }
+
+            title := Text {
+                x: 21px;
+                y: 0px;
+                width: parent.width - 21px - 20px;
+                height: parent.height;
+                text: tab-row.title;
+                vertical-alignment: center;
+                overflow: elide;
+                color: tab-row.active ? #e6e6e9 : #c9c9cf;
+                font-size: 12px;
+            }
+
+            subtitle := Text {
+                // Kept for the width computation only; the bar shows one line.
+                visible: false;
+                text: tab-row.subtitle;
+            }
+
+            close-area := TouchArea {
+                x: parent.width - 19px;
+                y: (parent.height - 18px) / 2;
+                width: 18px;
+                height: 18px;
+                mouse-cursor: MouseCursor.pointer;
+                Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    background: close-area.has-hover ? #4a4a52 : #00000000;
+                    border-radius: 3px;
+                }
+                Text {
+                    text: "×";
+                    width: parent.width;
+                    height: parent.height;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    color: close-area.has-hover ? #e6e6e9 : #9a9aa2;
+                    font-size: 13px;
+                }
+                clicked => { root.tab-close-requested(i); }
+            }
+
+            tab-area := TouchArea {
+                x: 0px;
+                y: 0px;
+                width: parent.width - 19px;
+                height: parent.height;
+                mouse-cursor: MouseCursor.pointer;
+                clicked => { root.tab-selected(i); }
+            }
+
+            Tooltip {
+                text: tab-row.subtitle == "" ? @markdown("\{tab-row.title}") : @markdown("\{tab-row.title}\n\{tab-row.subtitle}");
+            }
+        }
+
+        ToolIcon {
+            tooltip: @tr("New tab");
+            source: @image-url("../../../assets/icons/action-new-file.svg");
+            clicked => { root.new-tab-requested(); }
+        }
+
+        // Filler: keeps the tabs left-aligned when few are open.
+        Rectangle { horizontal-stretch: 1; }
+    }
+}

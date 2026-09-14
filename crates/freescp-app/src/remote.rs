@@ -847,7 +847,7 @@ pub fn filter_entries(entries: &[FileInfo], needle: &str) -> Vec<FileInfo> {
 // ---------------------------------------------------------------------------
 
 /// Column headers used by `RemoteModel::headerData`.
-#[allow(dead_code)] // column headers are declared in main-window.slint; kept for C++ parity
+#[allow(dead_code)] // column headers are declared in main-window-parts.slint; kept for C++ parity
 pub const REMOTE_COLUMNS: [&str; 4] = ["Name", "Size", "Date", "Permissions"];
 
 /// Whether a mode has the symlink type bits (`S_IFLNK`), using the same

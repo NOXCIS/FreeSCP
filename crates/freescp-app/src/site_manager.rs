@@ -35,6 +35,7 @@
 //! ftps_ca_cert_path = ""
 //! webdav_verify_peer = true
 //! webdav_ca_cert_path = ""
+//! smb_domain = ""              # workgroup/domain for SMB NTLM auth
 //! save_credentials = true
 //! ```
 //!
@@ -53,11 +54,11 @@
 use crate::secrets;
 use freescp_core::{
     capabilities_for_protocol, default_port_for_protocol, default_port_for_proxy_type,
-    default_port_for_webdav_scheme, protocol_display_name, protocol_from_storage_name,
-    protocol_storage_name, proxy_type_from_storage_value, scp_transfer_mode_from_storage_name,
-    scp_transfer_mode_storage_name, webdav_scheme_from_storage_name, webdav_scheme_storage_name,
-    KnownHostsPolicy, Protocol, ProxyType, ScpTransferMode, SessionOptions,
-    TransferIntegrityPolicy, WebDavScheme,
+    default_port_for_telnet, default_port_for_webdav_scheme, protocol_display_name,
+    protocol_from_storage_name, protocol_storage_name, proxy_type_from_storage_value,
+    scp_transfer_mode_from_storage_name, scp_transfer_mode_storage_name,
+    webdav_scheme_from_storage_name, webdav_scheme_storage_name, KnownHostsPolicy, Protocol,
+    ProxyType, ScpTransferMode, SessionOptions, TransferIntegrityPolicy, WebDavScheme,
 };
 use serde::{Deserialize, Serialize};
 use slint::{ComponentHandle, Model, SharedString};
@@ -110,6 +111,12 @@ pub struct SiteEntry {
     pub webdav_scheme: WebDavScheme,
     pub webdav_verify_peer: bool,
     pub webdav_ca_cert_path: Option<String>,
+    pub smb_domain: Option<String>,
+    /// Telnet console settings (TLS + auto-login); see `SessionOptions`.
+    pub telnet_tls: bool,
+    pub telnet_verify_peer: bool,
+    pub telnet_ca_cert_path: Option<String>,
+    pub telnet_auto_login: bool,
     pub proxy_type: ProxyType,
     pub proxy_host: String,
     pub proxy_port: u16,
@@ -143,6 +150,11 @@ impl SiteEntry {
             webdav_scheme: self.webdav_scheme,
             webdav_verify_peer: self.webdav_verify_peer,
             webdav_ca_cert_path: self.webdav_ca_cert_path.clone(),
+            smb_domain: self.smb_domain.clone(),
+            telnet_tls: self.telnet_tls,
+            telnet_verify_peer: self.telnet_verify_peer,
+            telnet_ca_cert_path: self.telnet_ca_cert_path.clone(),
+            telnet_auto_login: self.telnet_auto_login,
             proxy_type: self.proxy_type,
             proxy_host: self.proxy_host.clone(),
             proxy_port: self.proxy_port,
@@ -200,6 +212,11 @@ struct SiteFileEntry {
     ftps_ca_cert_path: String,
     webdav_verify_peer: Option<bool>,
     webdav_ca_cert_path: String,
+    smb_domain: String,
+    telnet_tls: Option<bool>,
+    telnet_verify_peer: Option<bool>,
+    telnet_ca_cert_path: String,
+    telnet_auto_login: Option<bool>,
     save_credentials: Option<bool>,
 }
 
@@ -231,6 +248,11 @@ impl From<&SiteEntry> for SiteFileEntry {
             ftps_ca_cert_path: opt(&e.ftps_ca_cert_path),
             webdav_verify_peer: Some(e.webdav_verify_peer),
             webdav_ca_cert_path: opt(&e.webdav_ca_cert_path),
+            smb_domain: opt(&e.smb_domain),
+            telnet_tls: Some(e.telnet_tls),
+            telnet_verify_peer: Some(e.telnet_verify_peer),
+            telnet_ca_cert_path: opt(&e.telnet_ca_cert_path),
+            telnet_auto_login: Some(e.telnet_auto_login),
             save_credentials: Some(e.save_credentials),
         }
     }
@@ -289,6 +311,11 @@ impl From<SiteFileEntry> for SiteEntry {
             webdav_scheme: webdav_scheme_from_storage_name(&f.webdav_scheme),
             webdav_verify_peer: f.webdav_verify_peer.unwrap_or(true),
             webdav_ca_cert_path: opt_or(&Some(f.webdav_ca_cert_path)),
+            smb_domain: opt_or(&Some(f.smb_domain)),
+            telnet_tls: f.telnet_tls.unwrap_or(false),
+            telnet_verify_peer: f.telnet_verify_peer.unwrap_or(true),
+            telnet_ca_cert_path: opt_or(&Some(f.telnet_ca_cert_path)),
+            telnet_auto_login: f.telnet_auto_login.unwrap_or(true),
             proxy_type,
             proxy_host: f.proxy_host,
             proxy_port,
@@ -590,6 +617,11 @@ fn ssh_alias_to_site(
         webdav_scheme: WebDavScheme::Https,
         webdav_verify_peer: true,
         webdav_ca_cert_path: None,
+        smb_domain: None,
+        telnet_tls: false,
+        telnet_verify_peer: true,
+        telnet_ca_cert_path: None,
+        telnet_auto_login: true,
         proxy_type: ProxyType::None,
         proxy_host: String::new(),
         proxy_port: 0,
@@ -646,6 +678,11 @@ fn entry_from_options(id: &str, name: &str, opt: &SessionOptions) -> SiteEntry {
         webdav_scheme: opt.webdav_scheme,
         webdav_verify_peer: opt.webdav_verify_peer,
         webdav_ca_cert_path: opt.webdav_ca_cert_path.clone(),
+        smb_domain: opt.smb_domain.clone(),
+        telnet_tls: opt.telnet_tls,
+        telnet_verify_peer: opt.telnet_verify_peer,
+        telnet_ca_cert_path: opt.telnet_ca_cert_path.clone(),
+        telnet_auto_login: opt.telnet_auto_login,
         proxy_type: opt.proxy_type,
         proxy_host: opt.proxy_host.trim().to_string(),
         proxy_port: opt.proxy_port,
@@ -877,6 +914,11 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
                     dialog.set_editor_webdav_scheme("https".into());
                     dialog.set_editor_webdav_verify_peer(true);
                     dialog.set_editor_webdav_ca_cert("".into());
+                    dialog.set_editor_smb_domain("".into());
+                    dialog.set_editor_telnet_tls(false);
+                    dialog.set_editor_telnet_verify_peer(true);
+                    dialog.set_editor_telnet_ca_cert("".into());
+                    dialog.set_editor_telnet_auto_login(true);
                     dialog.set_editor_proxy_type(0);
                     dialog.set_editor_proxy_host("".into());
                     // Qt proxyPort_ defaults to the SOCKS5 port (1080).
@@ -1159,6 +1201,7 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
                 "known-hosts" => dialog.set_editor_known_hosts_path(path_s),
                 "ftps-ca" => dialog.set_editor_ftps_ca_cert(path_s),
                 "webdav-ca" => dialog.set_editor_webdav_ca_cert(path_s),
+                "telnet-ca" => dialog.set_editor_telnet_ca_cert(path_s),
                 "jump-key" => dialog.set_editor_jump_key_path(path_s),
                 other => tracing::warn!(field = %other, "unknown site-manager browse field"),
             }
@@ -1187,6 +1230,8 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
                             WebDavScheme::Https
                         };
                         default_port_for_webdav_scheme(scheme)
+                    } else if protocol == Protocol::Telnet {
+                        default_port_for_telnet(dialog.get_editor_telnet_tls())
                     } else {
                         default_port_for_protocol(protocol)
                     };
@@ -1284,6 +1329,32 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
         }
     });
 
+    // Telnet TLS toggle: the port follows 23 <-> 992 while it still holds the
+    // previous default (same rule as the WebDAV scheme switch).
+    dialog.on_telnet_tls_changed({
+        let weak = weak.clone();
+        let last_telnet_tls = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        move || {
+            let last_telnet_tls = last_telnet_tls.clone();
+            let _ = weak.upgrade_in_event_loop(
+                move |dialog: crate::ui::site_manager::SiteManagerDialog| {
+                    let next_tls = dialog.get_editor_telnet_tls();
+                    let previous_default = default_port_for_telnet(
+                        last_telnet_tls.load(std::sync::atomic::Ordering::Relaxed),
+                    ) as i32;
+                    let next_default = default_port_for_telnet(next_tls) as i32;
+                    if protocol_from_storage_name(&dialog.get_editor_protocol()) == Protocol::Telnet
+                        && dialog.get_editor_port() == previous_default
+                        && previous_default != next_default
+                    {
+                        dialog.set_editor_port(next_default);
+                    }
+                    last_telnet_tls.store(next_tls, std::sync::atomic::Ordering::Relaxed);
+                },
+            );
+        }
+    });
+
     dialog.on_editor_cancel_requested({
         let weak = weak.clone();
         move || {
@@ -1326,7 +1397,9 @@ fn start_site_connect(state: &AppState, name: &str) {
         return;
     }
     let opt = crate::connect::attach_session_callbacks(opt, state);
-    crate::connect::start_connect(state, opt);
+    // `None`: the session installs into the active tab when it is idle, else
+    // a fresh tab opens for it.
+    crate::connect::start_connect(state, None, opt);
 }
 
 /// Monotonic per-dialog instance id used by the double-click detector so a
@@ -1495,6 +1568,11 @@ fn populate_editor(dialog: &crate::ui::site_manager::SiteManagerDialog, site: &S
     dialog.set_editor_webdav_scheme(webdav_scheme_storage_name(site.webdav_scheme).into());
     dialog.set_editor_webdav_verify_peer(site.webdav_verify_peer);
     dialog.set_editor_webdav_ca_cert(site.webdav_ca_cert_path.clone().unwrap_or_default().into());
+    dialog.set_editor_smb_domain(site.smb_domain.clone().unwrap_or_default().into());
+    dialog.set_editor_telnet_tls(site.telnet_tls);
+    dialog.set_editor_telnet_verify_peer(site.telnet_verify_peer);
+    dialog.set_editor_telnet_ca_cert(site.telnet_ca_cert_path.clone().unwrap_or_default().into());
+    dialog.set_editor_telnet_auto_login(site.telnet_auto_login);
     // C++ setOptions: the jump host wins over the proxy. When a jump host is
     // configured the proxy selector shows "Direct" and the proxy fields stay
     // empty (the C++ dialog is freshly constructed per edit; this inline
@@ -1599,6 +1677,26 @@ fn editor_options(dialog: &crate::ui::site_manager::SiteManagerDialog) -> Sessio
     } else {
         None
     };
+    // SMB workgroup/domain for NTLM authentication.
+    let smb_domain = if protocol == Protocol::Smb {
+        non_empty(dialog.get_editor_smb_domain())
+    } else {
+        None
+    };
+    // Telnet console settings (TLS + auto-login); plain telnet ignores the
+    // TLS fields.
+    let telnet_tls = protocol == Protocol::Telnet && dialog.get_editor_telnet_tls();
+    let telnet_verify_peer = if telnet_tls {
+        dialog.get_editor_telnet_verify_peer()
+    } else {
+        true
+    };
+    let telnet_ca = if telnet_tls {
+        non_empty(dialog.get_editor_telnet_ca_cert())
+    } else {
+        None
+    };
+    let telnet_auto_login = protocol != Protocol::Telnet || dialog.get_editor_telnet_auto_login();
 
     let prefs = crate::settings::Preferences::load();
 
@@ -1646,6 +1744,11 @@ fn editor_options(dialog: &crate::ui::site_manager::SiteManagerDialog) -> Sessio
         webdav_scheme,
         webdav_verify_peer,
         webdav_ca_cert_path: webdav_ca,
+        smb_domain,
+        telnet_tls,
+        telnet_verify_peer,
+        telnet_ca_cert_path: telnet_ca,
+        telnet_auto_login,
         proxy_type,
         proxy_host: if use_proxy {
             dialog.get_editor_proxy_host().trim().to_string()
@@ -1762,6 +1865,7 @@ mod tests {
         e.proxy_type = ProxyType::Socks5;
         e.proxy_port = 1080;
         e.jump_host = Some("bastion".to_string());
+        e.smb_domain = Some("WORKGROUP".to_string());
         let text = toml::to_string(&e).unwrap();
         let parsed: SiteEntry = toml::from_str(&text).unwrap();
         assert_eq!(e.id, parsed.id);
@@ -1778,6 +1882,29 @@ mod tests {
         assert_eq!(e.proxy_type, parsed.proxy_type);
         assert_eq!(e.proxy_port, parsed.proxy_port);
         assert_eq!(e.jump_host, parsed.jump_host);
+        assert_eq!(e.smb_domain, parsed.smb_domain);
+    }
+
+    #[test]
+    fn smb_site_gets_default_port_and_keeps_domain() {
+        let file = SiteFileEntry {
+            name: "nas".to_string(),
+            protocol: "smb".to_string(),
+            port: 0,
+            smb_domain: "WORKGROUP".to_string(),
+            ..SiteFileEntry::default()
+        };
+        let e = SiteEntry::from(file);
+        assert_eq!(e.protocol, Protocol::Smb);
+        assert_eq!(e.port, 445);
+        assert_eq!(e.smb_domain.as_deref(), Some("WORKGROUP"));
+        // An empty stored domain resolves to None.
+        let none_file = SiteFileEntry {
+            name: "nas2".to_string(),
+            protocol: "smb".to_string(),
+            ..SiteFileEntry::default()
+        };
+        assert_eq!(SiteEntry::from(none_file).smb_domain, None);
     }
 
     #[test]
@@ -1986,6 +2113,7 @@ mod tests {
         dialog.set_editor_ftps_verify_peer(false);
         dialog.set_editor_ftps_ca_cert("/ca.pem".into());
         dialog.set_editor_webdav_scheme("http".into());
+        dialog.set_editor_smb_domain("WORKGROUP".into());
         let opt = editor_options(&dialog);
         assert_eq!(opt.proxy_type, ProxyType::None);
         assert!(opt.proxy_host.is_empty());
@@ -2000,6 +2128,7 @@ mod tests {
         assert_eq!(opt.webdav_scheme, WebDavScheme::Https);
         assert!(opt.webdav_verify_peer);
         assert_eq!(opt.webdav_ca_cert_path, None);
+        assert_eq!(opt.smb_domain, None);
 
         // Disabling the jump host restores the configured proxy.
         dialog.set_editor_jump_enabled(false);
@@ -2017,6 +2146,24 @@ mod tests {
         let opt = editor_options(&dialog);
         assert_eq!(opt.jump_host, None);
         assert_eq!(opt.proxy_type, ProxyType::Socks5);
+    }
+
+    #[test]
+    fn editor_options_smb_domain_and_default_port() {
+        test_backend();
+        let dialog = crate::ui::site_manager::SiteManagerDialog::new()
+            .expect("Failed to create SiteManagerDialog");
+        dialog.set_editor_protocol("smb".into());
+        dialog.set_editor_host("nas.example.com".into());
+        dialog.set_editor_port(0);
+        dialog.set_editor_smb_domain("  WORKGROUP  ".into());
+        let opt = editor_options(&dialog);
+        assert_eq!(opt.protocol, Protocol::Smb);
+        assert_eq!(opt.port, 445);
+        assert_eq!(opt.smb_domain.as_deref(), Some("WORKGROUP"));
+        // Empty/whitespace domain maps to None.
+        dialog.set_editor_smb_domain("   ".into());
+        assert_eq!(editor_options(&dialog).smb_domain, None);
     }
 
     #[test]

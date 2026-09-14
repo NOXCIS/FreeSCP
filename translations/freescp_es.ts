@@ -81,6 +81,10 @@ Usa un paquete oficial para ver la información completa de licencias.</translat
         <source>A cross-platform SFTP/SCP/FTP/FTPS/WebDAV client.</source>
         <translation>Un cliente SFTP/SCP/FTP/FTPS/WebDAV multiplataforma.</translation>
     </message>
+    <message>
+        <source>Close</source>
+        <translation>Cerrar</translation>
+    </message>
 </context>
 <context>
     <name>ConnectionDialog</name>
@@ -1896,6 +1900,38 @@ FreeSCP se desconectará para evitar operaciones inconsistentes.
         <source>Wait for the current connection attempt to finish or cancel it first.</source>
         <translation>Espere a que termine el intento de conexión actual o cancélelo primero.</translation>
     </message>
+    <message>
+        <source>Change permissions</source>
+        <translation>Cambiar permisos</translation>
+    </message>
+    <message>
+        <source>Clear</source>
+        <translation>Limpiar</translation>
+    </message>
+    <message>
+        <source>Connection closed</source>
+        <translation>Conexión cerrada</translation>
+    </message>
+    <message>
+        <source>Copy to session…</source>
+        <translation>Copiar a sesión…</translation>
+    </message>
+    <message>
+        <source>Date</source>
+        <translation>Fecha</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Nombre</translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation>Pegar</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>Tamaño</translation>
+    </message>
 </context>
 <context>
     <name>PermissionsDialog</name>
@@ -2520,6 +2556,10 @@ En Linux, se recomienda instalar y usar libsecret/Secret Service para mayor segu
         <source>s</source>
         <translation>s</translation>
     </message>
+    <message>
+        <source>Local</source>
+        <translation>Local</translation>
+    </message>
 </context>
 <context>
     <name>SiteManagerDialog</name>
@@ -2632,6 +2672,178 @@ En Linux, se recomienda instalar y usar libsecret/Secret Service para mayor segu
 %2</source>
         <translation>No se pudo guardar el sitio «%1».
 %2</translation>
+    </message>
+    <message>
+        <source>Accept new (TOFU)</source>
+        <translation>Aceptar nuevas (TOFU)</translation>
+    </message>
+    <message>
+        <source>Automatic (SCP with SFTP fallback)</source>
+        <translation>Automático (SCP con fallback a SFTP)</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancelar</translation>
+    </message>
+    <message>
+        <source>Direct (no proxy)</source>
+        <translation>Directo (sin proxy)</translation>
+    </message>
+    <message>
+        <source>Domain (workgroup):</source>
+        <translation>Dominio (grupo de trabajo):</translation>
+    </message>
+    <message>
+        <source>FTPS CA bundle:</source>
+        <translation>Bundle CA de FTPS:</translation>
+    </message>
+    <message>
+        <source>Host / Port:</source>
+        <translation>Host / Puerto:</translation>
+    </message>
+    <message>
+        <source>Integrity:</source>
+        <translation>Integridad:</translation>
+    </message>
+    <message>
+        <source>Jump host / port:</source>
+        <translation>Host de salto / Puerto:</translation>
+    </message>
+    <message>
+        <source>Jump private key:</source>
+        <translation>Clave privada de salto:</translation>
+    </message>
+    <message>
+        <source>Jump user:</source>
+        <translation>Usuario de salto:</translation>
+    </message>
+    <message>
+        <source>Key passphrase:</source>
+        <translation>Passphrase clave:</translation>
+    </message>
+    <message>
+        <source>Log in automatically using the stored credentials</source>
+        <translation>Iniciar sesión automáticamente con las credenciales guardadas</translation>
+    </message>
+    <message>
+        <source>My server</source>
+        <translation>Mi servidor</translation>
+    </message>
+    <message>
+        <source>No verification (double confirmation, expires in 15 min)</source>
+        <translation>Sin verificación (doble confirmación, expira en 15 min)</translation>
+    </message>
+    <message>
+        <source>Off (not recommended)</source>
+        <translation>Desactivada (no recomendado)</translation>
+    </message>
+    <message>
+        <source>Optional (recommended)</source>
+        <translation>Opcional (recomendado)</translation>
+    </message>
+    <message>
+        <source>Password:</source>
+        <translation>Contraseña:</translation>
+    </message>
+    <message>
+        <source>Policy:</source>
+        <translation>Política:</translation>
+    </message>
+    <message>
+        <source>Private key path:</source>
+        <translation>Ruta clave privada:</translation>
+    </message>
+    <message>
+        <source>Protocol:</source>
+        <translation>Protocolo:</translation>
+    </message>
+    <message>
+        <source>Proxy host / port:</source>
+        <translation>Host proxy / Puerto:</translation>
+    </message>
+    <message>
+        <source>Proxy password:</source>
+        <translation>Contraseña del proxy:</translation>
+    </message>
+    <message>
+        <source>Proxy user:</source>
+        <translation>Usuario proxy:</translation>
+    </message>
+    <message>
+        <source>Proxy:</source>
+        <translation>Proxy:</translation>
+    </message>
+    <message>
+        <source>Required (strict)</source>
+        <translation>Requerida (estricta)</translation>
+    </message>
+    <message>
+        <source>SCP mode:</source>
+        <translation>Modo SCP:</translation>
+    </message>
+    <message>
+        <source>SCP only (disable SFTP fallback)</source>
+        <translation>Solo SCP (desactivar fallback a SFTP)</translation>
+    </message>
+    <message>
+        <source>Save passwords/passphrases</source>
+        <translation>Guardar contraseñas/passphrases</translation>
+    </message>
+    <message>
+        <source>Site name:</source>
+        <translation>Nombre del sitio:</translation>
+    </message>
+    <message>
+        <source>Strict</source>
+        <translation>Estricta</translation>
+    </message>
+    <message>
+        <source>System CA bundle</source>
+        <translation>Bundle de CA del sistema</translation>
+    </message>
+    <message>
+        <source>Telnet CA bundle:</source>
+        <translation>Bundle CA de Telnet:</translation>
+    </message>
+    <message>
+        <source>Telnet over TLS (secure telnet, port 992)</source>
+        <translation>Telnet sobre TLS (telnet seguro, puerto 992)</translation>
+    </message>
+    <message>
+        <source>Use SSH jump host (bastion)</source>
+        <translation>Usar host de salto SSH (bastión)</translation>
+    </message>
+    <message>
+        <source>User:</source>
+        <translation>Usuario:</translation>
+    </message>
+    <message>
+        <source>Verify FTPS server certificate (recommended)</source>
+        <translation>Verificar certificado del servidor FTPS (recomendado)</translation>
+    </message>
+    <message>
+        <source>Verify TLS server certificate (recommended)</source>
+        <translation>Verificar certificado del servidor TLS (recomendado)</translation>
+    </message>
+    <message>
+        <source>bastion.example.com</source>
+        <translation>bastion.ejemplo.com</translation>
+    </message>
+    <message>
+        <source>known_hosts:</source>
+        <translation>known_hosts:</translation>
+    </message>
+    <message>
+        <source>optional</source>
+        <translation>opcional</translation>
+    </message>
+    <message>
+        <source>proxy.example.com</source>
+        <translation>proxy.ejemplo.com</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>usuario</translation>
     </message>
 </context>
 <context>
@@ -2990,6 +3202,32 @@ Remoto: %3</translation>
         <source>(no results)</source>
         <translation>(sin resultados)</translation>
     </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancelar</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Cerrar</translation>
+    </message>
+    <message>
+        <source>Pattern accepts wildcard (*, ?) or regex.
+Examples: *report*, report, ^report_.*\.pdf$</source>
+        <translation>El patrón acepta comodines (*, ?) o regex.
+Ejemplos: *report*, report, ^report_.*\.pdf$</translation>
+    </message>
+    <message>
+        <source>Search items</source>
+        <translation>Buscar elementos</translation>
+    </message>
+    <message>
+        <source>Search recursively in subfolders</source>
+        <translation>Buscar recursivamente en subcarpetas</translation>
+    </message>
+    <message>
+        <source>e.g. *report*</source>
+        <translation>p. ej. *report*</translation>
+    </message>
 </context>
 <context>
     <name>OverwriteDialog</name>
@@ -3005,6 +3243,14 @@ Remoto: %3</translation>
         <source>Skip all</source>
         <translation>Omitir todo</translation>
     </message>
+    <message>
+        <source>Overwrite</source>
+        <translation>Sobrescribir</translation>
+    </message>
+    <message>
+        <source>Skip</source>
+        <translation>Omitir</translation>
+    </message>
 </context>
 <context>
     <name>ShortcutRecorder</name>
@@ -3019,6 +3265,304 @@ Remoto: %3</translation>
     <message>
         <source>Unsupported shortcut: {}</source>
         <translation>Atajo no compatible: {}</translation>
+    </message>
+</context>
+<context>
+    <name>BrowseEdit</name>
+    <message>
+        <source>Choose…</source>
+        <translation>Elegir…</translation>
+    </message>
+</context>
+<context>
+    <name>ConsoleView</name>
+    <message>
+        <source>scrolled back {} lines - click to jump to the bottom</source>
+        <translation>desplazado {} líneas atrás; haga clic para ir al final</translation>
+    </message>
+</context>
+<context>
+    <name>HistoryDialog</name>
+    <message>
+        <source>Clear history</source>
+        <translation>Borrar historial</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Cerrar</translation>
+    </message>
+    <message>
+        <source>History</source>
+        <translation>Historial</translation>
+    </message>
+    <message>
+        <source>Open selected</source>
+        <translation>Abrir seleccionado</translation>
+    </message>
+    <message>
+        <source>Recent local paths</source>
+        <translation>Rutas locales recientes</translation>
+    </message>
+    <message>
+        <source>Recent remote paths</source>
+        <translation>Rutas remotas recientes</translation>
+    </message>
+    <message>
+        <source>Recent servers</source>
+        <translation>Servidores recientes</translation>
+    </message>
+</context>
+<context>
+    <name>HistoryTab</name>
+    <message>
+        <source>No recent history</source>
+        <translation>No hay historial reciente</translation>
+    </message>
+</context>
+<context>
+    <name>Labels</name>
+    <message>
+        <source>Accept new (TOFU)</source>
+        <translation>Aceptar nuevas (TOFU)</translation>
+    </message>
+    <message>
+        <source>Direct (no proxy)</source>
+        <translation>Directo (sin proxy)</translation>
+    </message>
+    <message>
+        <source>HTTP (insecure)</source>
+        <translation>HTTP (no seguro)</translation>
+    </message>
+    <message>
+        <source>HTTPS (recommended)</source>
+        <translation>HTTPS (recomendado)</translation>
+    </message>
+    <message>
+        <source>No verification (double confirmation, expires in 15 min)</source>
+        <translation>Sin verificación (doble confirmación, expira en 15 min)</translation>
+    </message>
+    <message>
+        <source>Off (not recommended)</source>
+        <translation>Desactivada (no recomendado)</translation>
+    </message>
+    <message>
+        <source>Optional (recommended)</source>
+        <translation>Opcional (recomendado)</translation>
+    </message>
+    <message>
+        <source>Required (strict)</source>
+        <translation>Requerida (estricta)</translation>
+    </message>
+    <message>
+        <source>Strict</source>
+        <translation>Estricta</translation>
+    </message>
+    <message>
+        <source>ftp.example.com</source>
+        <translation>ftp.example.com</translation>
+    </message>
+    <message>
+        <source>ftps.example.com</source>
+        <translation>ftps.example.com</translation>
+    </message>
+    <message>
+        <source>scp.example.com</source>
+        <translation>scp.example.com</translation>
+    </message>
+    <message>
+        <source>sftp.example.com</source>
+        <translation>sftp.ejemplo.com</translation>
+    </message>
+    <message>
+        <source>smb.example.com</source>
+        <translation>smb.example.com</translation>
+    </message>
+    <message>
+        <source>telnet.example.com</source>
+        <translation>telnet.example.com</translation>
+    </message>
+    <message>
+        <source>webdav.example.com</source>
+        <translation>webdav.example.com</translation>
+    </message>
+</context>
+<context>
+    <name>MainMenuBar</name>
+    <message>
+        <source>About FreeSCP</source>
+        <translation>Acerca de FreeSCP</translation>
+    </message>
+    <message>
+        <source>Connect</source>
+        <translation>Conectar</translation>
+    </message>
+    <message>
+        <source>Disconnect</source>
+        <translation>Desconectar</translation>
+    </message>
+    <message>
+        <source>File</source>
+        <translation>Archivo</translation>
+    </message>
+    <message>
+        <source>FreeSCP</source>
+        <translation>FreeSCP</translation>
+    </message>
+    <message>
+        <source>Help</source>
+        <translation>Ayuda</translation>
+    </message>
+    <message>
+        <source>History</source>
+        <translation>Historial</translation>
+    </message>
+    <message>
+        <source>Open left folder</source>
+        <translation>Abrir carpeta izquierda</translation>
+    </message>
+    <message>
+        <source>Open right folder</source>
+        <translation>Abrir carpeta derecha</translation>
+    </message>
+    <message>
+        <source>Quit</source>
+        <translation>Salir</translation>
+    </message>
+    <message>
+        <source>Report a bug</source>
+        <translation>Informar un error</translation>
+    </message>
+    <message>
+        <source>Saved sites</source>
+        <translation>Sitios guardados</translation>
+    </message>
+    <message>
+        <source>Settings…</source>
+        <translation>Ajustes…</translation>
+    </message>
+    <message>
+        <source>Transfers</source>
+        <translation>Transferencias</translation>
+    </message>
+</context>
+<context>
+    <name>MainToolbar</name>
+    <message>
+        <source>About FreeSCP</source>
+        <translation>Acerca de FreeSCP</translation>
+    </message>
+    <message>
+        <source>Connect</source>
+        <translation>Conectar</translation>
+    </message>
+    <message>
+        <source>Connect to a server</source>
+        <translation>Conectar a un servidor</translation>
+    </message>
+    <message>
+        <source>Connection history</source>
+        <translation>Historial de conexiones</translation>
+    </message>
+    <message>
+        <source>Copy F5</source>
+        <translation>Copiar F5</translation>
+    </message>
+    <message>
+        <source>Copy to the other panel (F5)</source>
+        <translation>Copiar al otro panel (F5)</translation>
+    </message>
+    <message>
+        <source>Disconnect</source>
+        <translation>Desconectar</translation>
+    </message>
+    <message>
+        <source>Disconnect from the server</source>
+        <translation>Desconectar del servidor</translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>Descarga</translation>
+    </message>
+    <message>
+        <source>Download (F7)</source>
+        <translation>Descargar (F7)</translation>
+    </message>
+    <message>
+        <source>History</source>
+        <translation>Historial</translation>
+    </message>
+    <message>
+        <source>Move F6</source>
+        <translation>Mover F6</translation>
+    </message>
+    <message>
+        <source>Move to the other panel (F6)</source>
+        <translation>Mover al otro panel (F6)</translation>
+    </message>
+    <message>
+        <source>Open in terminal</source>
+        <translation>Abrir en terminal</translation>
+    </message>
+    <message>
+        <source>Saved sites</source>
+        <translation>Sitios guardados</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>Ajustes</translation>
+    </message>
+    <message>
+        <source>Sites</source>
+        <translation>Sitios</translation>
+    </message>
+    <message>
+        <source>Transfer queue (F12)</source>
+        <translation>Cola de transferencias (F12)</translation>
+    </message>
+    <message>
+        <source>Transfers</source>
+        <translation>Transferencias</translation>
+    </message>
+    <message>
+        <source>Upload</source>
+        <translation>Subida</translation>
+    </message>
+    <message>
+        <source>Upload (F8)</source>
+        <translation>Subir (F8)</translation>
+    </message>
+</context>
+<context>
+    <name>PasswordEdit</name>
+    <message>
+        <source>Hide</source>
+        <translation>Ocultar</translation>
+    </message>
+    <message>
+        <source>Show</source>
+        <translation>Mostrar</translation>
+    </message>
+</context>
+<context>
+    <name>SessionPickerDialog</name>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancelar</translation>
+    </message>
+    <message>
+        <source>Copy the selected items into another session tab (staged through a local temporary file).</source>
+        <translation>Copia los elementos seleccionados en otra pestaña de sesión (usando un archivo temporal local).</translation>
+    </message>
+    <message>
+        <source>Copy to session</source>
+        <translation>Copiar a sesión</translation>
+    </message>
+</context>
+<context>
+    <name>SessionTabBar</name>
+    <message>
+        <source>New tab</source>
+        <translation>Nueva pestaña</translation>
     </message>
 </context>
 </TS>

@@ -8,7 +8,8 @@
 //! - integrity.rs      : transfer integrity hashing (Agent: sftp-helper)
 //! - proxy.rs          : SOCKS5 / HTTP-CONNECT tunnels (Agent: proxy-jumphost)
 //! - jumphost.rs       : SSH bastion direct-tcpip tunnel (Agent: proxy-jumphost)
-//! - backends/         : mock, sftp, scp, ftp, webdav implementations
+//! - telnet/           : interactive console transport (codec + session + TLS)
+//! - backends/         : mock, sftp, scp, ftp, webdav, smb implementations
 
 pub mod client;
 pub mod client_factory;
@@ -17,6 +18,7 @@ pub mod jumphost;
 pub mod known_hosts;
 pub mod proxy;
 pub mod ssh_config;
+pub mod telnet;
 pub mod types;
 
 pub mod backends {
@@ -24,6 +26,7 @@ pub mod backends {
     pub mod mock;
     pub mod scp;
     pub mod sftp;
+    pub mod smb;
     pub mod webdav;
 }
 

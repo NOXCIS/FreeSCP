@@ -4,6 +4,10 @@
 // Every control is exposed as an in-out property so the Rust side
 // (see src/settings.rs, Preferences) can load/save without owning the UI.
 //
+// Label/control rows use the shared `FormRow` from widgets.slint, the combo
+// label mappings live in the shared `Labels` global (labels.slint), and the
+// shortcut field is `ShortcutRecorder` (shortcut-recorder.slint).
+//
 // NOTE: Window already provides a built-in `visible` property; it is not
 // re-declared here. Use `set_visible(...)` / `show()` / `hide()` from Rust.
 
@@ -12,199 +16,13 @@ import {
     CheckBox,
     ComboBox,
     LineEdit,
-    Palette,
     ScrollView,
     SpinBox,
     TabWidget,
 } from "std-widgets.slint";
-
-// ---------------------------------------------------------------------------
-// Keyboard shortcut recorder (port of QKeySequenceEdit)
-// ---------------------------------------------------------------------------
-//
-// The C++ dialog uses QKeySequenceEdit, which records the next chord typed
-// while the field has focus and renders it as QKeySequence::PortableText
-// ("Ctrl+Shift+T"). Slint cannot build `KeyBinding` elements from the runtime
-// candidate lists (`@keys(...)` requires compile-time constants), so the field
-// captures raw key events in a FocusScope and maps them to portable text
-// itself. The accepted chords mirror QUEUE_SHORTCUT_CANDIDATES and
-// HISTORY_SHORTCUT_CANDIDATES in crates/freescp-app/src/settings.rs; a Rust
-// unit test asserts that every candidate appears in this file so the two
-// cannot drift. An unsupported chord shows an inline warning and keeps the
-// previous value, like QKeySequenceEdit ignoring an unpreferred sequence.
-component ShortcutRecorder inherits Rectangle {
-    in-out property <string> value;
-    /// Comma-joined chords accepted by this field, shown as the hint line.
-    in property <string> supported-hint;
-    /// Selects the connection-history candidate set instead of the queue one.
-    in property <bool> history: false;
-
-    /// Last rejected chord ("" when there is none); readable from Rust for
-    /// tests, shown as the inline warning below the field.
-    out property <string> warning: "";
-
-    height: 46px;
-
-    // Qt portable text for the chords accepted by the two shortcut fields.
-    // Takes the key-event parts instead of a pre-built string: Slint 1.17's
-    // generated code moves a `string` local passed to a function, so reusing
-    // the chord afterwards (root.value = chord) would not compile.
-    pure function chord-supported(
-        meta: bool,
-        ctrl: bool,
-        alt: bool,
-        shift: bool,
-        key: string,
-        history: bool,
-    ) -> bool {
-        let chord = chord-text(meta, ctrl, alt, shift, key);
-        if (history) {
-            return chord == "Ctrl+Shift+H" || chord == "Ctrl+H" || chord == "Ctrl+Alt+H";
-        }
-        return chord == "F12" || chord == "Ctrl+Shift+T" || chord == "Ctrl+Alt+T" || chord == "Ctrl+J";
-    }
-
-    // `KeyEvent.text` carries special keys as private-use code points, which
-    // the `Key` namespace names; regular keys arrive as text and are
-    // upper-cased so Ctrl+Shift+T matches "T" from any backend.
-    pure function key-name(text: string) -> string {
-        if (text == "") {
-            return "";
-        }
-        if (text == Key.F1) { return "F1"; }
-        if (text == Key.F2) { return "F2"; }
-        if (text == Key.F3) { return "F3"; }
-        if (text == Key.F4) { return "F4"; }
-        if (text == Key.F5) { return "F5"; }
-        if (text == Key.F6) { return "F6"; }
-        if (text == Key.F7) { return "F7"; }
-        if (text == Key.F8) { return "F8"; }
-        if (text == Key.F9) { return "F9"; }
-        if (text == Key.F10) { return "F10"; }
-        if (text == Key.F11) { return "F11"; }
-        if (text == Key.F12) { return "F12"; }
-        if (text == Key.Backspace) { return "Backspace"; }
-        if (text == Key.Tab) { return "Tab"; }
-        if (text == Key.Backtab) { return "Backtab"; }
-        if (text == Key.Return) { return "Return"; }
-        if (text == Key.Escape) { return "Esc"; }
-        if (text == Key.Delete) { return "Del"; }
-        if (text == Key.Space) { return "Space"; }
-        if (text == Key.UpArrow) { return "Up"; }
-        if (text == Key.DownArrow) { return "Down"; }
-        if (text == Key.LeftArrow) { return "Left"; }
-        if (text == Key.RightArrow) { return "Right"; }
-        if (text == Key.Home) { return "Home"; }
-        if (text == Key.End) { return "End"; }
-        if (text == Key.PageUp) { return "PgUp"; }
-        if (text == Key.PageDown) { return "PgDown"; }
-        if (text == Key.Insert) { return "Ins"; }
-        return text.to-uppercase();
-    }
-
-    // Modifier order follows Qt's portable text, which is also the canonical
-    // order `settings::normalized_shortcut` accepts. Qt renders Command/Meta
-    // as "Ctrl" on every platform (QKeySequence::PortableText), so meta and
-    // control fold into the same "Ctrl" token here.
-    pure function chord-text(meta: bool, ctrl: bool, alt: bool, shift: bool, key: string) -> string {
-        if (key == "") {
-            return "";
-        }
-        return ((meta || ctrl) ? "Ctrl+" : "") + (alt ? "Alt+" : "")
-            + (shift ? "Shift+" : "") + key;
-    }
-
-    VerticalLayout {
-        spacing: 2px;
-
-        Rectangle {
-            height: 30px;
-            border-width: 1px;
-            border-radius: 4px;
-            border-color: fs.has-focus ? Palette.accent-background : Palette.border;
-            background: Palette.control-background;
-
-            Text {
-                x: 8px;
-                y: 0;
-                width: parent.width - 16px;
-                height: parent.height;
-                vertical-alignment: center;
-                overflow: elide;
-                text: root.value == "" ? @tr("Press shortcut…") : root.value;
-                color: Palette.control-foreground;
-                opacity: root.value == "" ? 0.55 : 1.0;
-            }
-
-            fs := FocusScope {
-                key-pressed(event) => {
-                    // Modifier-only presses must not end the recording; keep
-                    // waiting for the actual key of the chord.
-                    if (event.text == Key.Shift || event.text == Key.ShiftR
-                        || event.text == Key.Control || event.text == Key.ControlR
-                        || event.text == Key.Alt || event.text == Key.AltGr
-                        || event.text == Key.Meta || event.text == Key.MetaR
-                        || event.text == Key.CapsLock) {
-                        return accept;
-                    }
-                    // Tab/Backtab keep their focus-navigation meaning.
-                    if (event.text == Key.Tab || event.text == Key.Backtab) {
-                        return reject;
-                    }
-                    if (event.text == Key.Escape) {
-                        root.warning = "";
-                        return accept;
-                    }
-                    let chord = root.chord-text(
-                        event.modifiers.meta,
-                        event.modifiers.control,
-                        event.modifiers.alt,
-                        event.modifiers.shift,
-                        root.key-name(event.text),
-                    );
-                    if (root.chord-supported(
-                        event.modifiers.meta,
-                        event.modifiers.control,
-                        event.modifiers.alt,
-                        event.modifiers.shift,
-                        root.key-name(event.text),
-                        root.history,
-                    )) {
-                        root.warning = "";
-                        root.value = chord;
-                    } else if (chord != "") {
-                        root.warning = chord;
-                    }
-                    return accept;
-                }
-
-                focus-lost(reason) => {
-                    root.warning = "";
-                }
-            }
-
-            TouchArea {
-                clicked => {
-                    fs.focus();
-                }
-            }
-        }
-
-        if (root.warning != "") : Text {
-            text: @tr("Unsupported shortcut: {}", root.warning);
-            color: #c0392b;
-            font-size: 11px;
-            overflow: elide;
-        }
-        if (root.warning == "" && fs.has-focus) : Text {
-            text: @tr("Supported: {}", root.supported-hint);
-            color: Palette.foreground;
-            opacity: 0.65;
-            font-size: 11px;
-            overflow: elide;
-        }
-    }
-}
+import { FormRow, DialogFooter } from "widgets.slint";
+import { ShortcutRecorder } from "shortcut-recorder.slint";
+import { Labels } from "labels.slint";
 
 export component SettingsDialog inherits Window {
     title: @tr("Settings");
@@ -376,78 +194,6 @@ export component SettingsDialog inherits Window {
         return "ask";
     }
 
-    pure function protocol-label(storage: string) -> string {
-        if storage == "scp" {
-            return "SCP";
-        }
-        if storage == "ftp" {
-            return "FTP";
-        }
-        if storage == "ftps" {
-            return "FTPS";
-        }
-        if storage == "webdav" {
-            return "WebDAV";
-        }
-        return "SFTP";
-    }
-
-    pure function protocol-storage-name(label: string) -> string {
-        if label == "SCP" {
-            return "scp";
-        }
-        if label == "FTP" {
-            return "ftp";
-        }
-        if label == "FTPS" {
-            return "ftps";
-        }
-        if label == "WebDAV" {
-            return "webdav";
-        }
-        return "sftp";
-    }
-
-    pure function kh-policy-label(value: int) -> string {
-        if value == 1 {
-            return @tr("Accept new (TOFU)");
-        }
-        if value == 2 {
-            return @tr("No verification (double confirmation, expires in 15 min)");
-        }
-        return @tr("Strict");
-    }
-
-    pure function kh-policy-index(label: string) -> int {
-        if label == @tr("Accept new (TOFU)") {
-            return 1;
-        }
-        if label == @tr("No verification (double confirmation, expires in 15 min)") {
-            return 2;
-        }
-        return 0;
-    }
-
-    pure function integrity-label(value: int) -> string {
-        if value == 0 {
-            return @tr("Off (not recommended)");
-        }
-        if value == 2 {
-            return @tr("Required (strict)");
-        }
-        return @tr("Optional (recommended)");
-    }
-
-    pure function integrity-index(label: string) -> int {
-        if label == @tr("Off (not recommended)") {
-            return 0;
-        }
-        if label == @tr("Required (strict)") {
-            return 2;
-        }
-        return 1;
-    }
-
     pure function queue-clear-label(value: int) -> string {
         if value == 1 {
             return @tr("Completed");
@@ -485,12 +231,8 @@ export component SettingsDialog inherits Window {
                     VerticalLayout {
                         padding: 8px;
                         spacing: 8px;
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Language:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Language:");
                             ComboBox {
                                 model: ["English", "Español", "Français", "Português"];
                                 current-value: root.language-label(root.language);
@@ -500,12 +242,8 @@ export component SettingsDialog inherits Window {
                                 }
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Open with:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Open with:");
                             ComboBox {
                                 model: [@tr("Double click"), @tr("Single click")];
                                 current-value: root.single-click ? @tr("Single click") : @tr("Double click");
@@ -515,12 +253,8 @@ export component SettingsDialog inherits Window {
                                 }
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("On file open:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("On file open:");
                             ComboBox {
                                 model: [@tr("Always ask"), @tr("Show folder"), @tr("Open file")];
                                 current-value: root.open-behavior-label(root.open-behavior);
@@ -546,24 +280,16 @@ export component SettingsDialog inherits Window {
                             text: @tr("Open queue when enqueuing transfers");
                             checked <=> root.show-queue-on-enqueue;
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Transfers shortcut:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Transfers shortcut:");
                             ShortcutRecorder {
                                 value <=> root.open-transfers-shortcut;
                                 supported-hint: root.transfers-shortcut-hint;
                                 horizontal-stretch: 1;
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("History shortcut:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("History shortcut:");
                             ShortcutRecorder {
                                 value <=> root.open-history-shortcut;
                                 supported-hint: root.history-shortcut-hint;
@@ -571,12 +297,8 @@ export component SettingsDialog inherits Window {
                                 horizontal-stretch: 1;
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Window layout:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Window layout:");
                             Button {
                                 text: @tr("Restore default sizes");
                                 clicked => {
@@ -594,12 +316,8 @@ export component SettingsDialog inherits Window {
                     VerticalLayout {
                         padding: 8px;
                         spacing: 8px;
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Parallel tasks:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Parallel tasks:");
                             SpinBox {
                                 minimum: 1;
                                 maximum: 8;
@@ -607,12 +325,8 @@ export component SettingsDialog inherits Window {
                                 horizontal-stretch: 1;
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Default global limit:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Default global limit:");
                             SpinBox {
                                 minimum: 0;
                                 maximum: 1000000;
@@ -624,12 +338,8 @@ export component SettingsDialog inherits Window {
                                 vertical-alignment: center;
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Queue auto-clear default:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Queue auto-clear default:");
                             ComboBox {
                                 model: [
                                     @tr("Off"),
@@ -644,12 +354,8 @@ export component SettingsDialog inherits Window {
                                 }
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Queue auto-clear after:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Queue auto-clear after:");
                             SpinBox {
                                 minimum: 1;
                                 maximum: 1440;
@@ -662,22 +368,18 @@ export component SettingsDialog inherits Window {
                                 vertical-alignment: center;
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Default integrity policy:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Default integrity policy:");
                             ComboBox {
                                 model: [
                                     @tr("Off (not recommended)"),
                                     @tr("Optional (recommended)"),
                                     @tr("Required (strict)"),
                                 ];
-                                current-value: root.integrity-label(root.default-integrity-policy);
+                                current-value: Labels.integrity-label(root.default-integrity-policy);
                                 horizontal-stretch: 1;
                                 selected(value) => {
-                                    root.default-integrity-policy = root.integrity-index(value);
+                                    root.default-integrity-policy = Labels.integrity-index(value);
                                 }
                             }
                         }
@@ -691,27 +393,19 @@ export component SettingsDialog inherits Window {
                     VerticalLayout {
                         padding: 8px;
                         spacing: 8px;
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Default protocol:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Default protocol:");
                             ComboBox {
-                                model: ["SFTP", "SCP", "FTP", "FTPS", "WebDAV"];
-                                current-value: root.protocol-label(root.default-protocol);
+                                model: ["SFTP", "SCP", "FTP", "FTPS", "WebDAV", "SMB", "Telnet"];
+                                current-value: Labels.protocol-label(root.default-protocol);
                                 horizontal-stretch: 1;
                                 selected(value) => {
-                                    root.default-protocol = root.protocol-storage-name(value);
+                                    root.default-protocol = Labels.protocol-storage-name(value);
                                 }
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Default SCP mode:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Default SCP mode:");
                             ComboBox {
                                 model: [
                                     @tr("Automatic (SCP with SFTP fallback)"),
@@ -742,31 +436,23 @@ export component SettingsDialog inherits Window {
                     VerticalLayout {
                         padding: 8px;
                         spacing: 8px;
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Default known_hosts policy:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Default known_hosts policy:");
                             ComboBox {
                                 model: [
                                     @tr("Strict"),
                                     @tr("Accept new (TOFU)"),
                                     @tr("No verification (double confirmation, expires in 15 min)"),
                                 ];
-                                current-value: root.kh-policy-label(root.default-known-hosts-policy);
+                                current-value: Labels.kh-policy-label(root.default-known-hosts-policy);
                                 horizontal-stretch: 1;
                                 selected(value) => {
-                                    root.default-known-hosts-policy = root.kh-policy-index(value);
+                                    root.default-known-hosts-policy = Labels.kh-policy-index(value);
                                 }
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("No-verification TTL:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("No-verification TTL:");
                             SpinBox {
                                 minimum: 1;
                                 maximum: 120;
@@ -782,12 +468,8 @@ export component SettingsDialog inherits Window {
                             text: @tr("Verify FTPS server certificate by default (recommended).");
                             checked <=> root.ftps-verify-peer-default;
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Default FTPS CA bundle:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Default FTPS CA bundle:");
                             LineEdit {
                                 text <=> root.ftps-ca-cert-path-default;
                                 placeholder-text: @tr("System CA bundle");
@@ -844,12 +526,8 @@ export component SettingsDialog inherits Window {
                     VerticalLayout {
                         padding: 8px;
                         spacing: 8px;
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Session health check interval:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Session health check interval:");
                             SpinBox {
                                 minimum: 60;
                                 maximum: 86400;
@@ -861,12 +539,8 @@ export component SettingsDialog inherits Window {
                                 vertical-alignment: center;
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Remote writeability cache TTL:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Remote writeability cache TTL:");
                             SpinBox {
                                 minimum: 1000;
                                 maximum: 120000;
@@ -888,12 +562,8 @@ export component SettingsDialog inherits Window {
                     VerticalLayout {
                         padding: 8px;
                         spacing: 8px;
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Download folder:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Download folder:");
                             LineEdit {
                                 text <=> root.default-download-dir;
                                 horizontal-stretch: 1;
@@ -905,12 +575,8 @@ export component SettingsDialog inherits Window {
                                 }
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Staging folder:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Staging folder:");
                             LineEdit {
                                 text <=> root.staging-root;
                                 horizontal-stretch: 1;
@@ -926,12 +592,8 @@ export component SettingsDialog inherits Window {
                             text: @tr("Auto-clean staging after successful drag-out (recommended).");
                             checked <=> root.auto-clean-staging;
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Startup cleanup retention:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Startup cleanup retention:");
                             SpinBox {
                                 minimum: 1;
                                 maximum: 365;
@@ -943,12 +605,8 @@ export component SettingsDialog inherits Window {
                                 vertical-alignment: center;
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Preparation timeout:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Preparation timeout:");
                             SpinBox {
                                 minimum: 250;
                                 maximum: 60000;
@@ -960,12 +618,8 @@ export component SettingsDialog inherits Window {
                                 vertical-alignment: center;
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Confirm from items:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Confirm from items:");
                             SpinBox {
                                 minimum: 50;
                                 maximum: 100000;
@@ -973,12 +627,8 @@ export component SettingsDialog inherits Window {
                                 horizontal-stretch: 1;
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Confirm from size:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Confirm from size:");
                             SpinBox {
                                 minimum: 128;
                                 maximum: 65536;
@@ -990,12 +640,8 @@ export component SettingsDialog inherits Window {
                                 vertical-alignment: center;
                             }
                         }
-                        HorizontalLayout {
-                            Text {
-                                text: @tr("Maximum depth:");
-                                width: 220px;
-                                vertical-alignment: center;
-                            }
+                        FormRow {
+                            label: @tr("Maximum depth:");
                             SpinBox {
                                 minimum: 4;
                                 maximum: 256;
@@ -1012,10 +658,8 @@ export component SettingsDialog inherits Window {
             }
         }
 
-        HorizontalLayout {
-            Rectangle {
-                horizontal-stretch: 1;
-            }
+        DialogFooter {
+            spacing: 0px;
             Button {
                 text: @tr("Close");
                 clicked => {

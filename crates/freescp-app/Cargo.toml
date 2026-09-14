@@ -32,9 +32,12 @@ sys-locale.workspace = true
 arboard.workspace = true
 mime_guess = "2.0.5"
 notify = "8.2.0"
+vt100 = "0.16"
 
 [dev-dependencies]
-i-slint-backend-testing = "=1.17.1"
+# renderer-software: the console view tests rasterize through take_snapshot.
+i-slint-backend-testing = { version = "=1.17.1", features = ["renderer-software"] }
+async-trait.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7.0"

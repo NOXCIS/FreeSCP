@@ -1,0 +1,314 @@
+// Search and History dialogs split out of main-window.slint so the main
+// window focuses on the panes and shortcuts.
+//
+// Imported by main-window.slint (never compiled on its own), which re-exports
+// both windows for crate::ui::main_window::{SearchDialog, HistoryDialog}.
+// The three history tabs share the internal `HistoryTab` content component.
+
+import { Button, CheckBox, LineEdit, ListView, TabWidget } from "std-widgets.slint";
+
+// One connected session offered as a remote-copy target ("Copy to session…").
+export struct SessionChoice {
+    title: string,
+    subtitle: string,
+    // Index of the tab in the main window's tab model.
+    tab-index: int,
+}
+
+// Destination picker for "Copy to session…": lists the other connected tabs.
+export component SessionPickerDialog inherits Window {
+    in property <[SessionChoice]> sessions;
+
+    callback session-chosen(int);
+    callback cancel-requested();
+
+    title: @tr("Copy to session");
+    width: 380px;
+    height: 320px;
+    background: #26262a;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        Text {
+            text: @tr("Copy the selected items into another session tab (staged through a local temporary file).");
+            color: #9a9aa2;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: #2d2d32;
+            border-radius: 4px;
+
+            ListView {
+                for choice in root.sessions : choice-row := Rectangle {
+                    height: 42px;
+                    background: choice-ta.has-hover ? #34343b : transparent;
+
+                    choice-ta := TouchArea {
+                        clicked => { root.session-chosen(choice.tab-index); }
+                        mouse-cursor: MouseCursor.pointer;
+                    }
+
+                    Text {
+                        x: 10px;
+                        y: 5px;
+                        text: choice.title;
+                        color: #e6e6e9;
+                        font-size: 13px;
+                    }
+                    Text {
+                        x: 10px;
+                        y: 22px;
+                        text: choice.subtitle;
+                        color: #9a9aa2;
+                        font-size: 11px;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: @tr("Cancel");
+                clicked => { root.cancel-requested(); }
+            }
+        }
+    }
+}
+
+// Pattern + recursive checkbox + results list.
+export component SearchDialog inherits Window {
+    in-out property <string> title-text: @tr("Search items");
+    in-out property <string> pattern: "";
+    in-out property <bool> recursive: false;
+    in-out property <bool> busy: false;
+    in-out property <string> summary-text: "";
+    in-out property <[string]> results: [];
+
+    callback search-requested();
+    callback cancel-requested();
+
+    width: 560px;
+    height: 480px;
+    background: #26262a;
+    title: root.title-text;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        Text {
+            text: @tr("Pattern accepts wildcard (*, ?) or regex.\nExamples: *report*, report, ^report_.*\\.pdf$");
+            color: #9a9aa2;
+            font-size: 12px;
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text {
+                text: @tr("Pattern:");
+                vertical-alignment: center;
+                color: #e6e6e9;
+                font-size: 12px;
+                width: 60px;
+            }
+            LineEdit {
+                text <=> root.pattern;
+                placeholder-text: @tr("e.g. *report*");
+                horizontal-stretch: 1;
+                enabled: !root.busy;
+                accepted => { search-requested(); }
+            }
+        }
+        CheckBox {
+            text: @tr("Search recursively in subfolders");
+            checked <=> root.recursive;
+            enabled: !root.busy;
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Button {
+                text: @tr("Search");
+                primary: true;
+                enabled: !root.busy && root.pattern != "";
+                clicked => { search-requested(); }
+            }
+            Button {
+                text: @tr("Cancel");
+                enabled: !root.busy;
+                clicked => { cancel-requested(); root.hide(); }
+            }
+            Text {
+                text: root.busy ? @tr("Searching…") : "";
+                vertical-alignment: center;
+                color: #9a9aa2;
+                font-size: 12px;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: @tr("Close");
+                clicked => { root.hide(); }
+            }
+        }
+        Text {
+            text: root.summary-text;
+            color: #c9c9cf;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            background: #2d2d32;
+            border-color: #3c3c42;
+            border-width: 1px;
+            border-radius: 4px;
+            if root.results.length == 0 : Text {
+                text: @tr("(no results)");
+                color: #6f6f77;
+                font-size: 12px;
+                x: 12px;
+                y: 12px;
+            }
+            if root.results.length > 0 : ListView {
+                for result[i] in root.results : Rectangle {
+                    width: 100%;
+                    height: 24px;
+                    background: mod(i, 2) == 0 ? #2c2c31 : #2d2d32;
+                    Text {
+                        text: result;
+                        x: 10px;
+                        y: 0px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: #e6e6e9;
+                        font-size: 12px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// One history list (local paths, remote paths or servers): select on click,
+// activate on double click. `selected` is two-way bound to the dialog field
+// Rust reads. Content only — TabWidget requires bare `Tab` children, so the
+// dialog wraps each instance in Tab { title: …; HistoryTab { … } }.
+component HistoryTab {
+    in property <[string]> items;
+    in-out property <int> selected: -1;
+    callback item-chosen();
+
+    if root.items.length == 0 : Text {
+        text: @tr("No recent history");
+        color: #6f6f77;
+        font-size: 12px;
+        x: 12px;
+        y: 12px;
+    }
+    if root.items.length > 0 : ListView {
+        for item[i] in root.items : TouchArea {
+            width: 100%;
+            height: 26px;
+            mouse-cursor: MouseCursor.pointer;
+            Rectangle {
+                width: parent.width;
+                height: parent.height;
+                background: i == root.selected ? #33506e : (mod(i, 2) == 0 ? #2c2c31 : #2d2d32);
+            }
+            clicked => { root.selected = i; }
+            double-clicked => { root.selected = i; root.item-chosen(); }
+            Text {
+                text: item;
+                x: 10px;
+                y: 0px;
+                width: parent.width - 20px;
+                height: parent.height;
+                vertical-alignment: center;
+                overflow: elide;
+                color: #e6e6e9;
+                font-size: 12px;
+            }
+        }
+    }
+}
+
+// Three tabs: recent local paths, recent remote paths, recent servers.
+export component HistoryDialog inherits Window {
+    in-out property <[string]> local-paths;
+    in-out property <[string]> remote-paths;
+    in-out property <[string]> servers;
+    in-out property <int> local-selected: -1;
+    in-out property <int> remote-selected: -1;
+    in-out property <int> server-selected: -1;
+    in-out property <int> active-tab: 0;
+
+    callback open-selected();
+    callback clear-history();
+
+    width: 620px;
+    height: 460px;
+    background: #26262a;
+    title: @tr("History");
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        TabWidget {
+            vertical-stretch: 1;
+            current-index <=> root.active-tab;
+            Tab {
+                title: @tr("Recent local paths");
+                HistoryTab {
+                    items: root.local-paths;
+                    selected <=> root.local-selected;
+                    item-chosen => { root.open-selected(); }
+                }
+            }
+            Tab {
+                title: @tr("Recent remote paths");
+                HistoryTab {
+                    items: root.remote-paths;
+                    selected <=> root.remote-selected;
+                    item-chosen => { root.open-selected(); }
+                }
+            }
+            Tab {
+                title: @tr("Recent servers");
+                HistoryTab {
+                    items: root.servers;
+                    selected <=> root.server-selected;
+                    item-chosen => { root.open-selected(); }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            Button {
+                text: @tr("Open selected");
+                primary: true;
+                enabled: (root.active-tab == 0 && root.local-selected >= 0)
+                    || (root.active-tab == 1 && root.remote-selected >= 0)
+                    || (root.active-tab == 2 && root.server-selected >= 0);
+                clicked => { root.open-selected(); }
+            }
+            Button {
+                text: @tr("Clear history");
+                clicked => { root.clear-history(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: @tr("Close");
+                clicked => { root.hide(); }
+            }
+        }
+    }
+}

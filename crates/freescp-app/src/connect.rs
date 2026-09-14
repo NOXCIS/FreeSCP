@@ -25,9 +25,12 @@
 //!     pub fn set_status(&self, message: &str);
 //!     /// Show/hide the "Connecting…" progress affordance.
 //!     pub fn set_connect_progress(&self, active: bool);
-//!     /// Install a freshly connected session; the main window switches the
-//!     /// right pane into remote mode (port of applyRemoteConnectedUI).
-//!     pub fn install_session(&self, opt: SessionOptions, client: Box<dyn SftpClient>);
+//!     /// Install a freshly connected session into `tab` (the active tab / a
+//!     /// fresh tab when `None`); the main window switches that tab's right
+//!     /// pane into remote mode (port of applyRemoteConnectedUI).
+//!     pub fn install_session(&self, tab: Option<u64>, opt: SessionOptions, client: Box<dyn SftpClient>);
+//!     /// Clear a reserved tab's "Connecting…" state after a failed attempt.
+//!     pub fn connect_failed(&self, tab: Option<u64>);
 //! }
 //! ```
 //!
@@ -41,7 +44,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use slint::ComponentHandle;
 
@@ -54,9 +57,9 @@ use freescp_core::client_factory;
 use freescp_core::ssh_config::{self, ResolvedSshParams};
 use freescp_core::{
     capabilities_for_protocol, default_port_for_protocol, default_port_for_proxy_type,
-    default_port_for_webdav_scheme, protocol_display_name, HostKeyConfirmCb, KbdIntPromptResult,
-    KbdIntPromptsCb, KnownHostsPolicy, Protocol, ProxyType, ScpTransferMode, SessionOptions,
-    SftpClient, TransferIntegrityPolicy, WebDavScheme,
+    default_port_for_telnet, default_port_for_webdav_scheme, protocol_display_name,
+    HostKeyConfirmCb, KbdIntPromptResult, KbdIntPromptsCb, KnownHostsPolicy, Protocol, ProxyType,
+    ScpTransferMode, SessionOptions, SftpClient, TransferIntegrityPolicy, WebDavScheme,
 };
 
 // ---------------------------------------------------------------------------
@@ -95,6 +98,8 @@ fn protocol_from_int(v: i32) -> Protocol {
         2 => Protocol::Ftp,
         3 => Protocol::Ftps,
         4 => Protocol::WebDav,
+        5 => Protocol::Smb,
+        6 => Protocol::Telnet,
         _ => Protocol::Sftp,
     }
 }
@@ -108,6 +113,8 @@ pub fn protocol_to_int(p: Protocol) -> i32 {
         Protocol::Ftp => 2,
         Protocol::Ftps => 3,
         Protocol::WebDav => 4,
+        Protocol::Smb => 5,
+        Protocol::Telnet => 6,
     }
 }
 
@@ -300,6 +307,31 @@ pub fn session_options_from_dialog(dlg: &connection_dialog::ConnectionDialog) ->
         }
     }
 
+    // SMB workgroup/domain for NTLM authentication.
+    if protocol == Protocol::Smb {
+        let domain = dlg.get_smb_domain().trim().to_string();
+        if !domain.is_empty() {
+            opt.smb_domain = Some(domain);
+        }
+    }
+
+    // Telnet console settings (TLS + auto-login). Plain telnet ignores the
+    // TLS fields, mirroring the plain-HTTP WebDAV reset above.
+    if protocol == Protocol::Telnet {
+        opt.telnet_tls = dlg.get_telnet_tls();
+        if opt.telnet_tls {
+            opt.telnet_verify_peer = dlg.get_telnet_verify_peer();
+            let ca = dlg.get_telnet_ca_path().trim().to_string();
+            if !ca.is_empty() {
+                opt.telnet_ca_cert_path = Some(ca);
+            }
+        } else {
+            opt.telnet_verify_peer = true;
+            opt.telnet_ca_cert_path = None;
+        }
+        opt.telnet_auto_login = dlg.get_telnet_auto_login();
+    }
+
     // Transport: jump host wins over proxy; both must not be combined
     // (mirrors ConnectionDialog::options()).
     let jump_enabled = dlg.get_jump_enabled();
@@ -395,14 +427,44 @@ pub async fn run_connect(mut opt: SessionOptions) -> Result<Box<dyn SftpClient>,
     Ok(client)
 }
 
+/// What a finished connect attempt produced.
+pub enum ConnectOutcome {
+    /// A filesystem session (`SftpClient`), installed through
+    /// `AppState::install_session`.
+    Session(Box<dyn SftpClient>),
+    /// A Telnet console: the transport handle plus its event stream, installed
+    /// through `AppState::install_console_session`. Telnet has no filesystem,
+    /// so it never becomes an `SftpClient`.
+    Console(
+        freescp_core::telnet::TelnetSession,
+        tokio::sync::mpsc::UnboundedReceiver<freescp_core::telnet::TelnetEvent>,
+    ),
+}
+
+/// Connects `opt`, picking the transport its protocol needs: everything with a
+/// filesystem goes through [`run_connect`], Telnet opens a console session.
+pub async fn run_any_connect(opt: SessionOptions) -> Result<ConnectOutcome, ConnectError> {
+    if opt.protocol == Protocol::Telnet {
+        let (session, events) = freescp_core::telnet::connect(&opt)
+            .await
+            .map_err(translate_client_error)?;
+        return Ok(ConnectOutcome::Console(session, events));
+    }
+    run_connect(opt).await.map(ConnectOutcome::Session)
+}
+
 /// Connect with a fully prepared [`SessionOptions`] (no dialog): spawns the
 /// network work on tokio, then applies the result on the UI thread via
 /// `spawn_local` (port of `startSftpConnect` + `finalizeSftpConnect`).
 ///
+/// `tab` is the tab the session should install into (the tab a dialog connect
+/// reserved, or the tab that asked for it). `None` lets the UI event loop pick:
+/// the active tab when it is idle, else a fresh tab.
+///
 /// Used by the Site Manager's connect action and by the quick-connect flow
 /// in [`open`]; the caller is responsible for validation, callback
 /// attachment, and any cancel handling.
-pub fn start_connect(state: &AppState, opt: SessionOptions) {
+pub fn start_connect(state: &AppState, tab: Option<u64>, opt: SessionOptions) {
     let state = state.clone();
     let host_display = opt.host.clone();
     let protocol_display = protocol_display_name(opt.protocol).to_string();
@@ -418,7 +480,7 @@ pub fn start_connect(state: &AppState, opt: SessionOptions) {
     // UI callbacks are not inside a Tokio context; use AppState's runtime.
     let task = state
         .runtime_handle()
-        .spawn(async move { run_connect(opt).await });
+        .spawn(async move { run_any_connect(opt).await });
 
     let _ = slint::spawn_local(async move {
         let outcome = task.await.unwrap_or_else(|join_error| {
@@ -427,16 +489,24 @@ pub fn start_connect(state: &AppState, opt: SessionOptions) {
         });
         connect_state.set_connect_progress(false);
         match outcome {
-            Ok(client) => {
+            Ok(ConnectOutcome::Session(client)) => {
                 start_indicators(&connect_state);
                 connect_state
                     .set_status(&format!("Connected ({protocol_display}) to {host_display}"));
-                connect_state.install_session(opt_for_install, client);
+                connect_state.install_session(tab, opt_for_install, client);
+            }
+            Ok(ConnectOutcome::Console(session, events)) => {
+                start_indicators(&connect_state);
+                connect_state
+                    .set_status(&format!("Connected ({protocol_display}) to {host_display}"));
+                connect_state.install_console_session(tab, opt_for_install, session, events);
             }
             Err(ConnectError::Cancelled) => {
                 connect_state.set_status("Connection canceled");
+                connect_state.connect_failed(tab);
             }
             Err(ConnectError::Failed(msg)) => {
+                connect_state.connect_failed(tab);
                 show_alert(
                     "Connection error",
                     &tr(
@@ -1071,6 +1141,33 @@ pub fn same_saved_site_identity(a: &SessionOptions, b: &SessionOptions) -> bool 
         || (a.webdav_scheme == b.webdav_scheme
             && a.webdav_verify_peer == b.webdav_verify_peer
             && norm_path(&a.webdav_ca_cert_path) == norm_path(&b.webdav_ca_cert_path));
+    // SMB domains identify distinct logins on the same host; Telnet TLS
+    // options identify distinct transports. Neither was part of the C++
+    // comparison (those protocols are Rust-only), so they are gated by
+    // protocol to keep the ported behavior for the shared protocols.
+    let norm_domain = |d: &Option<String>| {
+        d.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_lowercase())
+    };
+    let compare_smb_domain =
+        (a.protocol != Protocol::Smb) || norm_domain(&a.smb_domain) == norm_domain(&b.smb_domain);
+    let compare_telnet = (a.protocol != Protocol::Telnet)
+        || (a.telnet_tls == b.telnet_tls
+            && a.telnet_verify_peer == b.telnet_verify_peer
+            && norm_path(&a.telnet_ca_cert_path) == norm_path(&b.telnet_ca_cert_path)
+            && a.telnet_auto_login == b.telnet_auto_login);
+    // Host-key verification decides whether an SSH connection may proceed, so
+    // an SFTP/SCP site that differs only in known_hosts policy or file must
+    // not be treated as the same saved site: the quick-connect choice would
+    // otherwise be silently dropped instead of persisted. The C++ comparison
+    // omitted these fields; the deviation is deliberate.
+    let uses_known_hosts = |p: Protocol| matches!(p, Protocol::Sftp | Protocol::Scp);
+    let compare_known_hosts = !uses_known_hosts(a.protocol)
+        || (norm_path(&a.known_hosts_path) == norm_path(&b.known_hosts_path)
+            && a.known_hosts_policy == b.known_hosts_policy
+            && a.known_hosts_hash_names == b.known_hosts_hash_names);
 
     a.protocol == b.protocol
         && scp_mode(a) == scp_mode(b)
@@ -1090,6 +1187,9 @@ pub fn same_saved_site_identity(a: &SessionOptions, b: &SessionOptions) -> bool 
         && a.ftps_verify_peer == b.ftps_verify_peer
         && norm_path(&a.ftps_ca_cert_path) == norm_path(&b.ftps_ca_cert_path)
         && compare_webdav_tls
+        && compare_smb_domain
+        && compare_telnet
+        && compare_known_hosts
 }
 
 /// Default "user@host[:port] (protocol)" site name (port of
@@ -1180,75 +1280,19 @@ pub async fn maybe_persist_site(
 }
 
 // ---------------------------------------------------------------------------
-// Session indicators (stubs with a shared elapsed-seconds counter)
+// Session indicators
 // ---------------------------------------------------------------------------
-
-struct IndicatorState {
-    active: bool,
-    started_at: Option<Instant>,
-    elapsed_secs: u64,
-}
-
-static INDICATORS: OnceLock<Mutex<IndicatorState>> = OnceLock::new();
-
-fn indicators() -> &'static Mutex<IndicatorState> {
-    INDICATORS.get_or_init(|| {
-        Mutex::new(IndicatorState {
-            active: false,
-            started_at: None,
-            elapsed_secs: 0,
-        })
-    })
-}
+//
+// The elapsed indicator is driven per session from `SessionRecord::started_at`
+// (the main window's 1 s timer renders it), so only the "a session just
+// started" hook remains here — it is the port of
+// `startConnectionSessionIndicators` for the connection paths that run before
+// the session is installed.
 
 /// Start the session timer (port of `startConnectionSessionIndicators`);
 /// call when a session is installed.
 pub fn start_indicators(state: &AppState) {
     let _ = state;
-    let mut g = match indicators().lock() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    g.active = true;
-    g.started_at = Some(Instant::now());
-    g.elapsed_secs = 0;
-}
-
-/// Refresh the shared elapsed-seconds counter. The main window should call
-/// this from a 1-second Slint `Timer` while a session is active, and read
-/// [`indicators_elapsed_secs`] to render the indicator.
-pub fn update_indicators(state: &AppState) {
-    let _ = state;
-    let mut g = match indicators().lock() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    if g.active {
-        if let Some(started) = g.started_at {
-            g.elapsed_secs = started.elapsed().as_secs();
-        }
-    }
-}
-
-/// Stop the session timer (port of `resetConnectionSessionIndicators`);
-/// call on disconnect.
-pub fn reset_indicators(state: &AppState) {
-    let _ = state;
-    let mut g = match indicators().lock() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    g.active = false;
-    g.started_at = None;
-    g.elapsed_secs = 0;
-}
-
-/// Seconds elapsed in the active session (0 when no session is active).
-pub fn indicators_elapsed_secs() -> u64 {
-    indicators()
-        .lock()
-        .map(|g| g.elapsed_secs)
-        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -1267,6 +1311,17 @@ pub fn connect_in_progress() -> bool {
     CONNECT_IN_FLIGHT.with(Cell::get)
 }
 
+/// Whether the Connect dialog may start a session for `protocol`: either a
+/// file-transfer protocol, or the console-only Telnet transport that
+/// [`run_any_connect`] routes to [`crate::console`].
+///
+/// Telnet is `implemented` but has no file-transfer capabilities, so the
+/// `supports_file_transfers` guard alone would reject it.
+fn protocol_can_start_connect(protocol: Protocol) -> bool {
+    let caps = capabilities_for_protocol(protocol);
+    caps.implemented && (caps.supports_file_transfers || protocol == Protocol::Telnet)
+}
+
 /// Open the connection dialog and run the full connect flow on
 /// connect-requested (port of `openConnectDialogWithPreset` +
 /// `startSftpConnect` + `finalizeSftpConnect`).
@@ -1277,18 +1332,17 @@ pub fn connect_in_progress() -> bool {
 ///
 /// The Site Manager's preset-based connect path goes through
 /// [`start_connect`] instead of this dialog.
-pub fn open(win: &main_window::MainWindow, state: &AppState) {
+///
+/// `tab` is the tab reserved by the caller (`main.rs` marks it `connecting`
+/// and passes its id); a successful connect installs into exactly that tab.
+pub fn open(win: &main_window::MainWindow, state: &AppState, tab: Option<u64>) {
     if connect_in_progress() {
+        // The caller has already reserved `tab`; release it so the tab bar
+        // does not stay on "Connecting…" for an attempt that never started.
+        state.connect_failed(tab);
         show_alert(
             "Connection in progress",
             "Wait for the current connection attempt to finish or cancel it first.",
-        );
-        return;
-    }
-    if state.client.is_some() {
-        show_alert(
-            "Already connected",
-            "Disconnect the current session before starting a new connection.",
         );
         return;
     }
@@ -1296,6 +1350,7 @@ pub fn open(win: &main_window::MainWindow, state: &AppState) {
 
     let Ok(dlg) = connection_dialog::ConnectionDialog::new() else {
         tracing::error!("failed to instantiate ConnectionDialog");
+        state.connect_failed(tab);
         return;
     };
     let state = state.clone();
@@ -1339,9 +1394,11 @@ pub fn open(win: &main_window::MainWindow, state: &AppState) {
     {
         let d = dlg.as_weak();
         let last_webdav_https = Rc::new(Cell::new(true));
+        let last_telnet_tls = Rc::new(Cell::new(false));
         dlg.on_protocol_changed({
             let d = d.clone();
             let last_webdav_https = last_webdav_https.clone();
+            let last_telnet_tls = last_telnet_tls.clone();
             move || {
                 let Some(d) = d.upgrade() else { return };
                 let protocol = protocol_from_int(d.get_protocol());
@@ -1351,11 +1408,14 @@ pub fn open(win: &main_window::MainWindow, state: &AppState) {
                     } else {
                         WebDavScheme::Http
                     })
+                } else if protocol == Protocol::Telnet {
+                    default_port_for_telnet(d.get_telnet_tls())
                 } else {
                     default_port_for_protocol(protocol)
                 };
                 d.set_port(default_port as i32);
                 last_webdav_https.set(d.get_webdav_https());
+                last_telnet_tls.set(d.get_telnet_tls());
             }
         });
         // WebDAV scheme switch only follows the port when it still equals
@@ -1385,6 +1445,23 @@ pub fn open(win: &main_window::MainWindow, state: &AppState) {
                     d.set_port(next_default);
                 }
                 last_webdav_https.set(d.get_webdav_https());
+            }
+        });
+        // Telnet TLS toggle: same follow-the-default rule for 23 <-> 992.
+        dlg.on_telnet_tls_changed({
+            let d = d.clone();
+            let last_telnet_tls = last_telnet_tls.clone();
+            move || {
+                let Some(d) = d.upgrade() else { return };
+                let previous_default = default_port_for_telnet(last_telnet_tls.get()) as i32;
+                let next_default = default_port_for_telnet(d.get_telnet_tls()) as i32;
+                if protocol_from_int(d.get_protocol()) == Protocol::Telnet
+                    && d.get_port() == previous_default
+                    && previous_default != next_default
+                {
+                    d.set_port(next_default);
+                }
+                last_telnet_tls.set(d.get_telnet_tls());
             }
         });
     }
@@ -1445,6 +1522,7 @@ pub fn open(win: &main_window::MainWindow, state: &AppState) {
                 "known-hosts" => d.set_known_hosts_path(path_s),
                 "ftps-ca" => d.set_ftps_ca_path(path_s),
                 "webdav-ca" => d.set_webdav_ca_path(path_s),
+                "telnet-ca" => d.set_telnet_ca_path(path_s),
                 other => tracing::warn!(field = %other, "unknown browse field"),
             }
         });
@@ -1465,8 +1543,9 @@ pub fn open(win: &main_window::MainWindow, state: &AppState) {
             }
 
             // Pre-flight validation (port of the startSftpConnect guards).
-            let caps = capabilities_for_protocol(opt.protocol);
-            if !caps.implemented || !caps.supports_file_transfers {
+            // Console-only protocols (Telnet) pass: `run_any_connect` routes
+            // them to the terminal transport instead of a file session.
+            if !protocol_can_start_connect(opt.protocol) {
                 let name = protocol_display_name(opt.protocol);
                 show_alert(
                     "Protocol not available",
@@ -1478,6 +1557,7 @@ pub fn open(win: &main_window::MainWindow, state: &AppState) {
                 state.set_status(&format!("Connection canceled: unsupported protocol {name}"));
                 return;
             }
+            let caps = capabilities_for_protocol(opt.protocol);
             if opt.jump_host.is_some() && !caps.supports_jump_host {
                 let name = protocol_display_name(opt.protocol);
                 show_alert(
@@ -1560,9 +1640,9 @@ pub fn open(win: &main_window::MainWindow, state: &AppState) {
                     &site_name,
                 )
                 .await;
-                let result = run_connect(opt).await;
+                let result = run_any_connect(opt).await;
                 if task_cancel.load(Ordering::SeqCst) {
-                    if let Ok(client) = &result {
+                    if let Ok(ConnectOutcome::Session(client)) = &result {
                         client.interrupt();
                     }
                     return Err(ConnectError::Cancelled);
@@ -1584,7 +1664,7 @@ pub fn open(win: &main_window::MainWindow, state: &AppState) {
                 }
                 ui_state.set_connect_progress(false);
                 match outcome {
-                    Ok(client) => {
+                    Ok(ConnectOutcome::Session(client)) => {
                         if let Some(ui_dlg) = ui_dlg.upgrade() {
                             let _ = ui_dlg.hide(); // connected; closing is cosmetic
                         }
@@ -1592,12 +1672,24 @@ pub fn open(win: &main_window::MainWindow, state: &AppState) {
                         ui_state.set_status(&format!(
                             "Connected ({protocol_display}) to {host_display}"
                         ));
-                        ui_state.install_session(opt_for_install, client);
+                        ui_state.install_session(tab, opt_for_install, client);
+                    }
+                    Ok(ConnectOutcome::Console(session, events)) => {
+                        if let Some(ui_dlg) = ui_dlg.upgrade() {
+                            let _ = ui_dlg.hide(); // connected; closing is cosmetic
+                        }
+                        start_indicators(&ui_state);
+                        ui_state.set_status(&format!(
+                            "Connected ({protocol_display}) to {host_display}"
+                        ));
+                        ui_state.install_console_session(tab, opt_for_install, session, events);
                     }
                     Err(ConnectError::Cancelled) => {
                         ui_state.set_status("Connection canceled");
+                        ui_state.connect_failed(tab);
                     }
                     Err(ConnectError::Failed(msg)) => {
+                        ui_state.connect_failed(tab);
                         show_alert(
                             "Connection error",
                             &tr(
@@ -1635,11 +1727,19 @@ pub fn open(win: &main_window::MainWindow, state: &AppState) {
                 cancel.store(true, Ordering::SeqCst);
                 state.set_status("Connection canceled");
             }
+            // The reserved tab goes back to idle (no-op when a session
+            // installed in the meantime).
+            state.connect_failed(tab);
             let _ = d.hide(); // closed by the user; closing is cosmetic
         }
     });
 
-    let _ = dlg.show(); // showing the dialog is best-effort
+    if let Err(err) = dlg.show() {
+        // A dialog that never appeared has no close handler, so the reserved
+        // tab would stay on "Connecting…" for the rest of the session.
+        tracing::error!(%err, "failed to show the ConnectionDialog");
+        state.connect_failed(tab);
+    }
 }
 
 /// Opens the native file picker for one of the connection-editor file fields
@@ -1658,6 +1758,7 @@ pub(crate) fn pick_connection_file(field: &str) -> Option<std::path::PathBuf> {
         "known-hosts" => ("Select known_hosts", ssh_dir()),
         "ftps-ca" => ("Select FTPS CA bundle", home_dir()),
         "webdav-ca" => ("Select WebDAV CA bundle", home_dir()),
+        "telnet-ca" => ("Select Telnet CA bundle", home_dir()),
         _ => ("Select file", None),
     };
     let mut picker = rfd::FileDialog::new().set_title(title);
@@ -1849,5 +1950,119 @@ mod ssh_config_resolution_tests {
         assert_eq!(opt.username, "");
         assert_eq!(opt.private_key_path, None);
         assert_eq!(opt.jump_host, None);
+    }
+}
+
+#[cfg(test)]
+mod protocol_index_tests {
+    use super::{protocol_from_int, protocol_to_int};
+    use freescp_core::Protocol;
+
+    #[test]
+    fn dialog_indices_round_trip() {
+        let pairs = [
+            (0, Protocol::Sftp),
+            (1, Protocol::Scp),
+            (2, Protocol::Ftp),
+            (3, Protocol::Ftps),
+            (4, Protocol::WebDav),
+            (5, Protocol::Smb),
+            (6, Protocol::Telnet),
+        ];
+        for (index, protocol) in pairs {
+            assert_eq!(protocol_from_int(index), protocol, "index {index}");
+            assert_eq!(protocol_to_int(protocol), index, "{protocol:?}");
+        }
+        // Unknown indices fall back to SFTP, mirroring the C++.
+        assert_eq!(protocol_from_int(7), Protocol::Sftp);
+        assert_eq!(protocol_from_int(-1), Protocol::Sftp);
+    }
+}
+
+#[cfg(test)]
+mod connect_gate_tests {
+    use super::{protocol_can_start_connect, same_saved_site_identity};
+    use freescp_core::{KnownHostsPolicy, Protocol, SessionOptions};
+
+    #[test]
+    fn console_only_telnet_can_start_a_connect() {
+        // Regression: the dialog's `supports_file_transfers` guard used to
+        // reject Telnet even though `run_any_connect` routes it to the console.
+        assert!(protocol_can_start_connect(Protocol::Telnet));
+        for protocol in [
+            Protocol::Sftp,
+            Protocol::Scp,
+            Protocol::Ftp,
+            Protocol::Ftps,
+            Protocol::WebDav,
+            Protocol::Smb,
+        ] {
+            assert!(protocol_can_start_connect(protocol), "{protocol:?}");
+        }
+    }
+
+    #[test]
+    fn smb_domain_participates_in_site_identity() {
+        let base = SessionOptions {
+            protocol: Protocol::Smb,
+            host: "files.example.com".into(),
+            ..Default::default()
+        };
+        let mut other_domain = base.clone();
+        other_domain.smb_domain = Some("WORKGROUP".into());
+        assert!(!same_saved_site_identity(&base, &other_domain));
+        // An empty domain normalizes to "no domain", i.e. the same site.
+        other_domain.smb_domain = Some("   ".into());
+        assert!(same_saved_site_identity(&base, &other_domain));
+    }
+
+    #[test]
+    fn telnet_tls_options_participate_in_site_identity() {
+        let base = SessionOptions {
+            protocol: Protocol::Telnet,
+            host: "console.example.com".into(),
+            ..Default::default()
+        };
+        let mut tls = base.clone();
+        tls.telnet_tls = true;
+        assert!(!same_saved_site_identity(&base, &tls));
+        let mut no_verify = base.clone();
+        no_verify.telnet_verify_peer = !base.telnet_verify_peer;
+        assert!(!same_saved_site_identity(&base, &no_verify));
+        let mut auto_login = base.clone();
+        auto_login.telnet_auto_login = !base.telnet_auto_login;
+        assert!(!same_saved_site_identity(&base, &auto_login));
+        let mut ca = base.clone();
+        ca.telnet_ca_cert_path = Some("/tmp/ca.pem".into());
+        assert!(!same_saved_site_identity(&base, &ca));
+        // A whitespace-only path normalizes to "no path", i.e. the same site.
+        let mut blank_ca = base.clone();
+        blank_ca.telnet_ca_cert_path = Some("   ".into());
+        assert!(same_saved_site_identity(&base, &blank_ca));
+    }
+
+    #[test]
+    fn known_hosts_settings_participate_in_site_identity() {
+        let base = SessionOptions {
+            protocol: Protocol::Sftp,
+            host: "ssh.example.com".into(),
+            ..Default::default()
+        };
+        let mut policy = base.clone();
+        policy.known_hosts_policy = KnownHostsPolicy::Off;
+        assert!(!same_saved_site_identity(&base, &policy));
+        let mut hashing = base.clone();
+        hashing.known_hosts_hash_names = !base.known_hosts_hash_names;
+        assert!(!same_saved_site_identity(&base, &hashing));
+        let mut path = base.clone();
+        path.known_hosts_path = Some("/tmp/known_hosts".into());
+        assert!(!same_saved_site_identity(&base, &path));
+        // Protocols without host keys ignore these fields.
+        let mut ftp_a = base.clone();
+        ftp_a.protocol = Protocol::Ftp;
+        let mut ftp_b = ftp_a.clone();
+        ftp_b.known_hosts_policy = KnownHostsPolicy::Off;
+        ftp_b.known_hosts_path = Some("/tmp/known_hosts".into());
+        assert!(same_saved_site_identity(&ftp_a, &ftp_b));
     }
 }

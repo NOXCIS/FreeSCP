@@ -1,0 +1,445 @@
+// Interactive terminal console for Telnet sessions.
+//
+// Rust counterpart: crates/freescp-app/src/console.rs, which owns a vt100
+// parser and publishes the visible screen through `rows` (one ConsoleRow per
+// terminal line, each holding the line's runs at absolute cell positions).
+//
+// Units and coordinates:
+// - Row/column indices are 0-based grid cells. `col` and `cells` in a
+//   ConsoleRun are cell counts (a double-width glyph occupies two cells),
+//   never bytes or characters.
+// - `fg`/`bg` are the colors console.rs resolved through the xterm palette;
+//   `inverse` asks the view to swap them for rendering.
+// - The `special-key` codes below are shared with `console::SpecialKey` in
+//   Rust; keep both lists in sync.
+//
+// Input contract:
+// - `key-text(text, ctrl, alt, shift)` forwards typed text plus modifiers;
+//   console.rs turns it into terminal bytes (Ctrl+letter -> 0x01..0x1a).
+// - `special-key(code)` covers keys that produce escape sequences; the code
+//   list is the SpecialKey enum in console.rs.
+// - `copy-requested()` copies using the `sel-*` properties below (normalized,
+//   inclusive cell coordinates; `sel-start-row == -1` when nothing is
+//   selected), so the Rust side reads the selection off the window.
+// - `scroll-lines(n)` moves the view n lines down (negative scrolls up into
+//   the scrollback).
+//
+// Output contract (read from Rust, which forces the binding to evaluate):
+// - `grid-cols` / `grid-rows` are the grid size implied by the current layout,
+//   or 0 before the first layout pass. Slint does not reliably fire `changed`
+//   handlers for layout-managed geometry, so the view invokes `grid-changed`
+//   on a 250 ms tick while connected and main.rs also polls after event
+//   batches; `ConsoleState::resize` no-ops when the size is unchanged.
+// - `cell-width` / `cell-height` let Rust-side tests place pointer events.
+
+// One run of cells that share the same attributes. Runs are positioned by
+// `col` (not by concatenation) so blank stretches are simply omitted.
+export struct ConsoleRun {
+    col: int,
+    cells: int,
+    text: string,
+    fg: color,
+    bg: color,
+    bold: bool,
+    italic: bool,
+    dim: bool,
+    inverse: bool,
+}
+
+// One terminal line: the runs covering it, left to right.
+export struct ConsoleRow {
+    runs: [ConsoleRun],
+}
+
+export component ConsoleView inherits Rectangle {
+    // Screen contents published by console.rs; the length is the terminal
+    // row count, so the model is replaced on resize rather than here.
+    in-out property <[ConsoleRow]> rows;
+
+    // Live cursor, in viewport cells (already offset by any scrollback).
+    in-out property <int> cursor-row: 0;
+    in-out property <int> cursor-col: 0;
+    in-out property <bool> cursor-visible: true;
+
+    // False once the session is gone: the cursor is hidden and the view stops
+    // accepting input (the toolbar shows the "connection closed" hint).
+    in-out property <bool> connected: true;
+
+    // Scrollback state, published for the "scrolled back" pill.
+    in-out property <int> scrollback-len: 0;
+    in-out property <int> scrollback-offset: 0;
+
+    // Selection, in inclusive cell coordinates, normalized so the start is
+    // never after the end; `sel-start-row == -1` means "no selection".
+    in-out property <int> sel-start-row: -1;
+    in-out property <int> sel-start-col: -1;
+    in-out property <int> sel-end-row: -1;
+    in-out property <int> sel-end-col: -1;
+
+    callback key-text(string, bool, bool, bool);
+    callback special-key(int);
+    callback paste-requested();
+    callback copy-requested();
+    callback clear-requested();
+    callback scroll-lines(int);
+    // Fired on a timer while connected so a window resize reaches the grid
+    // polling in main.rs without waiting for the next byte or keystroke.
+    callback grid-changed();
+
+    // Must match DEFAULT_FG/DEFAULT_BG in src/console.rs: console.rs drops
+    // blank runs only when their effective background equals this value.
+    property <color> default-fg: #e6e6e9;
+    property <color> default-bg: #1a1a1d;
+
+    property <bool> has-selection: root.sel-start-row >= 0 && root.sel-end-row >= 0;
+    property <bool> dragging: false;
+    property <int> drag-anchor-row: -1;
+    property <int> drag-anchor-col: -1;
+
+    out property <length> cell-width: measure.preferred-width / 50;
+    out property <length> cell-height: measure.preferred-height;
+
+    // 0 while the grid has not been laid out yet (Rust ignores that).
+    out property <int> grid-cols: grid.width > 0px && root.cell-width > 0px
+        ? max(2, round(grid.width / root.cell-width - 0.5))
+        : 0;
+    out property <int> grid-rows: grid.height > 0px && root.cell-height > 0px
+        ? max(1, round(grid.height / root.cell-height - 0.5))
+        : 0;
+
+    background: root.default-bg;
+    clip: true;
+
+    // Layout changes (window resize, splitter drag) produce no Rust-visible
+    // event; a cheap poll keeps the local grid and the Telnet NAWS size in
+    // sync. `console_sync` no-ops while the size is unchanged.
+    Timer {
+        interval: 250ms;
+        running: root.connected;
+        triggered => { root.grid-changed(); }
+    }
+
+    // Cell size is measured from one hidden 50-glyph sample (dividing cancels
+    // per-glyph rounding); every run Text below uses the same font settings.
+    measure := Text {
+        x: 0px;
+        y: 0px;
+        text: "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
+        font-family: "monospace";
+        font-size: 13px;
+        visible: false;
+    }
+
+    // Maps a viewport position to a grid cell, clamped to the visible screen.
+    // `round(x - 0.5)` is floor for the non-negative values used here.
+    pure function cell-col(px: length) -> int {
+        return max(0, round(px / root.cell-width - 0.5));
+    }
+
+    pure function cell-row(px: length) -> int {
+        return max(0, round(px / root.cell-height - 0.5));
+    }
+
+    pure function sel-left(row: int) -> length {
+        return row == root.sel-start-row ? root.sel-start-col * root.cell-width : 0px;
+    }
+
+    pure function sel-width(row: int, row-width: length) -> length {
+        if (row == root.sel-start-row && row == root.sel-end-row) {
+            return (root.sel-end-col - root.sel-start-col + 1) * root.cell-width;
+        }
+        if (row == root.sel-start-row) {
+            return max(0px, row-width - root.sel-start-col * root.cell-width);
+        }
+        if (row == root.sel-end-row) {
+            return (root.sel-end-col + 1) * root.cell-width;
+        }
+        return row-width;
+    }
+
+    // Keeps the start before the end so the sel-* contract holds for readers.
+    function set-selection(anchor-row: int, anchor-col: int, focus-row: int, focus-col: int) {
+        if (focus-row < anchor-row || (focus-row == anchor-row && focus-col < anchor-col)) {
+            root.sel-start-row = focus-row;
+            root.sel-start-col = focus-col;
+            root.sel-end-row = anchor-row;
+            root.sel-end-col = anchor-col;
+        } else {
+            root.sel-start-row = anchor-row;
+            root.sel-start-col = anchor-col;
+            root.sel-end-row = focus-row;
+            root.sel-end-col = focus-col;
+        }
+    }
+
+    function clear-selection() {
+        root.sel-start-row = -1;
+        root.sel-start-col = -1;
+        root.sel-end-row = -1;
+        root.sel-end-col = -1;
+    }
+
+    // Exposed so main-window can focus the console when a Telnet session is
+    // installed or the user clicks the pane.
+    public function focus-console() {
+        console-scope.focus();
+    }
+
+    console-scope := FocusScope {
+        width: parent.width;
+        height: parent.height;
+
+        key-pressed(event) => {
+            // Copy/paste first: they must win over Ctrl+C/V reaching the server.
+            if ((event.modifiers.control || event.modifiers.meta) && event.modifiers.shift && (event.text == "c" || event.text == "C")) {
+                root.copy-requested();
+                return accept;
+            }
+            if (((event.modifiers.control || event.modifiers.meta) && event.modifiers.shift && (event.text == "v" || event.text == "V"))
+                || (event.modifiers.meta && !event.modifiers.control && !event.modifiers.shift && (event.text == "v" || event.text == "V"))) {
+                root.paste-requested();
+                return accept;
+            }
+            // Nothing else goes to a server we are no longer talking to.
+            if (!root.connected) {
+                return reject;
+            }
+            // Terminal keys: these are the same bytes as the Ctrl+letter
+            // control characters, so order relative to the ctrl check matters
+            // only for readability.
+            if (event.text == Key.Escape) {
+                root.special-key(0);
+                return accept;
+            }
+            if (event.text == Key.Return) {
+                root.special-key(1);
+                return accept;
+            }
+            if (event.text == Key.Tab) {
+                root.special-key(2);
+                return accept;
+            }
+            if (event.text == Key.Backtab) {
+                root.special-key(3);
+                return accept;
+            }
+            if (event.text == Key.Backspace) {
+                root.special-key(4);
+                return accept;
+            }
+            if (event.text == Key.Delete) {
+                root.special-key(5);
+                return accept;
+            }
+            if (event.text == Key.Insert) {
+                root.special-key(6);
+                return accept;
+            }
+            if (event.text == Key.Home) {
+                root.special-key(7);
+                return accept;
+            }
+            if (event.text == Key.End) {
+                root.special-key(8);
+                return accept;
+            }
+            if (event.text == Key.PageUp) {
+                root.special-key(9);
+                return accept;
+            }
+            if (event.text == Key.PageDown) {
+                root.special-key(10);
+                return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                root.special-key(11);
+                return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                root.special-key(12);
+                return accept;
+            }
+            if (event.text == Key.LeftArrow) {
+                root.special-key(13);
+                return accept;
+            }
+            if (event.text == Key.RightArrow) {
+                root.special-key(14);
+                return accept;
+            }
+            if (event.text == Key.F1) {
+                root.special-key(15);
+                return accept;
+            }
+            if (event.text == Key.F2) {
+                root.special-key(16);
+                return accept;
+            }
+            if (event.text == Key.F3) {
+                root.special-key(17);
+                return accept;
+            }
+            if (event.text == Key.F4) {
+                root.special-key(18);
+                return accept;
+            }
+            if (event.text == Key.F5) {
+                root.special-key(19);
+                return accept;
+            }
+            if (event.text == Key.F6) {
+                root.special-key(20);
+                return accept;
+            }
+            if (event.text == Key.F7) {
+                root.special-key(21);
+                return accept;
+            }
+            if (event.text == Key.F8) {
+                root.special-key(22);
+                return accept;
+            }
+            if (event.text == Key.F9) {
+                root.special-key(23);
+                return accept;
+            }
+            if (event.text == Key.F10) {
+                root.special-key(24);
+                return accept;
+            }
+            if (event.text == Key.F11) {
+                root.special-key(25);
+                return accept;
+            }
+            if (event.text == Key.F12) {
+                root.special-key(26);
+                return accept;
+            }
+            if (event.text != "") {
+                root.key-text(event.text, event.modifiers.control || event.modifiers.meta, event.modifiers.alt, event.modifiers.shift);
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    VerticalLayout {
+        padding: 4px;
+
+        grid := Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+
+            for row-data[i] in root.rows : Rectangle {
+                x: 0px;
+                y: i * root.cell-height;
+                width: parent.width;
+                height: root.cell-height;
+
+                if (root.has-selection
+                    && i >= root.sel-start-row && i <= root.sel-end-row) : Rectangle {
+                    x: root.sel-left(i);
+                    width: root.sel-width(i, parent.width);
+                    height: parent.height;
+                    background: #4a90d94d;
+                }
+
+                for run in row-data.runs : Rectangle {
+                    x: run.col * root.cell-width;
+                    width: run.cells * root.cell-width;
+                    height: root.cell-height;
+                    background: run.inverse ? run.fg : run.bg;
+
+                    Text {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height;
+                        text: run.text;
+                        color: run.inverse ? run.bg : run.fg;
+                        font-family: "monospace";
+                        font-size: 13px;
+                        font-weight: run.bold ? 700 : 400;
+                        font-italic: run.italic;
+                        opacity: run.dim ? 0.72 : 1.0;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // Block cursor; hollow while another widget owns the focus so it
+            // stays visible without looking active.
+            if (root.cursor-visible && root.connected) : Rectangle {
+                x: root.cursor-col * root.cell-width;
+                y: root.cursor-row * root.cell-height;
+                width: root.cell-width;
+                height: root.cell-height;
+                background: console-scope.has-focus ? #e6e6e9b3 : #00000000;
+                border-width: console-scope.has-focus ? 0px : 1px;
+                border-color: #e6e6e9aa;
+            }
+
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: MouseCursor.text;
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        if (event.button != PointerEventButton.left) {
+                            return;
+                        }
+                        root.focus-console();
+                        root.dragging = true;
+                        root.drag-anchor-row = root.cell-row(self.mouse-y);
+                        root.drag-anchor-col = root.cell-col(self.mouse-x);
+                        root.clear-selection();
+                    } else if (event.kind == PointerEventKind.move && root.dragging) {
+                        // The anchor stays fixed while extending, so dragging
+                        // back over it shrinks the selection again. Move events
+                        // carry no button on every backend, hence the check is
+                        // only on `down`.
+                        root.set-selection(root.drag-anchor-row, root.drag-anchor-col, root.cell-row(self.mouse-y), root.cell-col(self.mouse-x));
+                    } else if (event.kind == PointerEventKind.up) {
+                        root.dragging = false;
+                    }
+                }
+
+                scroll-event(event) => {
+                    root.scroll-lines(event.delta-y > 0 ? 3 : -3);
+                    return accept;
+                }
+            }
+
+            // Scrollback pill: jumps back to the live screen when clicked.
+            if (root.scrollback-offset > 0) : Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: 6px;
+                width: pill-label.preferred-width + 16px;
+                height: 20px;
+                border-radius: 10px;
+                background: #3a3a42e6;
+                border-width: 1px;
+                border-color: #5a5a64;
+
+                pill-label := Text {
+                    text: @tr("scrolled back {} lines - click to jump to the bottom", root.scrollback-offset);
+                    color: #c9c9cf;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => {
+                        root.scroll-lines(2147483647);
+                    }
+                }
+            }
+        }
+    }
+}

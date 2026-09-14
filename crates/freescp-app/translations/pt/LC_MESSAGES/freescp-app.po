@@ -90,6 +90,10 @@ msgctxt "AboutDialog"
 msgid "A cross-platform SFTP/SCP/FTP/FTPS/WebDAV client."
 msgstr "Um cliente SFTP/SCP/FTP/FTPS/WebDAV multiplataforma."
 
+msgctxt "AboutDialog"
+msgid "Close"
+msgstr "Fechar"
+
 msgctxt "ConnectionDialog"
 msgid "My server"
 msgstr "Meu servidor"
@@ -2085,6 +2089,38 @@ msgid "Wait for the current connection attempt to finish or cancel it first."
 msgstr ""
 "Aguarde que a tentativa de ligação atual termine ou cancele-a primeiro."
 
+msgctxt "MainWindow"
+msgid "Change permissions"
+msgstr "Alterar permissões"
+
+msgctxt "MainWindow"
+msgid "Clear"
+msgstr "Limpar"
+
+msgctxt "MainWindow"
+msgid "Connection closed"
+msgstr "Conexão encerrada"
+
+msgctxt "MainWindow"
+msgid "Copy to session…"
+msgstr "Copiar para sessão…"
+
+msgctxt "MainWindow"
+msgid "Date"
+msgstr "Data"
+
+msgctxt "MainWindow"
+msgid "Name"
+msgstr "Nome"
+
+msgctxt "MainWindow"
+msgid "Paste"
+msgstr "Colar"
+
+msgctxt "MainWindow"
+msgid "Size"
+msgstr "Tamanho"
+
 msgctxt "PermissionsDialog"
 msgid "Change permissions"
 msgstr "Alterar permissões"
@@ -2722,6 +2758,10 @@ msgctxt "SettingsDialog"
 msgid "s"
 msgstr "s"
 
+msgctxt "SettingsDialog"
+msgid "Local"
+msgstr "Local"
+
 msgctxt "SiteManagerDialog"
 msgid "Site Manager"
 msgstr "Gerenciador de sites"
@@ -2836,6 +2876,178 @@ msgid ""
 msgstr ""
 "Não foi possível guardar o site «%1».\n"
 "%2"
+
+msgctxt "SiteManagerDialog"
+msgid "Accept new (TOFU)"
+msgstr "Aceitar novo (TOFU)"
+
+msgctxt "SiteManagerDialog"
+msgid "Automatic (SCP with SFTP fallback)"
+msgstr "Automático (SCP com fallback para SFTP)"
+
+msgctxt "SiteManagerDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgctxt "SiteManagerDialog"
+msgid "Direct (no proxy)"
+msgstr "Direto (sem proxy)"
+
+msgctxt "SiteManagerDialog"
+msgid "Domain (workgroup):"
+msgstr "Domínio (grupo de trabalho):"
+
+msgctxt "SiteManagerDialog"
+msgid "FTPS CA bundle:"
+msgstr "Bundle CA de FTPS:"
+
+msgctxt "SiteManagerDialog"
+msgid "Host / Port:"
+msgstr "Host / Porta:"
+
+msgctxt "SiteManagerDialog"
+msgid "Integrity:"
+msgstr "Integridade:"
+
+msgctxt "SiteManagerDialog"
+msgid "Jump host / port:"
+msgstr "Host de salto / Porta:"
+
+msgctxt "SiteManagerDialog"
+msgid "Jump private key:"
+msgstr "Chave privada de salto:"
+
+msgctxt "SiteManagerDialog"
+msgid "Jump user:"
+msgstr "Usuário de salto:"
+
+msgctxt "SiteManagerDialog"
+msgid "Key passphrase:"
+msgstr "Frase secreta da chave:"
+
+msgctxt "SiteManagerDialog"
+msgid "Log in automatically using the stored credentials"
+msgstr "Iniciar sessão automaticamente com as credenciais guardadas"
+
+msgctxt "SiteManagerDialog"
+msgid "My server"
+msgstr "Meu servidor"
+
+msgctxt "SiteManagerDialog"
+msgid "No verification (double confirmation, expires in 15 min)"
+msgstr "Sem verificação (confirmação dupla, expira em 15 min)"
+
+msgctxt "SiteManagerDialog"
+msgid "Off (not recommended)"
+msgstr "Desativada (não recomendado)"
+
+msgctxt "SiteManagerDialog"
+msgid "Optional (recommended)"
+msgstr "Opcional (recomendado)"
+
+msgctxt "SiteManagerDialog"
+msgid "Password:"
+msgstr "Senha:"
+
+msgctxt "SiteManagerDialog"
+msgid "Policy:"
+msgstr "Política:"
+
+msgctxt "SiteManagerDialog"
+msgid "Private key path:"
+msgstr "Caminho chave privada:"
+
+msgctxt "SiteManagerDialog"
+msgid "Protocol:"
+msgstr "Protocolo:"
+
+msgctxt "SiteManagerDialog"
+msgid "Proxy host / port:"
+msgstr "Host do proxy / Porta:"
+
+msgctxt "SiteManagerDialog"
+msgid "Proxy password:"
+msgstr "Senha do proxy:"
+
+msgctxt "SiteManagerDialog"
+msgid "Proxy user:"
+msgstr "Usuário do proxy:"
+
+msgctxt "SiteManagerDialog"
+msgid "Proxy:"
+msgstr "Proxy:"
+
+msgctxt "SiteManagerDialog"
+msgid "Required (strict)"
+msgstr "Obrigatória (estrita)"
+
+msgctxt "SiteManagerDialog"
+msgid "SCP mode:"
+msgstr "Modo SCP:"
+
+msgctxt "SiteManagerDialog"
+msgid "SCP only (disable SFTP fallback)"
+msgstr "Somente SCP (desativar fallback para SFTP)"
+
+msgctxt "SiteManagerDialog"
+msgid "Save passwords/passphrases"
+msgstr "Salvar senhas/passphrases"
+
+msgctxt "SiteManagerDialog"
+msgid "Site name:"
+msgstr "Nome do site:"
+
+msgctxt "SiteManagerDialog"
+msgid "Strict"
+msgstr "Estrita"
+
+msgctxt "SiteManagerDialog"
+msgid "System CA bundle"
+msgstr "Bundle CA do sistema"
+
+msgctxt "SiteManagerDialog"
+msgid "Telnet CA bundle:"
+msgstr "Bundle CA de Telnet:"
+
+msgctxt "SiteManagerDialog"
+msgid "Telnet over TLS (secure telnet, port 992)"
+msgstr "Telnet sobre TLS (telnet seguro, porta 992)"
+
+msgctxt "SiteManagerDialog"
+msgid "Use SSH jump host (bastion)"
+msgstr "Usar host de salto SSH (bastion)"
+
+msgctxt "SiteManagerDialog"
+msgid "User:"
+msgstr "Usuário:"
+
+msgctxt "SiteManagerDialog"
+msgid "Verify FTPS server certificate (recommended)"
+msgstr "Verificar certificado do servidor FTPS (recomendado)"
+
+msgctxt "SiteManagerDialog"
+msgid "Verify TLS server certificate (recommended)"
+msgstr "Verificar certificado do servidor TLS (recomendado)"
+
+msgctxt "SiteManagerDialog"
+msgid "bastion.example.com"
+msgstr "bastion.exemplo.com"
+
+msgctxt "SiteManagerDialog"
+msgid "known_hosts:"
+msgstr "known_hosts:"
+
+msgctxt "SiteManagerDialog"
+msgid "optional"
+msgstr "opcional"
+
+msgctxt "SiteManagerDialog"
+msgid "proxy.example.com"
+msgstr "proxy.exemplo.com"
+
+msgctxt "SiteManagerDialog"
+msgid "user"
+msgstr "usuário"
 
 msgctxt "TransferManager"
 msgid "Conflict"
@@ -3208,6 +3420,34 @@ msgctxt "SearchDialog"
 msgid "(no results)"
 msgstr "(sem resultados)"
 
+msgctxt "SearchDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgctxt "SearchDialog"
+msgid "Close"
+msgstr "Fechar"
+
+msgctxt "SearchDialog"
+msgid ""
+"Pattern accepts wildcard (*, ?) or regex.\n"
+"Examples: *report*, report, ^report_.*\\.pdf$"
+msgstr ""
+"O padrão aceita curingas (*, ?) ou regex.\n"
+"Exemplos: *report*, report, ^report_.*\\.pdf$"
+
+msgctxt "SearchDialog"
+msgid "Search items"
+msgstr "Buscar itens"
+
+msgctxt "SearchDialog"
+msgid "Search recursively in subfolders"
+msgstr "Buscar recursivamente em subpastas"
+
+msgctxt "SearchDialog"
+msgid "e.g. *report*"
+msgstr "ex.: *report*"
+
 msgctxt "OverwriteDialog"
 msgid "Overwrite confirmation"
 msgstr "Confirmação de substituição"
@@ -3219,6 +3459,14 @@ msgstr "Substituir tudo"
 msgctxt "OverwriteDialog"
 msgid "Skip all"
 msgstr "Ignorar tudo"
+
+msgctxt "OverwriteDialog"
+msgid "Overwrite"
+msgstr "Sobrescrever"
+
+msgctxt "OverwriteDialog"
+msgid "Skip"
+msgstr "Ignorar"
 
 msgctxt "ShortcutRecorder"
 msgid "Press shortcut…"
@@ -3232,349 +3480,274 @@ msgctxt "ShortcutRecorder"
 msgid "Unsupported shortcut: {}"
 msgstr "Atalho não suportado: {}"
 
-#. Same source text as another catalog entry
-msgctxt "AboutDialog"
-msgid "Close"
-msgstr "Fechar"
+msgctxt "BrowseEdit"
+msgid "Choose…"
+msgstr "Escolher…"
 
-#. Same source text as another catalog entry
+msgctxt "ConsoleView"
+msgid "scrolled back {} lines - click to jump to the bottom"
+msgstr "recuado {} linhas; clique para voltar ao fim"
+
 msgctxt "HistoryDialog"
 msgid "Clear history"
 msgstr "Limpar histórico"
 
-#. Same source text as another catalog entry
 msgctxt "HistoryDialog"
 msgid "Close"
 msgstr "Fechar"
 
-#. Same source text as another catalog entry
 msgctxt "HistoryDialog"
 msgid "History"
 msgstr "Histórico"
 
-#. Same source text as another catalog entry
-msgctxt "HistoryDialog"
-msgid "No recent history"
-msgstr "Nenhum histórico recente"
-
-#. Same source text as another catalog entry
 msgctxt "HistoryDialog"
 msgid "Open selected"
 msgstr "Abrir seleção"
 
-#. Same source text as another catalog entry
 msgctxt "HistoryDialog"
 msgid "Recent local paths"
 msgstr "Caminhos locais recentes"
 
-#. Same source text as another catalog entry
 msgctxt "HistoryDialog"
 msgid "Recent remote paths"
 msgstr "Caminhos remotos recentes"
 
-#. Same source text as another catalog entry
 msgctxt "HistoryDialog"
 msgid "Recent servers"
 msgstr "Servidores recentes"
 
-#. Same source text as another catalog entry
-msgctxt "MainWindow"
-msgid "Change permissions"
-msgstr "Alterar permissões"
+msgctxt "HistoryTab"
+msgid "No recent history"
+msgstr "Nenhum histórico recente"
 
-#. Same source text as another catalog entry
-msgctxt "MainWindow"
-msgid "Date"
-msgstr "Data"
-
-#. Same source text as another catalog entry
-msgctxt "MainWindow"
-msgid "Name"
-msgstr "Nome"
-
-#. Same source text as another catalog entry
-msgctxt "MainWindow"
-msgid "Sites"
-msgstr "Sites"
-
-#. Same source text as another catalog entry
-msgctxt "MainWindow"
-msgid "Size"
-msgstr "Tamanho"
-
-#. Same source text as another catalog entry
-msgctxt "OverwriteDialog"
-msgid "Overwrite"
-msgstr "Sobrescrever"
-
-#. Same source text as another catalog entry
-msgctxt "OverwriteDialog"
-msgid "Skip"
-msgstr "Ignorar"
-
-#. Same source text as another catalog entry
-msgctxt "SearchDialog"
-msgid "Cancel"
-msgstr "Cancelar"
-
-#. Same source text as another catalog entry
-msgctxt "SearchDialog"
-msgid "Close"
-msgstr "Fechar"
-
-#. Same source text as another catalog entry
-msgctxt "SearchDialog"
-msgid "Pattern accepts wildcard (*, ?) or regex.\n"
-"Examples: *report*, report, ^report_.*\\.pdf$"
-msgstr "O padrão aceita curingas (*, ?) ou regex.\n"
-"Exemplos: *report*, report, ^report_.*\\.pdf$"
-
-#. Same source text as another catalog entry
-msgctxt "SearchDialog"
-msgid "Search items"
-msgstr "Buscar itens"
-
-#. Same source text as another catalog entry
-msgctxt "SearchDialog"
-msgid "Search recursively in subfolders"
-msgstr "Buscar recursivamente em subpastas"
-
-#. Same source text as another catalog entry
-msgctxt "SearchDialog"
-msgid "e.g. *report*"
-msgstr "ex.: *report*"
-
-#. Same source text as another catalog entry
-msgctxt "SettingsDialog"
-msgid "Local"
-msgstr "Local"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
+msgctxt "Labels"
 msgid "Accept new (TOFU)"
 msgstr "Aceitar novo (TOFU)"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Automatic (SCP with SFTP fallback)"
-msgstr "Automático (SCP com fallback para SFTP)"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Cancel"
-msgstr "Cancelar"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Choose…"
-msgstr "Escolher…"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
+msgctxt "Labels"
 msgid "Direct (no proxy)"
 msgstr "Direto (sem proxy)"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "FTPS CA bundle:"
-msgstr "Bundle CA de FTPS:"
+msgctxt "Labels"
+msgid "HTTP (insecure)"
+msgstr "HTTP (inseguro)"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Hide"
-msgstr "Ocultar"
+msgctxt "Labels"
+msgid "HTTPS (recommended)"
+msgstr "HTTPS (recomendado)"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Host / Port:"
-msgstr "Host / Porta:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Integrity:"
-msgstr "Integridade:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Jump host / port:"
-msgstr "Host de salto / Porta:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Jump private key:"
-msgstr "Chave privada de salto:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Jump user:"
-msgstr "Usuário de salto:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Key passphrase:"
-msgstr "Frase secreta da chave:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "My server"
-msgstr "Meu servidor"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
+msgctxt "Labels"
 msgid "No verification (double confirmation, expires in 15 min)"
 msgstr "Sem verificação (confirmação dupla, expira em 15 min)"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
+msgctxt "Labels"
 msgid "Off (not recommended)"
 msgstr "Desativada (não recomendado)"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
+msgctxt "Labels"
 msgid "Optional (recommended)"
 msgstr "Opcional (recomendado)"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Password:"
-msgstr "Senha:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Policy:"
-msgstr "Política:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Private key path:"
-msgstr "Caminho chave privada:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Protocol:"
-msgstr "Protocolo:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Proxy host / port:"
-msgstr "Host do proxy / Porta:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Proxy password:"
-msgstr "Senha do proxy:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Proxy user:"
-msgstr "Usuário do proxy:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Proxy:"
-msgstr "Proxy:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
+msgctxt "Labels"
 msgid "Required (strict)"
 msgstr "Obrigatória (estrita)"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "SCP mode:"
-msgstr "Modo SCP:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "SCP only (disable SFTP fallback)"
-msgstr "Somente SCP (desativar fallback para SFTP)"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Save passwords/passphrases"
-msgstr "Salvar senhas/passphrases"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Show"
-msgstr "Mostrar"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Site name:"
-msgstr "Nome do site:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
+msgctxt "Labels"
 msgid "Strict"
 msgstr "Estrita"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "System CA bundle"
-msgstr "Bundle CA do sistema"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Use SSH jump host (bastion)"
-msgstr "Usar host de salto SSH (bastion)"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "User:"
-msgstr "Usuário:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "Verify FTPS server certificate (recommended)"
-msgstr "Verificar certificado do servidor FTPS (recomendado)"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "bastion.example.com"
-msgstr "bastion.exemplo.com"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
+msgctxt "Labels"
 msgid "ftp.example.com"
 msgstr "ftp.example.com"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
+msgctxt "Labels"
 msgid "ftps.example.com"
 msgstr "ftps.example.com"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "known_hosts:"
-msgstr "known_hosts:"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "optional"
-msgstr "opcional"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "proxy.example.com"
-msgstr "proxy.exemplo.com"
-
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
+msgctxt "Labels"
 msgid "scp.example.com"
 msgstr "scp.example.com"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
+msgctxt "Labels"
 msgid "sftp.example.com"
 msgstr "sftp.exemplo.com"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
-msgid "user"
-msgstr "usuário"
+msgctxt "Labels"
+msgid "smb.example.com"
+msgstr "smb.example.com"
 
-#. Same source text as another catalog entry
-msgctxt "SiteManagerDialog"
+msgctxt "Labels"
+msgid "telnet.example.com"
+msgstr "telnet.example.com"
+
+msgctxt "Labels"
 msgid "webdav.example.com"
 msgstr "webdav.example.com"
+
+msgctxt "MainMenuBar"
+msgid "About FreeSCP"
+msgstr "Sobre o FreeSCP"
+
+msgctxt "MainMenuBar"
+msgid "Connect"
+msgstr "Conectar"
+
+msgctxt "MainMenuBar"
+msgid "Disconnect"
+msgstr "Desconectar"
+
+msgctxt "MainMenuBar"
+msgid "File"
+msgstr "Arquivo"
+
+msgctxt "MainMenuBar"
+msgid "FreeSCP"
+msgstr "FreeSCP"
+
+msgctxt "MainMenuBar"
+msgid "Help"
+msgstr "Ajuda"
+
+msgctxt "MainMenuBar"
+msgid "History"
+msgstr "Histórico"
+
+msgctxt "MainMenuBar"
+msgid "Open left folder"
+msgstr "Abrir pasta esquerda"
+
+msgctxt "MainMenuBar"
+msgid "Open right folder"
+msgstr "Abrir pasta direita"
+
+msgctxt "MainMenuBar"
+msgid "Quit"
+msgstr "Sair"
+
+msgctxt "MainMenuBar"
+msgid "Report a bug"
+msgstr "Informar um erro"
+
+msgctxt "MainMenuBar"
+msgid "Saved sites"
+msgstr "Sites salvos"
+
+msgctxt "MainMenuBar"
+msgid "Settings…"
+msgstr "Configurações…"
+
+msgctxt "MainMenuBar"
+msgid "Transfers"
+msgstr "Transferências"
+
+msgctxt "MainToolbar"
+msgid "About FreeSCP"
+msgstr "Sobre o FreeSCP"
+
+msgctxt "MainToolbar"
+msgid "Connect"
+msgstr "Conectar"
+
+msgctxt "MainToolbar"
+msgid "Connect to a server"
+msgstr "Ligar a um servidor"
+
+msgctxt "MainToolbar"
+msgid "Connection history"
+msgstr "Histórico de ligações"
+
+msgctxt "MainToolbar"
+msgid "Copy F5"
+msgstr "Copiar F5"
+
+msgctxt "MainToolbar"
+msgid "Copy to the other panel (F5)"
+msgstr "Copiar para o outro painel (F5)"
+
+msgctxt "MainToolbar"
+msgid "Disconnect"
+msgstr "Desconectar"
+
+msgctxt "MainToolbar"
+msgid "Disconnect from the server"
+msgstr "Desligar do servidor"
+
+msgctxt "MainToolbar"
+msgid "Download"
+msgstr "Download"
+
+msgctxt "MainToolbar"
+msgid "Download (F7)"
+msgstr "Transferir (F7)"
+
+msgctxt "MainToolbar"
+msgid "History"
+msgstr "Histórico"
+
+msgctxt "MainToolbar"
+msgid "Move F6"
+msgstr "Mover F6"
+
+msgctxt "MainToolbar"
+msgid "Move to the other panel (F6)"
+msgstr "Mover para o outro painel (F6)"
+
+msgctxt "MainToolbar"
+msgid "Open in terminal"
+msgstr "Abrir no terminal"
+
+msgctxt "MainToolbar"
+msgid "Saved sites"
+msgstr "Sites salvos"
+
+msgctxt "MainToolbar"
+msgid "Settings"
+msgstr "Configurações"
+
+msgctxt "MainToolbar"
+msgid "Sites"
+msgstr "Sites"
+
+msgctxt "MainToolbar"
+msgid "Transfer queue (F12)"
+msgstr "Fila de transferências (F12)"
+
+msgctxt "MainToolbar"
+msgid "Transfers"
+msgstr "Transferências"
+
+msgctxt "MainToolbar"
+msgid "Upload"
+msgstr "Upload"
+
+msgctxt "MainToolbar"
+msgid "Upload (F8)"
+msgstr "Enviar (F8)"
+
+msgctxt "PasswordEdit"
+msgid "Hide"
+msgstr "Ocultar"
+
+msgctxt "PasswordEdit"
+msgid "Show"
+msgstr "Mostrar"
+
+msgctxt "SessionPickerDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgctxt "SessionPickerDialog"
+msgid ""
+"Copy the selected items into another session tab (staged through a local "
+"temporary file)."
+msgstr ""
+"Copia os itens selecionados para outra aba de sessão (usando um arquivo "
+"temporário local)."
+
+msgctxt "SessionPickerDialog"
+msgid "Copy to session"
+msgstr "Copiar para sessão"
+
+msgctxt "SessionTabBar"
+msgid "New tab"
+msgstr "Nova aba"

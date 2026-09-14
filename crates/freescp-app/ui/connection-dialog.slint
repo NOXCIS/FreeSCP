@@ -1,5 +1,8 @@
-// Connection dialog plus the session-security sub-dialogs (host-key TOFU,
-// keyboard-interactive prompt, "no verification" risk confirmation, alerts).
+// Connection dialog (session fields + advanced options).
+//
+// The session-security sub-dialogs (host-key TOFU, keyboard-interactive
+// prompt, "no verification" risk confirmation, alerts) live in
+// security-dialogs.slint and are re-exported below.
 //
 // Slint port of ui/ConnectionDialog.cpp and the dialog parts of
 // ui/MainWindowConnection.cpp (TOFU box, keyboard-interactive QInputDialog,
@@ -8,7 +11,7 @@
 // Rust counterpart: crates/freescp-app/src/connect.rs.
 //
 // Property contract (connect.rs reads/writes every `in-out` property):
-// - protocol:         0 SFTP, 1 SCP, 2 FTP, 3 FTPS, 4 WebDAV
+// - protocol:         0 SFTP, 1 SCP, 2 FTP, 3 FTPS, 4 WebDAV, 5 SMB, 6 Telnet
 // - auth-mode:        0 password, 1 key (SSH protocols only)
 // - proxy-type:       0 None, 1 SOCKS5, 2 HTTP CONNECT
 // - known-hosts-policy: 0 Strict, 1 Accept new (TOFU), 2 Off
@@ -20,6 +23,12 @@
 // webdav-https because ComboBox current-index is an int).
 
 import { Button, CheckBox, ComboBox, LineEdit, ProgressIndicator, ScrollView, SpinBox } from "std-widgets.slint";
+import { BrowseEdit, PasswordEdit } from "widgets.slint";
+
+// HostKeyDialog, KbdIntPromptDialog, ConfirmTextDialog and AlertDialog live in
+// security-dialogs.slint and are re-exported so connect.rs / transfer.rs keep
+// using crate::ui::connection_dialog::*.
+export * from "security-dialogs.slint";
 
 export component ConnectionDialog inherits Window {
     title: "Connect";
@@ -59,6 +68,12 @@ export component ConnectionDialog inherits Window {
     in-out property <bool> webdav-https: true;
     in-out property <bool> webdav-verify-peer: true;
     in-out property <string> webdav-ca-path: "";
+    in-out property <string> smb-domain: "";
+    // Telnet console settings (TLS + auto-login).
+    in-out property <bool> telnet-tls: false;
+    in-out property <bool> telnet-verify-peer: true;
+    in-out property <string> telnet-ca-path: "";
+    in-out property <bool> telnet-auto-login: true;
 
     // ---- UI state (not part of the session mapping) ------------------------
     in-out property <bool> connecting: false;
@@ -75,6 +90,9 @@ export component ConnectionDialog inherits Window {
     callback cancel-requested();
     callback protocol-changed();
     callback webdav-scheme-changed();
+    // The telnet port follows 23 <-> 992 while it still holds the previous
+    // default (mirrors `webdav-scheme-changed`).
+    callback telnet-tls-changed();
     callback proxy-type-changed();
     callback jump-enabled-changed();
     callback browse-path-requested(string);
@@ -83,6 +101,7 @@ export component ConnectionDialog inherits Window {
     changed protocol => { root.protocol-changed(); }
     changed proxy-type => { root.proxy-type-changed(); }
     changed jump-enabled => { root.jump-enabled-changed(); }
+    changed telnet-tls => { root.telnet-tls-changed(); }
 
     // Saving credentials only makes sense together with saving the site
     // (C++ ConnectionDialog.cpp: saveCredentials_ is disabled — and cleared —
@@ -134,7 +153,7 @@ export component ConnectionDialog inherits Window {
                     }
                     Text { text: "Protocol:"; vertical-alignment: center; }
                     ComboBox {
-                        model: ["SFTP", "SCP", "FTP", "FTPS", "WebDAV"];
+                        model: ["SFTP", "SCP", "FTP", "FTPS", "WebDAV", "SMB", "Telnet"];
                         current-index <=> root.protocol;
                         width: 340px;
                     }
@@ -147,7 +166,9 @@ export component ConnectionDialog inherits Window {
                                 : root.protocol == 1 ? "scp.example.com"
                                 : root.protocol == 2 ? "ftp.example.com"
                                 : root.protocol == 3 ? "ftps.example.com"
-                                : "webdav.example.com";
+                                : root.protocol == 4 ? "webdav.example.com"
+                                : root.protocol == 5 ? "smb.example.com"
+                                : "telnet.example.com";
                             horizontal-stretch: 1;
                             width: 240px;
                         }
@@ -172,51 +193,26 @@ export component ConnectionDialog inherits Window {
                         visible: root.protocol <= 1;
                     }
                     Text { text: "Password:"; vertical-alignment: center; visible: root.protocol >= 2 || root.auth-mode == 0; }
-                    HorizontalLayout {
-                        spacing: 6px;
+                    PasswordEdit {
+                        text <=> root.password;
+                        show <=> root.show-password;
                         visible: root.protocol >= 2 || root.auth-mode == 0;
-                        LineEdit {
-                            text <=> root.password;
-                            placeholder-text: "optional";
-                            input-type: root.show-password ? InputType.text : InputType.password;
-                            horizontal-stretch: 1;
-                            width: 300px;
-                        }
-                        Button {
-                            text: root.show-password ? "Hide" : "Show";
-                            clicked => { root.show-password = !root.show-password; }
-                        }
+                        horizontal-stretch: 1;
                     }
                     Text { text: "Private key path:"; vertical-alignment: center; visible: root.protocol <= 1 && root.auth-mode == 1; }
-                    HorizontalLayout {
-                        spacing: 6px;
+                    BrowseEdit {
+                        text <=> root.private-key-path;
+                        placeholder: "~/.ssh/id_ed25519";
                         visible: root.protocol <= 1 && root.auth-mode == 1;
-                        LineEdit {
-                            text <=> root.private-key-path;
-                            placeholder-text: "~/.ssh/id_ed25519";
-                            horizontal-stretch: 1;
-                            width: 270px;
-                        }
-                        Button {
-                            text: "Choose…";
-                            clicked => { root.browse-path-requested("private-key"); }
-                        }
+                        horizontal-stretch: 1;
+                        browse-requested => { root.browse-path-requested("private-key"); }
                     }
                     Text { text: "Key passphrase:"; vertical-alignment: center; visible: root.protocol <= 1 && root.auth-mode == 1; }
-                    HorizontalLayout {
-                        spacing: 6px;
+                    PasswordEdit {
+                        text <=> root.private-key-passphrase;
+                        show <=> root.show-key-passphrase;
                         visible: root.protocol <= 1 && root.auth-mode == 1;
-                        LineEdit {
-                            text <=> root.private-key-passphrase;
-                            placeholder-text: "optional";
-                            input-type: root.show-key-passphrase ? InputType.text : InputType.password;
-                            horizontal-stretch: 1;
-                            width: 300px;
-                        }
-                        Button {
-                            text: root.show-key-passphrase ? "Hide" : "Show";
-                            clicked => { root.show-key-passphrase = !root.show-key-passphrase; }
-                        }
+                        horizontal-stretch: 1;
                     }
                     Text { text: "SCP mode:"; vertical-alignment: center; visible: root.protocol == 1; }
                     ComboBox {
@@ -268,20 +264,11 @@ export component ConnectionDialog inherits Window {
                         visible: root.proxy-type != 0;
                     }
                     Text { text: "Proxy password:"; vertical-alignment: center; visible: root.proxy-type != 0; }
-                    HorizontalLayout {
-                        spacing: 6px;
+                    PasswordEdit {
+                        text <=> root.proxy-password;
+                        show <=> root.show-proxy-password;
                         visible: root.proxy-type != 0;
-                        LineEdit {
-                            text <=> root.proxy-password;
-                            placeholder-text: "optional";
-                            input-type: root.show-proxy-password ? InputType.text : InputType.password;
-                            horizontal-stretch: 1;
-                            width: 300px;
-                        }
-                        Button {
-                            text: root.show-proxy-password ? "Hide" : "Show";
-                            clicked => { root.show-proxy-password = !root.show-proxy-password; }
-                        }
+                        horizontal-stretch: 1;
                     }
                     Text { text: ""; visible: root.protocol <= 1; }
                     CheckBox {
@@ -314,34 +301,20 @@ export component ConnectionDialog inherits Window {
                         visible: root.protocol <= 1 && root.jump-enabled;
                     }
                     Text { text: "Jump private key:"; vertical-alignment: center; visible: root.protocol <= 1 && root.jump-enabled; }
-                    HorizontalLayout {
-                        spacing: 6px;
+                    BrowseEdit {
+                        text <=> root.jump-key-path;
+                        placeholder: "optional";
                         visible: root.protocol <= 1 && root.jump-enabled;
-                        LineEdit {
-                            text <=> root.jump-key-path;
-                            placeholder-text: "optional";
-                            horizontal-stretch: 1;
-                            width: 270px;
-                        }
-                        Button {
-                            text: "Choose…";
-                            clicked => { root.browse-path-requested("jump-key"); }
-                        }
+                        horizontal-stretch: 1;
+                        browse-requested => { root.browse-path-requested("jump-key"); }
                     }
                     Text { text: "known_hosts:"; vertical-alignment: center; visible: root.protocol <= 1; }
-                    HorizontalLayout {
-                        spacing: 6px;
+                    BrowseEdit {
+                        text <=> root.known-hosts-path;
+                        placeholder: "~/.ssh/known_hosts";
                         visible: root.protocol <= 1;
-                        LineEdit {
-                            text <=> root.known-hosts-path;
-                            placeholder-text: "~/.ssh/known_hosts";
-                            horizontal-stretch: 1;
-                            width: 270px;
-                        }
-                        Button {
-                            text: "Choose…";
-                            clicked => { root.browse-path-requested("known-hosts"); }
-                        }
+                        horizontal-stretch: 1;
+                        browse-requested => { root.browse-path-requested("known-hosts"); }
                     }
                     Text { text: "Policy:"; vertical-alignment: center; visible: root.protocol <= 1; }
                     ComboBox {
@@ -364,19 +337,12 @@ export component ConnectionDialog inherits Window {
                         visible: root.protocol == 3;
                     }
                     Text { text: "FTPS CA bundle:"; vertical-alignment: center; visible: root.protocol == 3; }
-                    HorizontalLayout {
-                        spacing: 6px;
+                    BrowseEdit {
+                        text <=> root.ftps-ca-path;
+                        placeholder: "System CA bundle";
                         visible: root.protocol == 3;
-                        LineEdit {
-                            text <=> root.ftps-ca-path;
-                            placeholder-text: "System CA bundle";
-                            horizontal-stretch: 1;
-                            width: 270px;
-                        }
-                        Button {
-                            text: "Choose…";
-                            clicked => { root.browse-path-requested("ftps-ca"); }
-                        }
+                        horizontal-stretch: 1;
+                        browse-requested => { root.browse-path-requested("ftps-ca"); }
                     }
                     Text { text: "WebDAV scheme:"; vertical-alignment: center; visible: root.protocol == 4; }
                     ComboBox {
@@ -392,19 +358,45 @@ export component ConnectionDialog inherits Window {
                         visible: root.protocol == 4 && root.webdav-https;
                     }
                     Text { text: "WebDAV CA bundle:"; vertical-alignment: center; visible: root.protocol == 4 && root.webdav-https; }
-                    HorizontalLayout {
-                        spacing: 6px;
+                    BrowseEdit {
+                        text <=> root.webdav-ca-path;
+                        placeholder: "System CA bundle";
                         visible: root.protocol == 4 && root.webdav-https;
-                        LineEdit {
-                            text <=> root.webdav-ca-path;
-                            placeholder-text: "System CA bundle";
-                            horizontal-stretch: 1;
-                            width: 270px;
-                        }
-                        Button {
-                            text: "Choose…";
-                            clicked => { root.browse-path-requested("webdav-ca"); }
-                        }
+                        horizontal-stretch: 1;
+                        browse-requested => { root.browse-path-requested("webdav-ca"); }
+                    }
+                    Text { text: "Domain (workgroup):"; vertical-alignment: center; visible: root.protocol == 5; }
+                    LineEdit {
+                        text <=> root.smb-domain;
+                        placeholder-text: "optional";
+                        width: 340px;
+                        visible: root.protocol == 5;
+                    }
+                    Text { text: ""; visible: root.protocol == 6; }
+                    CheckBox {
+                        text: "Telnet over TLS (secure telnet, port 992)";
+                        checked <=> root.telnet-tls;
+                        visible: root.protocol == 6;
+                    }
+                    Text { text: ""; visible: root.protocol == 6 && root.telnet-tls; }
+                    CheckBox {
+                        text: "Verify TLS server certificate (recommended)";
+                        checked <=> root.telnet-verify-peer;
+                        visible: root.protocol == 6 && root.telnet-tls;
+                    }
+                    Text { text: "Telnet CA bundle:"; vertical-alignment: center; visible: root.protocol == 6 && root.telnet-tls; }
+                    BrowseEdit {
+                        text <=> root.telnet-ca-path;
+                        placeholder: "System CA bundle";
+                        visible: root.protocol == 6 && root.telnet-tls;
+                        horizontal-stretch: 1;
+                        browse-requested => { root.browse-path-requested("telnet-ca"); }
+                    }
+                    Text { text: ""; visible: root.protocol == 6; }
+                    CheckBox {
+                        text: "Log in automatically using the stored credentials";
+                        checked <=> root.telnet-auto-login;
+                        visible: root.protocol == 6;
                     }
                 }
             }
@@ -444,175 +436,4 @@ export component ConnectionDialog inherits Window {
     }
 }
 
-// Host-key TOFU confirmation. Shown by connect.rs from the (blocking)
-// host-key callback running on a tokio worker thread; the button handlers
-// resolve an mpsc channel that the callback is blocked on, mirroring the
-// C++ condition-variable wait in MainWindow::confirmHostKeyUI.
-export component HostKeyDialog inherits Window {
-    title: "Confirm SSH fingerprint";
-    width: 520px;
-    height: 300px;
-
-    in-out property <string> host: "";
-    in-out property <string> algorithm: "";
-    in-out property <string> fingerprint: "";
-    in-out property <bool> can-save: false;
-
-    callback accept-save();
-    callback accept-once();
-    callback reject();
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 8px;
-
-        Text { text: "Connect to " + root.host; font-weight: 600; wrap: word-wrap; }
-        Text { text: "Algorithm: " + root.algorithm; wrap: word-wrap; }
-        Text { text: "Fingerprint: " + root.fingerprint; wrap: word-wrap; font-family: "monospace"; }
-        Text {
-            text: root.can-save
-                ? "Trust and save to known_hosts?"
-                : "Fingerprint cannot be saved. Connection allowed only this time.";
-            wrap: word-wrap;
-        }
-        Rectangle { } // spacer
-        HorizontalLayout {
-            spacing: 8px;
-            Rectangle { } // spacer: right-align the buttons
-            if root.can-save : Button {
-                text: "Accept and Save";
-                primary: true;
-                clicked => { root.accept-save(); }
-            }
-            if !root.can-save : Button {
-                text: "Accept once";
-                primary: true;
-                clicked => { root.accept-once(); }
-            }
-            Button {
-                text: "Cancel";
-                clicked => { root.reject(); }
-            }
-        }
-    }
-}
-
-// Single-field password prompt for keyboard-interactive auth (OTP/2FA,
-// password re-query, generic info). Port of the QInputDialog uses in
-// MainWindowConnection.cpp's keyboard_interactive_cb.
-export component KbdIntPromptDialog inherits Window {
-    in-out property <string> title-text: "Password required";
-    in-out property <string> name: "";
-    in-out property <string> instruction: "";
-    in-out property <string> prompt: "";
-    in-out property <string> answer: "";
-    // Generic keyboard-interactive prompts use normal echo; only password /
-    // passphrase / OTP prompts are masked (MainWindowConnection.cpp).
-    in property <bool> mask-input: true;
-
-    callback accepted();
-    callback rejected();
-
-    title: root.title-text;
-    width: 500px;
-    height: 300px;
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 8px;
-
-        Text { text: root.name; font-weight: 600; wrap: word-wrap; visible: root.name != ""; }
-        Text { text: root.instruction; wrap: word-wrap; visible: root.instruction != ""; }
-        Text { text: root.prompt; wrap: word-wrap; }
-        LineEdit { text <=> root.answer; input-type: root.mask-input ? InputType.password : InputType.text; }
-        Rectangle { } // spacer
-        HorizontalLayout {
-            spacing: 8px;
-            Rectangle { } // spacer: right-align the buttons
-            Button { text: "OK"; primary: true; clicked => { root.accepted(); } }
-            Button { text: "Cancel"; clicked => { root.rejected(); } }
-        }
-    }
-}
-
-// "No verification" policy double confirmation: the user must type the token
-// exactly (C++ used a warning box + a QInputDialog; combined into one dialog
-// with an inline token field).
-export component ConfirmTextDialog inherits Window {
-    in-out property <string> title-text: "Critical security risk";
-    in-out property <string> message: "";
-    in-out property <string> confirm-token: "UNSAFE";
-    in-out property <string> entered-text: "";
-
-    callback confirmed();
-    callback rejected();
-
-    title: root.title-text;
-    width: 520px;
-    height: 340px;
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 8px;
-
-        Text { text: root.message; wrap: word-wrap; }
-        LineEdit {
-            text <=> root.entered-text;
-            placeholder-text: "Type " + root.confirm-token;
-        }
-        Rectangle { } // spacer
-        HorizontalLayout {
-            spacing: 8px;
-            Rectangle { } // spacer: right-align the buttons
-            Button {
-                text: "Continue";
-                primary: true;
-                enabled: root.entered-text == root.confirm-token;
-                clicked => { root.confirmed(); }
-            }
-            Button { text: "Cancel"; clicked => { root.rejected(); } }
-        }
-    }
-}
-
-// Minimal modal-ish alert box (port of UiAlerts::critical/warning/information
-// usage in the connect path).
-export component AlertDialog inherits Window {
-    in-out property <string> title-text: "FreeSCP";
-    in-out property <string> message: "";
-    // In confirm mode the dialog shows Yes/No labels and fires `cancel` for
-    // the secondary button (used by blocking confirmations posted to the
-    // event loop, mirroring QMessageBox::question).
-    in property <bool> confirm-mode: false;
-    in property <string> yes-text: "Yes";
-    in property <string> no-text: "No";
-
-    callback ok();
-    callback cancel();
-
-    title: root.title-text;
-    width: 440px;
-    height: 220px;
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 8px;
-
-        Text { text: root.message; wrap: word-wrap; }
-        Rectangle { } // spacer
-        HorizontalLayout {
-            spacing: 8px;
-            Rectangle { } // spacer: right-align the buttons
-            Button {
-                text: root.confirm-mode ? root.yes-text : "OK";
-                primary: true;
-                clicked => { root.ok(); }
-            }
-            Button {
-                text: root.no-text;
-                visible: root.confirm-mode;
-                clicked => { root.cancel(); }
-            }
-        }
-    }
-}
+// Host-key TOFU confirmation moved to security-dialogs.slint.

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/freescp-core", "crates/freescp-app"]
+members = ["crates/freescp-core", "crates/freescp-app", "crates/freescp-cli"]
 
 [workspace.package]
 version = "0.9.0"
@@ -22,6 +22,7 @@ chrono = { version = "0.4", features = ["serde"] }
 russh = "0.63"
 russh-sftp = "3"
 suppaftp = { version = "6", features = ["rustls", "deprecated"] }
+smb2 = "0.21"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "socks", "gzip"] }
 futures-util = "0.3"
 quick-xml = "0.37"
@@ -41,3 +42,12 @@ slint-build = "1.17"
 rfd = "0.15"
 sys-locale = "0.3"
 arboard = "3"
+rustls = { version = "0.23", features = ["ring"] }
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+clap = { version = "4", features = ["derive", "wrap_help"] }
+clap_complete = "4"
+dialoguer = "0.12"
+indicatif = "0.18"
+rustyline = "18"
+crossterm = "0.29"

@@ -10,9 +10,9 @@
 //! (`protocol=sftp&host=...&port=22&user=...`), percent-encoded.
 
 use freescp_core::{
-    default_port_for_protocol, protocol_display_name, protocol_from_storage_name,
-    protocol_storage_name, webdav_scheme_from_storage_name, webdav_scheme_storage_name, Protocol,
-    SessionOptions, WebDavScheme,
+    default_port_for_protocol, default_port_for_telnet, protocol_display_name,
+    protocol_from_storage_name, protocol_storage_name, webdav_scheme_from_storage_name,
+    webdav_scheme_storage_name, Protocol, SessionOptions, WebDavScheme,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
@@ -235,6 +235,21 @@ fn encode_recent_server(opt: &SessionOptions) -> String {
             percent_encode(webdav_scheme_storage_name(opt.webdav_scheme))
         ));
     }
+    if opt.protocol == Protocol::Smb {
+        if let Some(domain) = opt.smb_domain.as_deref().map(str::trim) {
+            if !domain.is_empty() {
+                pairs.push(format!("smbDomain={}", percent_encode(domain)));
+            }
+        }
+    }
+    if opt.protocol == Protocol::Telnet {
+        if opt.telnet_tls {
+            pairs.push("telnetTls=1".to_string());
+        }
+        if !opt.telnet_auto_login {
+            pairs.push("telnetAutoLogin=0".to_string());
+        }
+    }
     pairs.join("&")
 }
 
@@ -246,6 +261,9 @@ fn decode_recent_server(encoded: &str) -> Option<(SessionOptions, String)> {
     let mut port_raw: Option<u16> = None;
     let mut user = String::new();
     let mut webdav_scheme_storage = String::new();
+    let mut smb_domain = String::new();
+    let mut telnet_tls = false;
+    let mut telnet_auto_login = true;
 
     for pair in encoded.split('&') {
         let (raw_key, raw_value) = pair.split_once('=')?;
@@ -259,6 +277,9 @@ fn decode_recent_server(encoded: &str) -> Option<(SessionOptions, String)> {
             }
             "user" => user = value,
             "webdavScheme" => webdav_scheme_storage = value,
+            "smbDomain" => smb_domain = value,
+            "telnetTls" => telnet_tls = value.trim() == "1",
+            "telnetAutoLogin" => telnet_auto_login = value.trim() != "0",
             _ => {}
         }
     }
@@ -270,6 +291,7 @@ fn decode_recent_server(encoded: &str) -> Option<(SessionOptions, String)> {
     let protocol = protocol_from_storage_name(&protocol_storage);
     let port = match port_raw {
         Some(p) if p > 0 => p,
+        _ if protocol == Protocol::Telnet => default_port_for_telnet(telnet_tls),
         _ => default_port_for_protocol(protocol),
     };
     let username = user.trim().to_string();
@@ -289,6 +311,16 @@ fn decode_recent_server(encoded: &str) -> Option<(SessionOptions, String)> {
     } else {
         (true, None)
     };
+    let smb_domain_opt = if protocol == Protocol::Smb && !smb_domain.trim().is_empty() {
+        Some(smb_domain.trim().to_string())
+    } else {
+        None
+    };
+    let (telnet_tls_opt, telnet_auto_opt) = if protocol == Protocol::Telnet {
+        (telnet_tls, telnet_auto_login)
+    } else {
+        (false, true)
+    };
     let opt = SessionOptions {
         protocol,
         host: host.clone(),
@@ -297,6 +329,9 @@ fn decode_recent_server(encoded: &str) -> Option<(SessionOptions, String)> {
         webdav_scheme,
         webdav_verify_peer,
         webdav_ca_cert_path,
+        smb_domain: smb_domain_opt,
+        telnet_tls: telnet_tls_opt,
+        telnet_auto_login: telnet_auto_opt,
         ..SessionOptions::default()
     };
 
@@ -420,6 +455,83 @@ mod tests {
         assert!(!decoded.webdav_verify_peer);
         assert!(decoded.webdav_ca_cert_path.is_none());
         assert_eq!(label, "WEBDAV  dav.example.com:80");
+    }
+
+    #[test]
+    fn server_entry_smb_domain_roundtrip() {
+        let opt = SessionOptions {
+            protocol: Protocol::Smb,
+            host: "nas.example.com".to_string(),
+            port: 445,
+            smb_domain: Some("WORKGROUP & Friends".to_string()),
+            username: "alice".to_string(),
+            ..SessionOptions::default()
+        };
+        let encoded = encode_recent_server(&opt);
+        let (decoded, label) = decode_recent_server(&encoded).unwrap();
+        assert_eq!(decoded.protocol, Protocol::Smb);
+        assert_eq!(decoded.smb_domain.as_deref(), Some("WORKGROUP & Friends"));
+        assert_eq!(label, "SMB  alice@nas.example.com");
+        // No domain: nothing is encoded and the decode leaves it None.
+        let bare = SessionOptions {
+            protocol: Protocol::Smb,
+            host: "nas.example.com".to_string(),
+            ..SessionOptions::default()
+        };
+        let encoded = encode_recent_server(&bare);
+        assert!(!encoded.contains("smbDomain"));
+        assert_eq!(decode_recent_server(&encoded).unwrap().0.smb_domain, None);
+        // Empty/whitespace domain is not encoded either.
+        let blank = SessionOptions {
+            protocol: Protocol::Smb,
+            host: "nas.example.com".to_string(),
+            smb_domain: Some("   ".to_string()),
+            ..SessionOptions::default()
+        };
+        assert!(!encode_recent_server(&blank).contains("smbDomain"));
+    }
+
+    #[test]
+    fn server_entry_telnet_roundtrip() {
+        let opt = SessionOptions {
+            protocol: Protocol::Telnet,
+            host: "bbs.example.com".to_string(),
+            port: 992,
+            telnet_tls: true,
+            telnet_verify_peer: false,
+            telnet_auto_login: false,
+            username: "alice".to_string(),
+            ..SessionOptions::default()
+        };
+        let encoded = encode_recent_server(&opt);
+        assert!(encoded.contains("telnetTls=1"));
+        assert!(encoded.contains("telnetAutoLogin=0"));
+        let (decoded, label) = decode_recent_server(&encoded).unwrap();
+        assert_eq!(decoded.protocol, Protocol::Telnet);
+        assert!(decoded.telnet_tls);
+        assert!(!decoded.telnet_auto_login);
+        assert_eq!(decoded.port, 992);
+        assert_eq!(label, "TELNET  alice@bbs.example.com:992");
+        // Defaults: plain telnet on 23 with auto-login on, nothing encoded.
+        let bare = SessionOptions {
+            protocol: Protocol::Telnet,
+            host: "bbs.example.com".to_string(),
+            port: 23,
+            ..SessionOptions::default()
+        };
+        let encoded = encode_recent_server(&bare);
+        assert!(!encoded.contains("telnetTls"));
+        assert!(!encoded.contains("telnetAutoLogin"));
+        let (decoded, _) = decode_recent_server(&encoded).unwrap();
+        assert!(!decoded.telnet_tls);
+        assert!(decoded.telnet_auto_login);
+        assert_eq!(decoded.port, 23);
+        // A TLS entry without an explicit port decodes to 992.
+        let (decoded, label) =
+            decode_recent_server("protocol=telnet&host=bbs.example.com&port=0&telnetTls=1")
+                .unwrap();
+        assert_eq!(decoded.port, 992);
+        assert_eq!(label, "TELNET  bbs.example.com:992");
     }
 
     #[test]

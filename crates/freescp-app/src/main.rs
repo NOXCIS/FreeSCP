@@ -23,6 +23,7 @@
 //!   `PERMISSION_FLOWS` poll for confirmed chmod dialogs.
 
 mod connect;
+mod console;
 mod history;
 mod local_fs;
 mod remote;
@@ -697,32 +698,35 @@ pub(crate) fn reload_right_local(
     reset_pane_selection(ui, 1);
     ui.set_status_text(format!("Right: {display}").into());
     let mut st = state.borrow_mut();
-    st.right_local_path = Some(display.clone());
+    if let Some(tab) = st.active_tab_mut() {
+        tab.right_is_local = true;
+        tab.right_local_root = Some(display.clone());
+    }
     st.push_recent_local_path(display.clone());
     drop(st);
     watch_local_dir(1, &display, state);
 }
 
-/// Reloads the remote pane. The client is taken out of `AppState` and the
-/// SFTP work runs on the tokio runtime (russh-sftp requires a reactor for
-/// timeouts); results are awaited back on the UI thread via `spawn_local`.
-/// Also refreshes the writeability cache for the current directory (port of
-/// the C++ background probe).
+/// Reloads the remote pane of the active tab. The client is borrowed from the
+/// active tab's session record (`take_session_client`) and the SFTP work runs
+/// on the tokio runtime (russh-sftp requires a reactor for timeouts); results
+/// are awaited back on the UI thread via `spawn_local`. Also refreshes the
+/// writeability cache for the current directory (port of the C++ background
+/// probe).
 fn request_remote_reload(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
-    if state.borrow().client.is_none() {
+    let Some(session_id) = state.borrow().active_session_id() else {
         ui.set_status_text("Not connected".into());
         return;
-    }
+    };
     let path = ui.get_right_path().to_string();
     let show_hidden = state.borrow().prefs.show_hidden;
     let sort_column = ui.get_right_sort_column();
     let sort_ascending = ui.get_right_sort_ascending();
-    let client = {
-        let mut st = state.borrow_mut();
-        st.client.take()
-    };
+    let client = state.borrow_mut().take_session_client(session_id);
     let Some(mut client) = client else {
-        tracing::warn!("remote refresh dropped: no active client for {path}");
+        // The session is gone or another operation already holds the client;
+        // that operation refreshes the pane when it finishes.
+        tracing::debug!(session_id, "remote refresh skipped: session busy");
         return;
     };
     let handle = state.borrow().runtime_handle();
@@ -765,20 +769,28 @@ fn request_remote_reload(ui: &crate::ui::main_window::MainWindow, state: &Rc<Ref
                 return;
             }
         };
-        {
+        // Return the client first so the session is usable again even when
+        // the pane write below has to be deferred to a later tab activation.
+        let still_active = {
             let mut st = state.borrow_mut();
-            if st.client.is_none() {
-                st.client = Some(client);
-            }
             if let Some(writable) = writable {
                 st.writeability.store(&path, writable);
             }
-        }
+            let still_active = st.active_session_id() == Some(session_id);
+            st.return_session_client(session_id, client);
+            still_active
+        };
         let Some(ui) = ui_weak.upgrade() else {
             return;
         };
         if let Some(message) = status_err {
             ui.set_status_text(message.into());
+        }
+        if !still_active {
+            // A background session finished while another tab is active: the
+            // owning tab reloads on its next activation.
+            mark_tab_remote_dirty(&state, session_id);
+            return;
         }
         ui.set_right_entries(Rc::new(VecModel::from(entries)).into());
         reset_pane_selection(&ui, 1);
@@ -1059,7 +1071,11 @@ fn open_search_dialog(
     };
     let title = if pane == 0 {
         "Search items (Local panel)"
-    } else if state.borrow().client.is_some() {
+    } else if state
+        .borrow()
+        .active_tab()
+        .is_some_and(|tab| tab.is_connected())
+    {
         "Search items (Remote panel)"
     } else {
         "Search items (Local panel - right)"
@@ -1101,7 +1117,11 @@ fn open_search_dialog(
             };
             let panel_label = if pane == 0 {
                 "Local panel"
-            } else if state.borrow().client.is_some() {
+            } else if state
+                .borrow()
+                .active_tab()
+                .is_some_and(|tab| tab.is_connected())
+            {
                 "Remote panel"
             } else {
                 "Local panel (right)"
@@ -1192,7 +1212,7 @@ fn open_search_dialog(
                     post_search_results(dlg_weak, summary_base, panel_label, status_tx, outcome);
                 });
             } else {
-                let session = state.borrow().session.clone();
+                let session = state.borrow().active_session_options();
                 let summary_base = base.clone();
                 handle.spawn(async move {
                     let outcome = match session {
@@ -1240,7 +1260,10 @@ fn open_search_dialog(
 // `remote::change_permissions[_recursive]`. The stored flag records whether
 // the target is a directory: C++ only recurses when `st.is_dir`.
 thread_local! {
-    static PERMISSION_FLOWS: RefCell<Vec<(remote::PermissionsFlow, String, bool)>> =
+    /// Open permissions dialogs: the flow, its target path, the dialog's
+    /// "recursive" applicability (target is a directory), and the id of the
+    /// session whose client will apply the change.
+    static PERMISSION_FLOWS: RefCell<Vec<(remote::PermissionsFlow, String, bool, u64)>> =
         const { RefCell::new(Vec::new()) };
 }
 
@@ -1250,20 +1273,20 @@ fn poll_permission_flows(
     ui_weak: &slint::Weak<crate::ui::main_window::MainWindow>,
     state: &Rc<RefCell<AppState>>,
 ) {
-    let mut confirmed: Vec<(String, u32, bool, bool)> = Vec::new();
+    let mut confirmed: Vec<(String, u32, bool, bool, u64)> = Vec::new();
     PERMISSION_FLOWS.with(|flows| {
         let mut flows = flows.borrow_mut();
-        flows.retain(|(flow, target, is_dir)| match flow.poll() {
+        flows.retain(|(flow, target, is_dir, session_id)| match flow.poll() {
             None => true,
             Some(Some(mode)) => {
-                confirmed.push((target.clone(), mode, flow.recursive(), *is_dir));
+                confirmed.push((target.clone(), mode, flow.recursive(), *is_dir, *session_id));
                 false
             }
             Some(None) => false,
         });
     });
-    for (path, mode, recursive, is_dir) in confirmed {
-        apply_permissions(ui_weak, state, path, mode, recursive && is_dir);
+    for (path, mode, recursive, is_dir, session_id) in confirmed {
+        apply_permissions(ui_weak, state, session_id, path, mode, recursive && is_dir);
     }
 }
 
@@ -1272,14 +1295,12 @@ fn poll_permission_flows(
 fn apply_permissions(
     _ui_weak: &slint::Weak<crate::ui::main_window::MainWindow>,
     state: &Rc<RefCell<AppState>>,
+    session_id: u64,
     path: String,
     mode: u32,
     recursive: bool,
 ) {
-    let client = {
-        let mut st = state.borrow_mut();
-        st.client.take()
-    };
+    let client = state.borrow_mut().take_session_client(session_id);
     let Some(client) = client else { return };
     let handle = state.borrow().runtime_handle();
     let tx = state.borrow().ui_event_tx();
@@ -1303,9 +1324,9 @@ fn apply_permissions(
         };
         if let Some(tx) = &tx {
             let _ = tx.send(UiEvent::Status { message });
-            let _ = tx.send(UiEvent::ReturnClient(client));
-            let _ = tx.send(UiEvent::ReloadRemote);
         }
+        return_client(&tx, session_id, client);
+        request_reload_session(&tx, session_id);
     });
 }
 
@@ -1331,13 +1352,37 @@ fn prompt_for_text(title: &'static str, prompt: &'static str, initial: &str) -> 
     }
 }
 
-/// Puts a client back into `AppState` via the UI event channel.
+/// Puts a client back into its session record via the UI event channel.
 fn return_client(
     tx: &Option<tokio::sync::mpsc::UnboundedSender<UiEvent>>,
+    session_id: u64,
     client: Box<dyn freescp_core::SftpClient>,
 ) {
     if let Some(tx) = tx {
-        let _ = tx.send(UiEvent::ReturnClient(client));
+        let _ = tx.send(UiEvent::ReturnClient { session_id, client });
+    }
+}
+
+/// Borrows the active tab's session client for a UI-thread-initiated
+/// operation, returning the owning session id. `None` when the active tab has
+/// no session, the session is already busy, or its client is checked out by
+/// another operation (the caller reports "Not connected" / leaves it alone).
+fn take_active_client(
+    state: &Rc<RefCell<AppState>>,
+) -> Option<(u64, Box<dyn freescp_core::SftpClient>)> {
+    let session_id = state.borrow().active_session_id()?;
+    let client = state.borrow_mut().take_session_client(session_id)?;
+    Some((session_id, client))
+}
+
+/// Asks for a reload of the remote pane owned by `session_id` (the active tab
+/// refreshes immediately, other tabs when they are activated).
+fn request_reload_session(
+    tx: &Option<tokio::sync::mpsc::UnboundedSender<UiEvent>>,
+    session_id: u64,
+) {
+    if let Some(tx) = tx {
+        let _ = tx.send(UiEvent::ReloadSession { session_id });
     }
 }
 
@@ -1428,8 +1473,10 @@ fn open_local_file(
 /// Remote counterpart of `run_prompted_local_op`: takes the session client
 /// through the prompt + operation and posts status/return-client/reload
 /// events. `client` must be `None` when there is no active session.
+#[allow(clippy::too_many_arguments)] // Endpoint + prompt + operation, mirrored from the local variant.
 fn run_prompted_remote_op(
     state: &Rc<RefCell<AppState>>,
+    session_id: u64,
     client: Option<Box<dyn freescp_core::SftpClient>>,
     title: &'static str,
     prompt: &'static str,
@@ -1450,7 +1497,7 @@ fn run_prompted_remote_op(
             return;
         };
         let Some(name) = prompt_for_text(title, prompt, &initial) else {
-            return_client(&tx, client);
+            return_client(&tx, session_id, client);
             return;
         };
         let message = match op(&mut *client, name).await {
@@ -1460,11 +1507,9 @@ fn run_prompted_remote_op(
         if let Some(tx) = &tx {
             let _ = tx.send(UiEvent::Status { message });
         }
-        return_client(&tx, client);
+        return_client(&tx, session_id, client);
         if reload_remote {
-            if let Some(tx) = &tx {
-                let _ = tx.send(UiEvent::ReloadRemote);
-            }
+            request_reload_session(&tx, session_id);
         }
     });
 }
@@ -1912,11 +1957,7 @@ fn move_remote_entries_on_server(
         ui.set_status_text(format!("Drop ignored: nothing to move ({skipped} skipped)").into());
         return;
     }
-    let client = {
-        let mut st = state.borrow_mut();
-        st.client.take()
-    };
-    let Some(client) = client else {
+    let Some((session_id, client)) = take_active_client(state) else {
         ui.set_status_text("Not connected".into());
         return;
     };
@@ -1942,9 +1983,9 @@ fn move_remote_entries_on_server(
                 format!("Moved: {ok}  |  Failed: {failed}")
             };
             let _ = tx.send(UiEvent::Status { message });
-            let _ = tx.send(UiEvent::ReloadRemote);
         }
-        return_client(&tx, client);
+        return_client(&tx, session_id, client);
+        request_reload_session(&tx, session_id);
     });
 }
 
@@ -2228,7 +2269,7 @@ fn find_licenses_dir() -> Option<PathBuf> {
 /// Wires the About dialog's action buttons/link (port of the button/link
 /// handlers in ui/AboutDialog.cpp).
 fn wire_about_dialog(dialog: &crate::ui::about::AboutDialog) {
-    dialog.set_version_text(format!("{} (Rust rewrite)", env!("CARGO_PKG_VERSION")).into());
+    dialog.set_version_text(env!("CARGO_PKG_VERSION").into());
     let licenses_available = find_licenses_dir().is_some();
     dialog.set_licenses_available(licenses_available);
     {
@@ -2314,9 +2355,15 @@ fn queue_uploads_to(
     dest: Option<String>,
     move_after: bool,
 ) {
-    let Some(session) = state.borrow().session.clone() else {
-        ui.set_status_text("Not connected".into());
-        return;
+    let (session_id, session) = {
+        let st = state.borrow();
+        match (st.active_session_id(), st.active_session_options()) {
+            (Some(session_id), Some(session)) => (session_id, session),
+            _ => {
+                ui.set_status_text("Not connected".into());
+                return;
+            }
+        }
     };
     let dest = dest.unwrap_or_else(|| ui.get_right_path().to_string());
     let seeds = selected_left_seeds(ui);
@@ -2429,7 +2476,13 @@ fn queue_uploads_to(
                         continue;
                     }
                 };
-                mgr.enqueue_upload(client, source.to_string_lossy().into_owned(), target, false);
+                mgr.enqueue_upload(
+                    client,
+                    source.to_string_lossy().into_owned(),
+                    target,
+                    false,
+                    Some(session_id),
+                );
             }
             if move_after {
                 if let Some(tx) = &tx {
@@ -2588,7 +2641,7 @@ fn queue_downloads_to(
     dest: Option<PathBuf>,
     move_after: bool,
 ) {
-    let Some(session) = state.borrow().session.clone() else {
+    let Some(session) = state.borrow().active_session_options() else {
         ui.set_status_text("Not connected".into());
         return;
     };
@@ -2602,11 +2655,7 @@ fn queue_downloads_to(
         return;
     };
     let dest = dest.to_string_lossy().into_owned();
-    let client = {
-        let mut st = state.borrow_mut();
-        st.client.take()
-    };
-    let Some(client) = client else {
+    let Some((session_id, client)) = take_active_client(state) else {
         ui.set_status_text("Not connected".into());
         return;
     };
@@ -2659,7 +2708,7 @@ fn queue_downloads_to(
                 if !proceed {
                     ui.set_status_text("Download canceled".into());
                     if let Some(tx) = &tx {
-                        let _ = tx.send(UiEvent::ReturnClient(client));
+                        let _ = tx.send(UiEvent::ReturnClient { session_id, client });
                     }
                     return;
                 }
@@ -2681,6 +2730,9 @@ fn queue_downloads_to(
                     remote_path.clone(),
                     local_dest.to_string_lossy().into_owned(),
                     false,
+                    // The local pane is the destination, but the task still
+                    // belongs to this tab's session (F7/close cancels it).
+                    Some(session_id),
                 );
             }
             if move_after {
@@ -2688,6 +2740,7 @@ fn queue_downloads_to(
                     watch_downloads_then_delete_remote(
                         Arc::clone(&mgr),
                         expected,
+                        session_id,
                         session.clone(),
                         seeds.iter().map(|(path, _)| path.clone()).collect(),
                         tx.clone(),
@@ -2701,7 +2754,7 @@ fn queue_downloads_to(
             }
             ui.set_status_text(format!("Queued {} download(s)", files.len()).into());
             if let Some(tx) = &tx {
-                let _ = tx.send(UiEvent::ReturnClient(client));
+                let _ = tx.send(UiEvent::ReturnClient { session_id, client });
             }
         });
         if posted.is_err() {
@@ -2715,6 +2768,7 @@ fn queue_downloads_to(
 fn watch_downloads_then_delete_remote(
     mgr: Arc<transfer::TransferManager>,
     expected: usize,
+    session_id: u64,
     session: SessionOptions,
     seeds: Vec<String>,
     tx: tokio::sync::mpsc::UnboundedSender<UiEvent>,
@@ -2785,7 +2839,7 @@ fn watch_downloads_then_delete_remote(
                 });
             }
         }
-        let _ = tx.send(UiEvent::ReloadRemote);
+        let _ = tx.send(UiEvent::ReloadSession { session_id });
     });
 }
 
@@ -2798,15 +2852,10 @@ fn watch_downloads_then_delete_remote(
 /// of the C++ monitor is intentionally out of scope — see
 /// `remote::ensure_session_healthy`).
 fn check_session_health(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
-    if state.borrow().client.is_none() {
+    let Some((session_id, client)) = take_active_client(state) else {
         return;
-    }
-    let path = ui.get_right_path().to_string();
-    let client = {
-        let mut st = state.borrow_mut();
-        st.client.take()
     };
-    let Some(client) = client else { return };
+    let path = ui.get_right_path().to_string();
     let handle = state.borrow().runtime_handle();
     let tx = state.borrow().ui_event_tx();
     handle.spawn(async move {
@@ -2822,9 +2871,7 @@ fn check_session_health(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefC
                 let _ = tx.send(UiEvent::Status { message });
             }
         }
-        if let Some(tx) = &tx {
-            let _ = tx.send(UiEvent::ReturnClient(client));
-        }
+        return_client(&tx, session_id, client);
     });
 }
 
@@ -3047,6 +3094,800 @@ fn cleanup_staging_root(prefs: &settings::Preferences) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Session tabs
+// ---------------------------------------------------------------------------
+//
+// The window's flat `left-*`/`right-*` properties always render the *active*
+// tab; per-tab state lives here in `TabState`. Switching tabs stashes the
+// window into the outgoing tab, then loads the incoming tab into the window.
+
+/// Title of a tab that browses local folders only.
+const LOCAL_TAB_TITLE: &str = "Local";
+
+/// Tab-bar title: `user@host` once connected, "Connecting…" during a dialog
+/// connect, "Local" otherwise.
+fn tab_title(tab: &crate::state::TabState, st: &AppState) -> String {
+    let Some(record) = tab.session_id.and_then(|id| st.session(id)) else {
+        return if tab.connecting {
+            "Connecting…".to_string()
+        } else {
+            LOCAL_TAB_TITLE.to_string()
+        };
+    };
+    if record.options.username.is_empty() {
+        record.options.host.clone()
+    } else {
+        format!("{}@{}", record.options.username, record.options.host)
+    }
+}
+
+/// Tab-bar subtitle (protocol name; empty while the tab is local-only).
+fn tab_subtitle(tab: &crate::state::TabState, st: &AppState) -> String {
+    tab.session_id
+        .and_then(|id| st.session(id))
+        .map(|record| protocol_display_name(record.options.protocol).to_string())
+        .unwrap_or_default()
+}
+
+/// Rebuilds the Slint tab-bar model from `AppState::tabs`.
+fn sync_tab_bar(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
+    let st = state.borrow();
+    let rows: Vec<crate::ui::main_window::TabRow> = st
+        .tabs
+        .iter()
+        .enumerate()
+        .map(|(index, tab)| crate::ui::main_window::TabRow {
+            title: tab_title(tab, &st).into(),
+            subtitle: tab_subtitle(tab, &st).into(),
+            active: index == st.active_tab,
+            connected: tab.is_connected(),
+            busy: tab
+                .session_id
+                .and_then(|id| st.session(id))
+                .is_some_and(|record| record.busy),
+        })
+        .collect();
+    ui.set_tabs(Rc::new(VecModel::from(rows)).into());
+    ui.set_active_tab_index(st.active_tab as i32);
+}
+
+/// Copies the window's live pane/selection/status state into the active tab.
+fn stash_active_tab(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
+    let left = crate::state::PaneState {
+        path: ui.get_left_path().to_string(),
+        entries: ui.get_left_entries().iter().collect(),
+        sort_column: ui.get_left_sort_column(),
+        sort_ascending: ui.get_left_sort_ascending(),
+        selected_row: ui.get_left_selected_row(),
+        selected_rows: ui.get_left_selected_rows().iter().collect(),
+        selected_flags: ui.get_left_selected_flags().iter().collect(),
+        selected_is_parent: ui.get_left_selected_is_parent(),
+    };
+    let right = crate::state::PaneState {
+        path: ui.get_right_path().to_string(),
+        entries: ui.get_right_entries().iter().collect(),
+        sort_column: ui.get_right_sort_column(),
+        sort_ascending: ui.get_right_sort_ascending(),
+        selected_row: ui.get_right_selected_row(),
+        selected_rows: ui.get_right_selected_rows().iter().collect(),
+        selected_flags: ui.get_right_selected_flags().iter().collect(),
+        selected_is_parent: ui.get_right_selected_is_parent(),
+    };
+    let status = ui.get_status_text().to_string();
+    let mut st = state.borrow_mut();
+    let Some(tab) = st.active_tab_mut() else {
+        return;
+    };
+    tab.left = left;
+    tab.right = right;
+    tab.status = status;
+}
+
+/// Loads the active tab's pane state into the window (inverse of
+/// [`stash_active_tab`]).
+fn load_tab_panes(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
+    let (left, right, connected, scp_panel, supports_permissions) = {
+        let st = state.borrow();
+        let Some(tab) = st.active_tab() else {
+            return;
+        };
+        (
+            tab.left.clone(),
+            tab.right.clone(),
+            tab.is_connected(),
+            tab.scp_panel,
+            tab.supports_permissions,
+        )
+    };
+    ui.set_left_path(left.path.clone().into());
+    ui.set_left_can_go_up(Path::new(&left.path).parent().is_some());
+    update_left_breadcrumbs(ui, &left.path);
+    ui.set_left_entries(Rc::new(VecModel::from(left.entries.clone())).into());
+    ui.set_left_sort_column(left.sort_column);
+    ui.set_left_sort_ascending(left.sort_ascending);
+    ui.set_left_selected_flags(Rc::new(VecModel::from(left.selected_flags.clone())).into());
+    ui.set_left_selected_rows(Rc::new(VecModel::from(left.selected_rows.clone())).into());
+    ui.set_left_selected_row(left.selected_row);
+    ui.set_left_selected_is_parent(left.selected_is_parent);
+
+    ui.set_right_path(right.path.clone().into());
+    ui.set_right_entries(Rc::new(VecModel::from(right.entries.clone())).into());
+    ui.set_right_sort_column(right.sort_column);
+    ui.set_right_sort_ascending(right.sort_ascending);
+    ui.set_right_selected_flags(Rc::new(VecModel::from(right.selected_flags.clone())).into());
+    ui.set_right_selected_rows(Rc::new(VecModel::from(right.selected_rows.clone())).into());
+    ui.set_right_selected_row(right.selected_row);
+    ui.set_right_selected_is_parent(right.selected_is_parent);
+    ui.set_remote_connected(connected);
+    ui.set_scp_panel_visible(scp_panel);
+    ui.set_right_supports_permissions(supports_permissions);
+    if connected {
+        update_right_breadcrumbs(ui, &right.path);
+        ui.set_right_can_go_up(remote::has_remote_parent(&right.path));
+    } else {
+        update_right_local_breadcrumbs(ui, &right.path);
+        ui.set_right_can_go_up(Path::new(&right.path).parent().is_some());
+    }
+    load_tab_console(ui, state);
+}
+
+// ---------------------------------------------------------------------------
+// Embedded Telnet console (ui/console.slint + src/console.rs)
+// ---------------------------------------------------------------------------
+
+/// Id of the active tab when it hosts a Telnet console — whether or not the
+/// transport is still up, since the last screen stays readable until the user
+/// disconnects.
+fn active_console_tab(state: &Rc<RefCell<AppState>>) -> Option<u64> {
+    let st = state.borrow();
+    let tab = st.active_tab()?;
+    tab.console.then_some(tab.id)
+}
+
+/// Grid size reported by the console view, or `None` before its first layout
+/// pass (the parser then keeps the size it already has).
+fn console_grid(ui: &crate::ui::main_window::MainWindow) -> Option<(u16, u16)> {
+    let max = i32::from(u16::MAX);
+    let cols = ui.get_console_grid_cols();
+    let rows = ui.get_console_grid_rows();
+    if cols < 2 || rows < 1 {
+        return None;
+    }
+    Some((cols.min(max) as u16, rows.min(max) as u16))
+}
+
+/// Switches the right pane between the file browser and the active tab's
+/// terminal, and installs the terminal's row model. No console on the tab
+/// simply turns console mode off.
+fn load_tab_console(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
+    let Some(tab_id) = active_console_tab(state) else {
+        ui.set_console_mode(false);
+        // Stops the terminal's grid poll on tabs that have no console at all.
+        ui.set_console_connected(false);
+        return;
+    };
+    ui.set_console_mode(true);
+    let model = crate::console::with_session(tab_id, |session| session.console.rows_model());
+    if let Some(model) = model {
+        ui.set_console_rows(model);
+    }
+    console_sync(ui, state);
+    ui.invoke_focus_console();
+}
+
+/// Renders the active tab's terminal and mirrors its cursor/scrollback state
+/// into the window. Reads the view's `grid-cols`/`grid-rows` first: Slint does
+/// not reliably fire `changed` handlers for layout-managed geometry, so the
+/// grid size is polled here (a `ConsoleState::resize` is a no-op when the size
+/// has not changed).
+fn console_sync(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
+    let Some(tab_id) = active_console_tab(state) else {
+        // No console session to sync: stop the view's polling timer.
+        ui.set_console_connected(false);
+        return;
+    };
+    let grid = console_grid(ui);
+    let synced = crate::console::with_session(tab_id, |session| {
+        let console = &mut session.console;
+        if let Some((cols, rows)) = grid {
+            console.resize(cols, rows);
+        }
+        console.render();
+        let (cursor_row, cursor_col) = console.cursor();
+        ui.set_console_cursor_row(cursor_row);
+        ui.set_console_cursor_col(cursor_col);
+        ui.set_console_cursor_visible(console.cursor_visible());
+        let (scrollback_len, scrollback_offset) = console.scrollback();
+        ui.set_console_scrollback_len(scrollback_len);
+        ui.set_console_scrollback_offset(scrollback_offset);
+        ui.set_console_connected(console.is_connected());
+    });
+    if synced.is_none() {
+        // The session went away between the two lookups; stop the timer.
+        ui.set_console_connected(false);
+        return;
+    }
+    // The application's OSC 0/2 title rides along in the window title.
+    refresh_window_title(ui, state);
+}
+
+/// Pushes the active tab's window title (an OSC title included for consoles);
+/// a no-op when the title is already current.
+fn refresh_window_title(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
+    let st = state.borrow();
+    let Some(tab) = st.active_tab() else {
+        return;
+    };
+    let title = tab_window_title(tab, &st);
+    if ui.get_title_text().as_str() != title {
+        ui.set_title_text(title.into());
+    }
+}
+
+/// Opens a console session and drains its event channel into [`UiEvent`]s.
+/// The task ends when the transport closes (or when Disconnect drops the
+/// session, which closes the channel).
+fn spawn_console_forwarder(
+    state: &Rc<RefCell<AppState>>,
+    tab: u64,
+    mut events: tokio::sync::mpsc::UnboundedReceiver<freescp_core::telnet::TelnetEvent>,
+) {
+    let Some(tx) = state.borrow().ui_event_tx() else {
+        return;
+    };
+    state.borrow().runtime_handle().spawn(async move {
+        while let Some(event) = events.recv().await {
+            let ui_event = match event {
+                freescp_core::telnet::TelnetEvent::Data(bytes) => {
+                    UiEvent::ConsoleData { tab, bytes }
+                }
+                freescp_core::telnet::TelnetEvent::Closed => {
+                    let _ = tx.send(UiEvent::ConsoleClosed { tab, message: None });
+                    break;
+                }
+                freescp_core::telnet::TelnetEvent::Error(message) => {
+                    let _ = tx.send(UiEvent::ConsoleClosed {
+                        tab,
+                        message: Some(message),
+                    });
+                    break;
+                }
+            };
+            if tx.send(ui_event).is_err() {
+                break;
+            }
+        }
+    });
+}
+
+/// True when the terminal owns the right pane, in which case file-pane actions
+/// (upload/download/copy/move) make no sense: the toolbar and menus stay
+/// clickable, so they are dropped with a status hint instead of talking to a
+/// session that does not exist.
+fn console_owns_right_pane(ui: &crate::ui::main_window::MainWindow) -> bool {
+    if ui.get_console_mode() {
+        ui.set_status_text("The terminal is active in the right pane".into());
+        return true;
+    }
+    false
+}
+
+/// Runs `action` against the active tab's terminal, then republishes the
+/// screen state. Console callbacks from `ui/console.slint` land here.
+fn with_active_console<F>(
+    ui: &crate::ui::main_window::MainWindow,
+    state: &Rc<RefCell<AppState>>,
+    action: F,
+) where
+    F: FnOnce(&mut crate::console::ConsoleState),
+{
+    let Some(tab_id) = active_console_tab(state) else {
+        return;
+    };
+    if crate::console::with_session(tab_id, |session| action(&mut session.console)).is_none() {
+        return;
+    }
+    console_sync(ui, state);
+}
+
+/// Closes the active tab's console session (Disconnect on a terminal tab) and
+/// returns the right pane to local browsing. Returns false when the active tab
+/// hosts no console, so the caller can run the usual disconnect path.
+fn disconnect_console_tab(
+    ui: &crate::ui::main_window::MainWindow,
+    state: &Rc<RefCell<AppState>>,
+) -> bool {
+    let (_session, local_root) = {
+        let mut st = state.borrow_mut();
+        let Some(tab) = st.active_tab_mut() else {
+            return false;
+        };
+        if !tab.console {
+            return false;
+        }
+        let id = tab.id;
+        tab.console = false;
+        tab.right_is_local = true;
+        tab.scp_panel = false;
+        tab.supports_permissions = true;
+        tab.remote_dirty = false;
+        let local_root = tab.right_local_root.clone().unwrap_or_else(home_dir_string);
+        tab.right.path = local_root.clone();
+        tab.right.entries.clear();
+        tab.right.selected_rows.clear();
+        tab.right.selected_flags.clear();
+        tab.right.selected_row = -1;
+        (crate::console::remove(id), local_root)
+    };
+    ui.set_console_mode(false);
+    ui.set_remote_connected(false);
+    ui.set_scp_panel_visible(false);
+    ui.set_connection_type_text("Type: None".into());
+    ui.set_connection_elapsed_text("Session: --:--:--".into());
+    ui.set_risk_banner_visible(false);
+    set_tab_status(state, "Disconnected");
+    reload_right_local(ui, state, &local_root);
+    apply_tab_chrome(ui, state);
+    sync_tab_bar(ui, state);
+    true
+}
+
+/// Window title for the active tab (`connect::tr` keeps the ported wording).
+fn tab_window_title(tab: &crate::state::TabState, st: &AppState) -> String {
+    if tab.console {
+        // A terminal tab: the protocol name, plus whatever OSC 0/2 title the
+        // application set on the session.
+        let console = crate::console::with_session(tab.id, |session| {
+            (
+                protocol_display_name(session.options.protocol).to_string(),
+                session.console.title().map(str::to_string),
+            )
+        });
+        let (protocol, app_title) = console.unwrap_or_else(|| ("Telnet".to_string(), None));
+        let base = crate::connect::tr(
+            "FreeSCP — local/terminal (%1)",
+            std::slice::from_ref(&protocol),
+        );
+        return match app_title {
+            Some(app_title) => format!("{base} — {app_title}"),
+            None => base,
+        };
+    }
+    let Some(record) = tab.session_id.and_then(|id| st.session(id)) else {
+        return crate::connect::tr("FreeSCP — local/local (click Connect for remote)", &[]);
+    };
+    crate::connect::tr(
+        "FreeSCP — local/remote (%1)",
+        std::slice::from_ref(&protocol_display_name(record.options.protocol).to_string()),
+    )
+}
+
+/// Pushes the active tab's chrome (title, status, connection indicators) into
+/// the window after a tab switch or a session change.
+fn apply_tab_chrome(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
+    let st = state.borrow();
+    let Some(tab) = st.active_tab() else {
+        return;
+    };
+    let session = tab.session_id.and_then(|id| st.session(id));
+    ui.set_title_text(tab_window_title(tab, &st).into());
+    ui.set_status_text(tab.status.clone().into());
+    ui.set_remote_connected(tab.is_connected());
+    ui.set_scp_panel_visible(tab.scp_panel);
+    ui.set_right_supports_permissions(tab.supports_permissions);
+    let type_text = match session {
+        Some(record) => format!(
+            "Type: {}",
+            freescp_core::protocol_display_name(record.options.protocol)
+        ),
+        None => "Type: None".to_string(),
+    };
+    ui.set_connection_type_text(type_text.into());
+    ui.set_risk_banner_visible(session.is_some_and(|record| record.no_host_verification));
+    if let Some(record) = session {
+        ui.set_connection_elapsed_text(
+            format!("Session: {}", format_elapsed(record.started_at.elapsed())).into(),
+        );
+    } else {
+        ui.set_connection_elapsed_text("Session: --:--:--".into());
+    }
+}
+
+/// Switches the active tab: stashes the outgoing pane state, loads the
+/// incoming one, and refreshes a pane that went stale in the background.
+fn activate_tab(
+    ui: &crate::ui::main_window::MainWindow,
+    state: &Rc<RefCell<AppState>>,
+    index: usize,
+) {
+    let target = {
+        let st = state.borrow();
+        if st.tabs.is_empty() {
+            return;
+        }
+        index.min(st.tabs.len() - 1)
+    };
+    stash_active_tab(ui, state);
+    {
+        let mut st = state.borrow_mut();
+        st.active_tab = target;
+    }
+    load_tab_panes(ui, state);
+    apply_tab_chrome(ui, state);
+    sync_tab_bar(ui, state);
+    // Re-target the local directory watchers at the newly shown folders.
+    watch_local_dir(0, ui.get_left_path().as_ref(), state);
+    if right_pane_is_local(ui) {
+        watch_local_dir(1, ui.get_right_path().as_ref(), state);
+    } else {
+        stop_local_watcher(1);
+    }
+    let (dirty, session_id) = {
+        let mut st = state.borrow_mut();
+        let Some(tab) = st.active_tab_mut() else {
+            return;
+        };
+        let dirty = tab.remote_dirty;
+        tab.remote_dirty = false;
+        (dirty, tab.session_id)
+    };
+    if dirty && session_id.is_some() {
+        request_remote_reload(ui, state);
+    }
+}
+
+/// Picks the tab a new dialog connect targets: the active tab when it is
+/// idle, else a fresh blank tab (which becomes active). Marks the tab
+/// `connecting` so the tab bar shows the attempt.
+fn reserve_connect_tab(
+    ui: &crate::ui::main_window::MainWindow,
+    state: &Rc<RefCell<AppState>>,
+) -> u64 {
+    let home = home_dir_string();
+    let tab_id = {
+        let mut st = state.borrow_mut();
+        let idle = st
+            .active_tab()
+            .is_some_and(|tab| tab.session_id.is_none() && !tab.connecting && !tab.console);
+        let index = if idle {
+            st.active_tab
+        } else {
+            let index = st.push_blank_tab(&home);
+            st.active_tab = index;
+            index
+        };
+        st.tabs[index].connecting = true;
+        st.tabs[index].id
+    };
+    sync_tab_bar(ui, state);
+    tab_id
+}
+
+/// Closes the tab at `index` after confirming when it still holds a session.
+/// The last tab is never closed: it is reset to a blank local/local tab.
+fn close_tab(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>, index: usize) {
+    let (session_title, connected) = {
+        let st = state.borrow();
+        let Some(tab) = st.tabs.get(index) else {
+            return;
+        };
+        (tab_title(tab, &st), tab.is_connected())
+    };
+    if connected {
+        let question = format!(
+            "Close the session tab \"{session_title}\"?\nThe connection will be disconnected."
+        );
+        let confirmed = rfd::MessageDialog::new()
+            .set_title("Close session tab")
+            .set_description(&question)
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .set_level(rfd::MessageLevel::Warning)
+            .show()
+            == rfd::MessageDialogResult::Yes;
+        if !confirmed {
+            return;
+        }
+    }
+    let (was_active, disconnected, local_root) = {
+        let mut st = state.borrow_mut();
+        let home = home_dir_string();
+        if st.tabs.len() <= 1 {
+            // Never close the last tab: reset it to a blank local/local tab.
+            let id = st.tabs[0].id;
+            let session = st.tabs[0]
+                .session_id
+                .take()
+                .and_then(|session_id| st.sessions.remove(&session_id));
+            crate::console::remove(id);
+            st.tabs[0] = crate::state::TabState::blank(id, &home);
+            st.active_tab = 0;
+            PERMISSION_FLOWS.with(|flows| {
+                for (flow, _, _, _) in flows.borrow_mut().drain(..) {
+                    flow.dismiss();
+                }
+            });
+            (true, session, home)
+        } else {
+            let was_active = st.active_tab == index;
+            let Some((tab, session)) = st.remove_tab(index) else {
+                return;
+            };
+            // A terminal tab takes its console down with it.
+            crate::console::remove(tab.id);
+            (was_active, session, tab.right.path.clone())
+        }
+    };
+    if let Some(record) = disconnected {
+        // Transfers that targeted the closed tab's session die with it.
+        state
+            .borrow()
+            .transfer_manager
+            .cancel_for_session(record.id);
+        if let Some(mut client) = record.client {
+            let handle = state.borrow().runtime_handle();
+            handle.spawn(async move {
+                let _ = tokio::time::timeout(Duration::from_secs(5), client.disconnect()).await;
+            });
+        }
+        set_tab_status(state, &format!("Closed tab: {session_title}"));
+    }
+    if was_active {
+        let local_only = !state
+            .borrow()
+            .active_tab()
+            .is_some_and(|tab| tab.is_connected());
+        if local_only {
+            ui.set_remote_connected(false);
+            ui.set_scp_panel_visible(false);
+            ui.set_connection_type_text("Type: None".into());
+            ui.set_connection_elapsed_text("Session: --:--:--".into());
+            ui.set_risk_banner_visible(false);
+        }
+        load_tab_panes(ui, state);
+        apply_tab_chrome(ui, state);
+        if local_only {
+            let right = ui.get_right_path().to_string();
+            let right = if right.is_empty() { local_root } else { right };
+            reload_right_local(ui, state, &right);
+            reload_local(ui, state, ui.get_left_path().as_ref());
+        }
+        watch_local_dir(0, ui.get_left_path().as_ref(), state);
+    }
+    sync_tab_bar(ui, state);
+}
+
+/// Opens the destination picker for the remote pane's "Copy to session…"
+/// action: lists every other connected tab and routes the pick to the same
+/// remote-to-remote copy used by drop-on-tab-header.
+fn open_session_picker(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
+    let choices: Vec<crate::ui::main_window::SessionChoice> = {
+        let st = state.borrow();
+        st.tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tab)| {
+                if index == st.active_tab || !tab.is_connected() {
+                    return None;
+                }
+                let record = tab.session_id.and_then(|id| st.session(id))?;
+                let protocol = protocol_display_name(record.options.protocol);
+                let dir = tab.right.path.trim_end_matches('/');
+                Some(crate::ui::main_window::SessionChoice {
+                    title: tab_title(tab, &st).into(),
+                    subtitle: format!("{protocol} — {}", if dir.is_empty() { "/" } else { dir })
+                        .into(),
+                    tab_index: index as i32,
+                })
+            })
+            .collect()
+    };
+    if choices.is_empty() {
+        ui.set_status_text("No other connected session to copy to".into());
+        return;
+    }
+    let Ok(dialog) = crate::ui::main_window::SessionPickerDialog::new() else {
+        tracing::error!("failed to instantiate SessionPickerDialog");
+        return;
+    };
+    crate::remote::center_window_over(ui, dialog.window());
+    dialog.set_sessions(Rc::new(VecModel::from(choices)).into());
+
+    let ui_weak = ui.as_weak();
+    let state = state.clone();
+    let dialog_weak = dialog.as_weak();
+    dialog.on_session_chosen(move |tab_index| {
+        if let Some(dialog) = dialog_weak.upgrade() {
+            let _ = dialog.hide();
+        }
+        if let Some(ui) = ui_weak.upgrade() {
+            handle_tab_drop(&ui, &state, tab_index.max(0) as usize);
+        }
+    });
+    let dialog_weak = dialog.as_weak();
+    dialog.on_cancel_requested(move || {
+        if let Some(dialog) = dialog_weak.upgrade() {
+            let _ = dialog.hide();
+        }
+    });
+    let _ = dialog.show();
+    SESSION_PICKER.with(|slot| *slot.borrow_mut() = Some(dialog));
+}
+
+thread_local! {
+    /// Live "Copy to session…" picker (Slint components are `!Send` and must
+    /// stay alive on the event-loop thread).
+    static SESSION_PICKER: RefCell<Option<crate::ui::main_window::SessionPickerDialog>> =
+        const { RefCell::new(None) };
+}
+
+/// Drop-on-tab-header: copies the active remote pane's selection into the
+/// target tab. A remote target stages the copy through the transfer queue
+/// (`RemoteToRemote`, local temp as the interchange); a local target is a
+/// plain download into that tab's local folder.
+fn handle_tab_drop(
+    ui: &crate::ui::main_window::MainWindow,
+    state: &Rc<RefCell<AppState>>,
+    dst_index: usize,
+) {
+    let seeds = selected_right_seeds(ui);
+    if seeds.is_empty() {
+        ui.set_status_text("No selection to copy".into());
+        return;
+    }
+    let (src_session_id, src_options, dst_is_remote, dst_dir, dst_session_id, dst_options) = {
+        let st = state.borrow();
+        let Some(dst) = st.tabs.get(dst_index) else {
+            return;
+        };
+        let Some(src_session_id) = st.active_session_id() else {
+            ui.set_status_text("Not connected".into());
+            return;
+        };
+        if dst_index == st.active_tab {
+            ui.set_status_text("Drop ignored: use another tab as the target".into());
+            return;
+        }
+        let src_options = st
+            .session(src_session_id)
+            .map(|record| record.options.clone());
+        let dst_options = dst
+            .session_id
+            .and_then(|session_id| st.session(session_id))
+            .map(|record| record.options.clone());
+        (
+            src_session_id,
+            src_options,
+            dst.is_connected(),
+            dst.right.path.clone(),
+            dst.session_id,
+            dst_options,
+        )
+    };
+    if !dst_is_remote {
+        // Local target: plain download into that tab's local folder.
+        queue_downloads_to(ui, state, Some(PathBuf::from(dst_dir)), false);
+        return;
+    }
+    let (Some(src_options), Some(dst_options)) = (src_options, dst_options) else {
+        ui.set_status_text("The target tab has no active session".into());
+        return;
+    };
+    let Some((_, mut src_client)) = take_active_client(state) else {
+        ui.set_status_text("The source session is busy; try the copy again".into());
+        return;
+    };
+    let handle = state.borrow().runtime_handle();
+    let mgr = Arc::clone(&state.borrow().transfer_manager);
+    let tx = state.borrow().ui_event_tx();
+    let show_queue = state.borrow().prefs.show_queue_on_enqueue;
+    let staging_root = std::env::temp_dir().join(format!(
+        "freescp-collect-{}-{}",
+        std::process::id(),
+        dst_index
+    ));
+    let dst_dir = dst_dir.clone();
+    handle.spawn(async move {
+        // Expand directories against the source session (extra task
+        // connections would otherwise be needed just to list the tree).
+        let files =
+            match transfer::collect_remote_files(&mut *src_client, &seeds, &staging_root).await {
+                Ok(files) => files,
+                Err(err) => {
+                    if let Some(tx) = &tx {
+                        let _ = tx.send(UiEvent::Status {
+                            message: format!("Could not read the source selection.\n{err}"),
+                        });
+                    }
+                    return_client(&tx, src_session_id, src_client);
+                    return;
+                }
+            };
+        let jobs: Vec<(String, String)> = files
+            .iter()
+            .map(|(remote, local)| {
+                let rel = local
+                    .strip_prefix(&staging_root)
+                    .unwrap_or(local)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                (remote.clone(), join_remote(&dst_dir, &rel))
+            })
+            .collect();
+        let _ = std::fs::remove_dir_all(&staging_root);
+        // The staging mirror is empty; the worker downloads each file into
+        // its own per-task staging file.
+        return_client(&tx, src_session_id, src_client);
+        let src_options = src_options.clone();
+        let dst_options = dst_options.clone();
+        let queued = jobs.len();
+        let posted = slint::invoke_from_event_loop(move || {
+            mgr.set_session_options(Some(dst_options.clone()));
+            // A new user-initiated batch resets the remembered overwrite
+            // policy (the C++ policy was scoped to one operation).
+            transfer::reset_conflict_policy();
+            let mut enqueued = 0usize;
+            for (remote_src, remote_dst) in &jobs {
+                let Ok(src) = client_factory::create_client(src_options.protocol) else {
+                    continue;
+                };
+                let Ok(dst) = client_factory::create_client(dst_options.protocol) else {
+                    continue;
+                };
+                mgr.enqueue_remote_to_remote(
+                    src,
+                    remote_src.clone(),
+                    Some(src_options.clone()),
+                    dst,
+                    remote_dst.clone(),
+                    Some(dst_options.clone()),
+                    dst_session_id,
+                );
+                enqueued += 1;
+            }
+            if let Some(tx) = &tx {
+                let _ = tx.send(UiEvent::Status {
+                    message: format!("Queued {enqueued} remote copy/copies"),
+                });
+                if show_queue {
+                    let _ = tx.send(UiEvent::ShowQueue);
+                }
+            }
+            tracing::debug!(
+                queued,
+                enqueued,
+                "tab drop enqueued remote-to-remote copies"
+            );
+        });
+        if posted.is_err() {
+            tracing::error!("remote-copy queueing dropped (event loop gone)");
+        }
+    });
+}
+
+fn home_dir_string() -> String {
+    local_fs::home_dir().to_string_lossy().to_string()
+}
+
+/// Stores a per-tab status message and shows it when the tab is active.
+fn set_tab_status(state: &Rc<RefCell<AppState>>, message: &str) {
+    if let Some(tab) = state.borrow_mut().active_tab_mut() {
+        tab.status = message.to_string();
+    }
+    state.borrow().set_status(message);
+}
+
+/// Applies a pane-state snapshot to a background tab when a window-driven
+/// operation ran while another tab was active (currently only used by the
+/// session-id-keyed reload path, which skips the write in that case).
+#[allow(dead_code)]
+fn mark_tab_remote_dirty(state: &Rc<RefCell<AppState>>, session_id: u64) {
+    let mut st = state.borrow_mut();
+    if let Some(index) = st.tab_index_for_session(session_id) {
+        st.tabs[index].remote_dirty = true;
+    }
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -3120,8 +3961,12 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let mgr = Arc::clone(&state.borrow().transfer_manager);
         let hook_tx = ui_tx.clone();
-        mgr.set_refresh_hook(Some(Arc::new(move || {
-            let _ = hook_tx.send(UiEvent::ReloadRemote);
+        mgr.set_refresh_hook(Some(Arc::new(move |session_id: Option<u64>| {
+            let event = match session_id {
+                Some(session_id) => UiEvent::ReloadSession { session_id },
+                None => UiEvent::ReloadRemote,
+            };
+            let _ = hook_tx.send(event);
         })));
     }
     {
@@ -3143,6 +3988,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     "File \"{}\" already exists locally.\n\nRemote: {}\nLocal: {}\n\nOverwrite?",
                     info.name, info.source_info, info.dest_info
                 ),
+                transfer::TransferDirection::RemoteToRemote => format!(
+                    "File \"{}\" already exists on the destination server.\n\nSource: {}\nDestination: {}\n\nOverwrite?",
+                    info.name, info.source_info, info.dest_info
+                ),
             };
             prompt_overwrite_choice(&question)
         })));
@@ -3159,41 +4008,104 @@ fn main() -> Result<(), slint::PlatformError> {
                     break;
                 };
                 match event {
-                    UiEvent::Session { opt, client } => {
+                    UiEvent::Session { tab, opt, client } => {
                         let opt = *opt;
                         let scp_only = opt.protocol == Protocol::Scp
                             && opt.scp_transfer_mode == ScpTransferMode::ScpOnly;
                         let no_verify = opt.known_hosts_policy == KnownHostsPolicy::Off;
-                        {
+                        let supports_permissions =
+                            capabilities_for_protocol(opt.protocol).supports_permissions;
+                        // Link the session to its tab: the requested one when it
+                        // is tab-idle, else the active tab when free, else a
+                        // fresh tab (a tab never hosts two sessions).
+                        let (session_id, tab_active) = {
                             let mut st = state.borrow_mut();
-                            st.session = Some(opt.clone());
-                            st.client = Some(client);
-                            st.connection_started_at = Some(std::time::Instant::now());
-                            st.session_no_host_verification = no_verify;
+                            let session_id = st.alloc_session_id();
+                            // A console tab never hosts a file session, so it is
+                            // not a candidate even when it has no session id.
+                            let is_free = |tab: &crate::state::TabState| {
+                                tab.session_id.is_none() && !tab.console
+                            };
+                            let by_id = tab.and_then(|id| st.tab_index_by_id(id));
+                            let index = match by_id {
+                                Some(index) if is_free(&st.tabs[index]) => index,
+                                _ => {
+                                    if st.active_tab().is_some_and(is_free) {
+                                        st.active_tab
+                                    } else {
+                                        st.push_blank_tab(&home_dir_string())
+                                    }
+                                }
+                            };
+                            let active = st.active_tab == index;
+                            st.active_tab = index;
+                            st.sessions.insert(
+                                session_id,
+                                crate::state::SessionRecord {
+                                    id: session_id,
+                                    options: opt.clone(),
+                                    client: Some(client),
+                                    busy: false,
+                                    started_at: std::time::Instant::now(),
+                                    no_host_verification: no_verify,
+                                },
+                            );
+                            let status = format!(
+                                "Connected ({}) to {}",
+                                protocol_display_name(opt.protocol),
+                                opt.host
+                            );
+                            if let Some(tab_state) = st.tabs.get_mut(index) {
+                                tab_state.session_id = Some(session_id);
+                                tab_state.connecting = false;
+                                tab_state.right_is_local = false;
+                                tab_state.scp_panel = scp_only;
+                                tab_state.supports_permissions = supports_permissions;
+                                tab_state.status = status.clone();
+                                tab_state.right.path = "/".to_string();
+                                tab_state.right.entries.clear();
+                                tab_state.right.selected_rows.clear();
+                                tab_state.right.selected_flags.clear();
+                                tab_state.right.selected_row = -1;
+                                if !active {
+                                    tab_state.remote_dirty = true;
+                                }
+                            }
                             st.transfer_manager.set_session_options(Some(opt.clone()));
                             st.writeability.clear();
                             st.push_recent_server(&opt);
+                            (session_id, active)
+                        };
+                        sync_tab_bar(&ui, &state);
+                        if tab_active {
+                            ui.set_remote_connected(true);
+                            // The right pane no longer browses a local folder.
+                            stop_local_watcher(1);
+                            // Permissions are only meaningful for protocols with
+                            // a metadata/chmod contract (SSH family, FTP).
+                            ui.set_right_supports_permissions(supports_permissions);
+                            ui.set_scp_panel_visible(scp_only);
+                            ui.set_right_path("/".into());
+                            ui.set_title_text(
+                                crate::connect::tr(
+                                    "FreeSCP — local/remote (%1)",
+                                    std::slice::from_ref(
+                                        &protocol_display_name(opt.protocol).to_string(),
+                                    ),
+                                )
+                                .into(),
+                            );
+                            request_remote_reload(&ui, &state);
                         }
-                        ui.set_remote_connected(true);
-                        // The right pane no longer browses a local folder.
-                        stop_local_watcher(1);
-                        // Permissions are only meaningful for protocols with
-                        // a metadata/chmod contract (SSH family, FTP).
-                        ui.set_right_supports_permissions(
-                            capabilities_for_protocol(opt.protocol).supports_permissions,
+                        set_tab_status(
+                            &state,
+                            &format!(
+                                "Connected ({}) to {}",
+                                protocol_display_name(opt.protocol),
+                                opt.host
+                            ),
                         );
-                        ui.set_scp_panel_visible(scp_only);
-                        ui.set_right_path("/".into());
-                        ui.set_title_text(
-                            crate::connect::tr(
-                                "FreeSCP — local/remote (%1)",
-                                std::slice::from_ref(
-                                    &protocol_display_name(opt.protocol).to_string(),
-                                ),
-                            )
-                            .into(),
-                        );
-                        request_remote_reload(&ui, &state);
+                        tracing::debug!(session_id, tab_active, "session installed");
                     }
                     UiEvent::ReloadLocal { path } => reload_local(&ui, &state, &path),
                     UiEvent::ReloadRightLocal { path } => reload_right_local(&ui, &state, &path),
@@ -3216,6 +4128,14 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                     }
                     UiEvent::ReloadRemote => request_remote_reload(&ui, &state),
+                    UiEvent::ReloadSession { session_id } => {
+                        let active = state.borrow().active_session_id() == Some(session_id);
+                        if active {
+                            request_remote_reload(&ui, &state);
+                        } else {
+                            mark_tab_remote_dirty(&state, session_id);
+                        }
+                    }
                     UiEvent::ShowQueue => {
                         let mgr = Arc::clone(&state.borrow().transfer_manager);
                         transfer::open_queue_dialog(&ui, mgr);
@@ -3228,15 +4148,154 @@ fn main() -> Result<(), slint::PlatformError> {
                         ui.set_right_path(normalized.clone().into());
                         request_remote_reload(&ui, &state);
                     }
-                    UiEvent::Status { message } => state.borrow().set_status(&message),
+                    UiEvent::Status { message } => set_tab_status(&state, &message),
                     UiEvent::InvalidateWriteability { dir } => {
                         state.borrow_mut().writeability.invalidate(&dir);
                     }
-                    UiEvent::ReturnClient(client) => {
-                        let mut st = state.borrow_mut();
-                        if st.client.is_none() {
-                            st.client = Some(client);
+                    UiEvent::ReturnClient { session_id, client } => {
+                        state.borrow_mut().return_session_client(session_id, client);
+                        sync_tab_bar(&ui, &state);
+                    }
+                    UiEvent::ConnectFailed { tab } => {
+                        if let Some(tab_id) = tab {
+                            let mut st = state.borrow_mut();
+                            if let Some(index) = st.tab_index_by_id(tab_id) {
+                                st.tabs[index].connecting = false;
+                            }
                         }
+                        sync_tab_bar(&ui, &state);
+                    }
+                    UiEvent::ConsoleSession {
+                        tab,
+                        opt,
+                        session,
+                        events,
+                    } => {
+                        let opt = *opt;
+                        // Link the terminal to its tab like an SCP session does:
+                        // the requested tab when it is free, else the active tab,
+                        // else a fresh tab (a tab hosts one session).
+                        let tab_id = {
+                            let mut st = state.borrow_mut();
+                            let is_free = |tab: &crate::state::TabState| {
+                                tab.session_id.is_none() && !tab.console
+                            };
+                            let by_id = tab.and_then(|id| st.tab_index_by_id(id));
+                            let index = match by_id {
+                                Some(index) if is_free(&st.tabs[index]) => index,
+                                _ => {
+                                    if st.active_tab().is_some_and(is_free) {
+                                        st.active_tab
+                                    } else {
+                                        st.push_blank_tab(&home_dir_string())
+                                    }
+                                }
+                            };
+                            st.active_tab = index;
+                            let tab_id = st.tabs[index].id;
+                            let status = format!(
+                                "Connected ({}) to {}",
+                                protocol_display_name(opt.protocol),
+                                opt.host
+                            );
+                            let (cols, rows) = console_grid(&ui).unwrap_or((80, 24));
+                            let mut console = crate::console::ConsoleState::new(cols, rows);
+                            console.attach(session);
+                            crate::console::insert(
+                                tab_id,
+                                crate::console::ConsoleSession {
+                                    options: opt.clone(),
+                                    started_at: std::time::Instant::now(),
+                                    console,
+                                },
+                            );
+                            if let Some(tab_state) = st.tabs.get_mut(index) {
+                                tab_state.console = true;
+                                tab_state.connecting = false;
+                                tab_state.right_is_local = false;
+                                tab_state.scp_panel = false;
+                                // Telnet has no chmod/metadata contract.
+                                tab_state.supports_permissions = false;
+                                tab_state.status = status.clone();
+                                tab_state.remote_dirty = false;
+                                tab_state.right.path = "/".to_string();
+                                tab_state.right.entries.clear();
+                                tab_state.right.selected_rows.clear();
+                                tab_state.right.selected_flags.clear();
+                                tab_state.right.selected_row = -1;
+                            }
+                            st.push_recent_server(&opt);
+                            tab_id
+                        };
+                        spawn_console_forwarder(&state, tab_id, events);
+                        let tab_active = state
+                            .borrow()
+                            .active_tab()
+                            .is_some_and(|tab| tab.id == tab_id);
+                        if tab_active {
+                            // The terminal owns the right pane: no local watcher
+                            // and no remote file browser behind it.
+                            stop_local_watcher(1);
+                            load_tab_console(&ui, &state);
+                            set_tab_status(
+                                &state,
+                                &format!(
+                                    "Connected ({}) to {}",
+                                    protocol_display_name(opt.protocol),
+                                    opt.host
+                                ),
+                            );
+                        }
+                        apply_tab_chrome(&ui, &state);
+                        sync_tab_bar(&ui, &state);
+                        tracing::debug!(tab_id, "telnet console installed");
+                    }
+                    UiEvent::ConsoleData { tab, bytes } => {
+                        let active = state
+                            .borrow()
+                            .active_tab()
+                            .is_some_and(|tab_state| tab_state.id == tab);
+                        if crate::console::with_session(tab, |session| session.console.feed(&bytes))
+                            .is_none()
+                        {
+                            continue;
+                        }
+                        // A background tab only gets the parser fed; its rows are
+                        // rebuilt when the tab is activated.
+                        if active {
+                            console_sync(&ui, &state);
+                        }
+                    }
+                    UiEvent::ConsoleClosed { tab, message } => {
+                        let active = state
+                            .borrow()
+                            .active_tab()
+                            .is_some_and(|tab_state| tab_state.id == tab);
+                        let status = message
+                            .clone()
+                            .unwrap_or_else(|| "Telnet connection closed".to_string());
+                        if crate::console::with_session(tab, |session| session.console.set_closed())
+                            .is_none()
+                        {
+                            continue;
+                        }
+                        {
+                            let mut st = state.borrow_mut();
+                            if let Some(tab_state) =
+                                st.tabs.iter_mut().find(|tab_state| tab_state.id == tab)
+                            {
+                                tab_state.status = status.clone();
+                            }
+                        }
+                        if active {
+                            // The screen (and its scrollback) stays on show.
+                            console_sync(&ui, &state);
+                            ui.set_status_text(status.clone().into());
+                            if let Some(message) = message {
+                                crate::connect::show_alert("Connection error", &message);
+                            }
+                        }
+                        sync_tab_bar(&ui, &state);
                     }
                 }
             }
@@ -3250,7 +4309,73 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         ui.on_connect_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            connect::open(&ui, &state.borrow());
+            // A second attempt while one is in flight must not reserve a tab:
+            // `connect::open` refuses it, and the tab bar would otherwise stay
+            // on "Connecting…" for an attempt that never started.
+            if connect::connect_in_progress() {
+                connect::open(&ui, &state.borrow(), None);
+                return;
+            }
+            // Reserve the tab this connect targets: the active one when it is
+            // idle, else a fresh tab. The tab bar shows "Connecting…" until
+            // the session installs (or `ConnectFailed` clears the flag).
+            let tab = reserve_connect_tab(&ui, &state);
+            connect::open(&ui, &state.borrow(), Some(tab));
+            sync_tab_bar(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_tab_selected(move |index| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let index = index.max(0) as usize;
+            if state.borrow().active_tab == index {
+                return;
+            }
+            activate_tab(&ui, &state, index);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_new_tab_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let home = home_dir_string();
+            let (index, id) = {
+                let mut st = state.borrow_mut();
+                let index = st.push_blank_tab(&home);
+                st.active_tab = index;
+                (index, st.tabs[index].id)
+            };
+            let _ = id;
+            activate_tab(&ui, &state, index);
+            set_tab_status(&state, "New tab (local/local)");
+            sync_tab_bar(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_tab_close_requested(move |index| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            close_tab(&ui, &state, index.max(0) as usize);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_tab_drop_received(move |index| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            handle_tab_drop(&ui, &state, index.max(0) as usize);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_copy_to_session_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            open_session_picker(&ui, &state);
         });
     }
     {
@@ -3258,18 +4383,36 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         ui.on_disconnect_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            let client = {
+            // A terminal tab closes its console and goes back to a local right
+            // pane; the SCP path below has no session to tear down.
+            if disconnect_console_tab(&ui, &state) {
+                return;
+            }
+            // Disconnect only the active tab's session; other tabs keep
+            // their connections (and their queued transfers).
+            let (session_id, client, local_root) = {
                 let mut st = state.borrow_mut();
-                st.session = None;
-                let client = st.client.take();
-                st.connection_started_at = None;
-                st.session_no_host_verification = false;
-                client
+                let Some(tab) = st.active_tab_mut() else {
+                    return;
+                };
+                let session_id = tab.session_id.take();
+                tab.right_is_local = true;
+                tab.scp_panel = false;
+                tab.supports_permissions = true;
+                tab.remote_dirty = false;
+                let local_root = tab.right_local_root.clone().unwrap_or_else(home_dir_string);
+                tab.right.path = local_root.clone();
+                let client = session_id
+                    .and_then(|id| st.sessions.remove(&id))
+                    .and_then(|mut record| record.client.take());
+                (session_id, client, local_root)
             };
-            connect::reset_indicators(&state.borrow());
-            // C++ disconnectSftp() calls transferMgr_->clearClient(), stopping
-            // the active transfers before the session goes away.
-            state.borrow().transfer_manager.cancel_all();
+            if let Some(session_id) = session_id {
+                state
+                    .borrow()
+                    .transfer_manager
+                    .cancel_for_session(session_id);
+            }
             if let Some(mut client) = client {
                 let handle = state.borrow().runtime_handle();
                 handle.spawn(async move {
@@ -3278,7 +4421,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             // Parked permission dialogs belong to the closed session.
             PERMISSION_FLOWS.with(|flows| {
-                for (flow, _, _) in flows.borrow_mut().drain(..) {
+                for (flow, _, _, _) in flows.borrow_mut().drain(..) {
                     flow.dismiss();
                 }
             });
@@ -3289,18 +4432,106 @@ fn main() -> Result<(), slint::PlatformError> {
             ui.set_risk_banner_visible(false);
             ui.set_secrets_warning_visible(secrets::insecure_fallback_active());
             ui.set_title_text(crate::connect::tr("FreeSCP — local/local", &[]).into());
-            // C++ disconnectSftp() puts the right pane back on the local
-            // model at its previous root.
-            let local_root = state
-                .borrow()
-                .right_local_path
-                .clone()
-                .unwrap_or_else(|| local_fs::home_dir().to_string_lossy().to_string());
             reload_right_local(&ui, &state, &local_root);
-            state.borrow().set_status("Disconnected");
+            set_tab_status(&state, "Disconnected");
+            sync_tab_bar(&ui, &state);
             if state.borrow().prefs.open_site_manager_on_disconnect {
                 site_manager::open(&ui, &state.borrow());
             }
+        });
+    }
+    // ---- embedded Telnet console -------------------------------------------
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_console_key_text(move |text, ctrl, alt, shift| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let text = text.to_string();
+            with_active_console(&ui, &state, |console| {
+                console.key_text(&text, ctrl, alt, shift);
+            });
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_console_special_key(move |code| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            with_active_console(&ui, &state, |console| console.special_key(code));
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_console_paste_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let text =
+                match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
+                    Ok(text) => text,
+                    Err(err) => {
+                        tracing::debug!("console paste without clipboard text: {err}");
+                        return;
+                    }
+                };
+            with_active_console(&ui, &state, |console| console.paste(&text));
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_console_copy_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let selection = (
+                (
+                    ui.get_console_sel_start_row(),
+                    ui.get_console_sel_start_col(),
+                ),
+                (ui.get_console_sel_end_row(), ui.get_console_sel_end_col()),
+            );
+            let text = active_console_tab(&state)
+                .and_then(|tab_id| {
+                    crate::console::with_session(tab_id, |session| {
+                        session.console.selection_text(selection.0, selection.1)
+                    })
+                })
+                .unwrap_or_default();
+            if text.is_empty() {
+                ui.set_status_text("Nothing selected".into());
+                return;
+            }
+            match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(text)) {
+                Ok(()) => ui.set_status_text("Selection copied".into()),
+                Err(err) => {
+                    tracing::warn!("could not copy the console selection: {err}");
+                    ui.set_status_text("Could not access the system clipboard".into());
+                }
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_console_clear_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            with_active_console(&ui, &state, |console| console.clear());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_console_scroll_lines(move |lines| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            with_active_console(&ui, &state, |console| console.scroll_lines(lines));
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        // Periodic tick from ConsoleView while connected: re-reads the pane
+        // grid so window resizes reach the terminal and the Telnet NAWS size.
+        ui.on_console_grid_changed(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            console_sync(&ui, &state);
         });
     }
     {
@@ -3308,6 +4539,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         ui.on_upload_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
+            if console_owns_right_pane(&ui) {
+                return;
+            }
             queue_uploads(&ui, &state, false);
         });
     }
@@ -3316,6 +4550,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         ui.on_download_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
+            if console_owns_right_pane(&ui) {
+                return;
+            }
             queue_downloads(&ui, &state, false);
         });
     }
@@ -3324,6 +4561,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         ui.on_copy_left_to_right(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
+            if console_owns_right_pane(&ui) {
+                return;
+            }
             if right_pane_is_local(&ui) {
                 let sources: Vec<PathBuf> = selected_left_seeds(&ui)
                     .into_iter()
@@ -3371,6 +4611,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         ui.on_move_left_to_right(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
+            if console_owns_right_pane(&ui) {
+                return;
+            }
             if right_pane_is_local(&ui) {
                 let sources: Vec<PathBuf> = selected_left_seeds(&ui)
                     .into_iter()
@@ -3504,11 +4747,14 @@ fn main() -> Result<(), slint::PlatformError> {
             let dialog_open = dialog.clone_strong();
             let dialog_weak = dialog_open.as_weak();
             dialog_open.on_open_selected(move || {
-                let Some(dialog_open) = dialog_weak.upgrade() else { return };
+                let Some(dialog_open) = dialog_weak.upgrade() else {
+                    return;
+                };
                 let Some(ui) = ui_weak.upgrade() else { return };
                 match dialog_open.get_active_tab() {
                     0 => {
-                        let Some(idx) = usize::try_from(dialog_open.get_local_selected()).ok() else {
+                        let Some(idx) = usize::try_from(dialog_open.get_local_selected()).ok()
+                        else {
                             return;
                         };
                         let Some(path) = dialog_open.get_local_paths().row_data(idx) else {
@@ -3518,7 +4764,8 @@ fn main() -> Result<(), slint::PlatformError> {
                         reload_local(&ui, &state, &path);
                     }
                     1 => {
-                        let Some(idx) = usize::try_from(dialog_open.get_remote_selected()).ok() else {
+                        let Some(idx) = usize::try_from(dialog_open.get_remote_selected()).ok()
+                        else {
                             return;
                         };
                         let Some(path) = dialog_open.get_remote_paths().row_data(idx) else {
@@ -3526,7 +4773,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         };
                         {
                             let st = state.borrow();
-                            if st.client.is_none() {
+                            if st.active_session_id().is_none() {
                                 st.set_status(
                                     "Connect to a remote server to open remote path history.",
                                 );
@@ -3540,20 +4787,17 @@ fn main() -> Result<(), slint::PlatformError> {
                         request_remote_reload(&ui, &state);
                     }
                     2 => {
-                        let Some(idx) = usize::try_from(dialog_open.get_server_selected()).ok() else {
+                        let Some(idx) = usize::try_from(dialog_open.get_server_selected()).ok()
+                        else {
                             return;
                         };
                         let Some(opt) = servers.get(idx).map(|(opt, _label)| opt.clone()) else {
                             return;
                         };
-                        let st = state.borrow_mut();
-                        if st.client.is_some() {
-                            st.set_status(
-                                "Disconnect the current remote session before opening another server.",
-                            );
-                            return;
-                        }
-                        connect::start_connect(&st, opt);
+                        let st = state.borrow();
+                        // Connecting into a tab that already has a session
+                        // opens a fresh tab (see `UiEvent::Session`).
+                        connect::start_connect(&st, None, opt);
                     }
                     _ => return,
                 }
@@ -4222,10 +5466,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 request_remote_reload(&ui, &state);
             } else {
                 // Double-click on a file downloads it into the local pane.
-                let Some(session) = state.borrow().session.clone() else {
+                let Some(session) = state.borrow().active_session_options() else {
                     ui.set_status_text("Not connected".into());
                     return;
                 };
+                let session_id = state.borrow().active_session_id();
                 let local_dest = Path::new(&ui.get_left_path().to_string())
                     .join(&entry.name)
                     .to_string_lossy()
@@ -4240,7 +5485,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         return;
                     }
                 };
-                mgr.enqueue_download(client, target.clone(), local_dest, false);
+                mgr.enqueue_download(client, target.clone(), local_dest, false, session_id);
                 if state.borrow().prefs.show_queue_on_enqueue {
                     state.borrow().request_show_queue();
                 }
@@ -4274,17 +5519,14 @@ fn main() -> Result<(), slint::PlatformError> {
                 );
                 return;
             }
-            let client = {
-                let mut st = state.borrow_mut();
-                st.client.take()
-            };
-            if client.is_none() {
+            let Some((session_id, client)) = take_active_client(&state) else {
                 ui.set_status_text("Not connected".into());
                 return;
-            }
+            };
             run_prompted_remote_op(
                 &state,
-                client,
+                session_id,
+                Some(client),
                 "New folder",
                 "Name:",
                 String::new(),
@@ -4340,17 +5582,14 @@ fn main() -> Result<(), slint::PlatformError> {
                 );
                 return;
             }
-            let client = {
-                let mut st = state.borrow_mut();
-                st.client.take()
-            };
-            if client.is_none() {
+            let Some((session_id, client)) = take_active_client(&state) else {
                 ui.set_status_text("Not connected".into());
                 return;
-            }
+            };
             run_prompted_remote_op(
                 &state,
-                client,
+                session_id,
+                Some(client),
                 "New file",
                 "Name:",
                 String::new(),
@@ -4440,17 +5679,14 @@ fn main() -> Result<(), slint::PlatformError> {
                 );
                 return;
             }
-            let client = {
-                let mut st = state.borrow_mut();
-                st.client.take()
-            };
-            if client.is_none() {
+            let Some((session_id, client)) = take_active_client(&state) else {
                 ui.set_status_text("Not connected".into());
                 return;
-            }
+            };
             run_prompted_remote_op(
                 &state,
-                client,
+                session_id,
+                Some(client),
                 "Rename",
                 "New name:",
                 old_name.clone(),
@@ -4537,11 +5773,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             let parent = ui.get_right_path().to_string();
-            let client = {
-                let mut st = state.borrow_mut();
-                st.client.take()
-            };
-            let Some(client) = client else {
+            let Some((session_id, client)) = take_active_client(&state) else {
                 ui.set_status_text("Not connected".into());
                 return;
             };
@@ -4559,9 +5791,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     };
                 if let Some(tx) = &tx {
                     let _ = tx.send(UiEvent::Status { message });
-                    let _ = tx.send(UiEvent::ReturnClient(client));
-                    let _ = tx.send(UiEvent::ReloadRemote);
                 }
+                return_client(&tx, session_id, client);
+                request_reload_session(&tx, session_id);
             });
         });
     }
@@ -4572,10 +5804,9 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = ui_weak.upgrade() else { return };
             // C++ changeRemotePermissions: capability gate, then exactly one
             // selected row.
-            let supports =
-                state.borrow().session.as_ref().is_some_and(|opt| {
-                    capabilities_for_protocol(opt.protocol).supports_permissions
-                });
+            let supports = state.borrow().active_session().is_some_and(|record| {
+                capabilities_for_protocol(record.options.protocol).supports_permissions
+            });
             if !supports {
                 crate::connect::show_alert(
                     "Permissions",
@@ -4599,9 +5830,15 @@ fn main() -> Result<(), slint::PlatformError> {
             };
             let current = ui.get_right_path().to_string();
             let target = join_remote(&current, &entry.name);
+            let Some(session_id) = state.borrow().active_session_id() else {
+                ui.set_status_text("Not connected".into());
+                return;
+            };
             let flow = remote::open_permissions(&ui, entry.clone(), entry.mode.max(0) as u32);
             PERMISSION_FLOWS.with(|flows| {
-                flows.borrow_mut().push((flow, target, entry.is_dir));
+                flows
+                    .borrow_mut()
+                    .push((flow, target, entry.is_dir, session_id));
             });
         });
     }
@@ -4613,7 +5850,7 @@ fn main() -> Result<(), slint::PlatformError> {
             // Port of MainWindowRemoteOps.cpp:openRightRemoteTerminal — the
             // command builder honors Terminal/forceInteractiveLogin and
             // Terminal/enableSftpCliFallback (ssh with an sftp CLI fallback).
-            let session = state.borrow().session.clone();
+            let session = state.borrow().active_session_options();
             let Some(session) = session else {
                 crate::connect::show_alert(
                     "Open in terminal",
@@ -4683,23 +5920,40 @@ fn main() -> Result<(), slint::PlatformError> {
         elapsed_timer.start(TimerMode::Repeated, Duration::from_secs(1), move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             let st = state.borrow();
-            connect::update_indicators(&st);
-            if st.connection_started_at.is_some() {
-                let secs = connect::indicators_elapsed_secs();
+            if let Some(record) = st.active_session() {
                 ui.set_connection_elapsed_text(
-                    format!("Session: {}", format_elapsed(Duration::from_secs(secs))).into(),
+                    format!("Session: {}", format_elapsed(record.started_at.elapsed())).into(),
                 );
+                ui.set_connection_type_text(
+                    format!(
+                        "Type: {}",
+                        freescp_core::protocol_display_name(record.options.protocol)
+                    )
+                    .into(),
+                );
+                ui.set_risk_banner_visible(record.no_host_verification);
+            } else if let Some((protocol, elapsed)) =
+                active_console_tab(&state).and_then(|tab_id| {
+                    crate::console::with_session(tab_id, |session| {
+                        (
+                            freescp_core::protocol_display_name(session.options.protocol)
+                                .to_string(),
+                            format_elapsed(session.started_at.elapsed()),
+                        )
+                    })
+                })
+            {
+                // Terminal tabs have no `SessionRecord`; the console carries
+                // the protocol and the install time.
+                ui.set_connection_elapsed_text(format!("Session: {elapsed}").into());
+                ui.set_connection_type_text(format!("Type: {protocol}").into());
+                ui.set_risk_banner_visible(false);
+            } else {
+                ui.set_connection_elapsed_text("Session: --:--:--".into());
+                ui.set_connection_type_text("Type: None".into());
+                ui.set_risk_banner_visible(false);
             }
-            let type_text = match &st.session {
-                Some(opts) => format!(
-                    "Type: {}",
-                    freescp_core::protocol_display_name(opts.protocol)
-                ),
-                None => "Type: None".to_string(),
-            };
-            ui.set_connection_type_text(type_text.into());
-            ui.set_remote_connected(st.client.is_some());
-            ui.set_risk_banner_visible(st.session_no_host_verification);
+            ui.set_remote_connected(st.active_tab().is_some_and(|tab| tab.is_connected()));
         });
     }
 
@@ -4756,7 +6010,7 @@ fn main() -> Result<(), slint::PlatformError> {
     stop_session_health_timer();
     permissions_timer.stop();
     PERMISSION_FLOWS.with(|flows| {
-        for (flow, _, _) in flows.borrow_mut().drain(..) {
+        for (flow, _, _, _) in flows.borrow_mut().drain(..) {
             flow.dismiss();
         }
     });
@@ -4764,6 +6018,9 @@ fn main() -> Result<(), slint::PlatformError> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod console_view_tests;
 
 #[cfg(test)]
 mod layout_tests {
@@ -4859,9 +6116,10 @@ mod layout_tests {
         });
         ui.set_left_pane_width(691.0);
         // Right pane spans x = 698..1200. Row offsets inside the pane:
-        // toolbar 32 + breadcrumbs 24 + path 30 -> header center at y = 65 + 32 + 24 + 30 + 12.
+        // session tabs 30 + toolbar 32 + breadcrumbs 24 + path 30 -> header
+        // center at y = 65 + 30 + 32 + 24 + 30 + 12.
         let handle_x = 698.0 + (1200.0 - 698.0) - 120.0;
-        let y = 65.0 + 32.0 + 24.0 + 30.0 + 12.0;
+        let y = 65.0 + 30.0 + 32.0 + 24.0 + 30.0 + 12.0;
         ui.window().dispatch_event(WindowEvent::PointerPressed {
             position: slint::LogicalPosition::new(handle_x, y),
             button: slint::platform::PointerEventButton::Left,
@@ -5029,6 +6287,167 @@ mod dnd_tests {
         let (renames, skipped) = remote_move_renames(&[("/srv/b".to_string(), true)], "/srv/b/n");
         assert!(renames.is_empty());
         assert_eq!(skipped, 1);
+    }
+}
+
+#[cfg(test)]
+mod tab_tests {
+    use super::{apply_tab_chrome, load_tab_panes, stash_active_tab, sync_tab_bar};
+    use crate::state::{AppState, SessionRecord};
+    use crate::ui::main_window::{FileEntry, MainWindow};
+    use freescp_core::{Protocol, SessionOptions};
+    use slint::{Model, VecModel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::time::Instant;
+
+    fn entry(name: &str, is_dir: bool) -> FileEntry {
+        FileEntry {
+            name: name.into(),
+            is_dir,
+            size: 0,
+            has_size: true,
+            mtime: 0,
+            mode: 0,
+            type_label: if is_dir {
+                "Folder".into()
+            } else {
+                "Text".into()
+            },
+            permissions: "".into(),
+        }
+    }
+
+    /// Mimics `activate_tab` (minus the filesystem watchers): stash the
+    /// outgoing tab, load the incoming one, refresh the chrome and tab bar.
+    fn switch_to(ui: &MainWindow, state: &Rc<RefCell<AppState>>, index: usize) {
+        stash_active_tab(ui, state);
+        state.borrow_mut().active_tab = index;
+        load_tab_panes(ui, state);
+        apply_tab_chrome(ui, state);
+        sync_tab_bar(ui, state);
+    }
+
+    fn two_blank_tabs() -> Rc<RefCell<AppState>> {
+        let state = Rc::new(RefCell::new(AppState::new()));
+        {
+            let mut st = state.borrow_mut();
+            st.push_blank_tab("/tmp/tab-one");
+            st.push_blank_tab("/tmp/tab-two");
+        }
+        state
+    }
+
+    /// Switching tabs must round-trip both panes (paths, entries, sort state,
+    /// selection and status) through `TabState`, not just the visible path.
+    #[test]
+    fn stash_and_load_round_trips_pane_state() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().unwrap();
+        let state = two_blank_tabs();
+
+        ui.set_left_path("/srv/alpha".into());
+        ui.set_left_entries(
+            Rc::new(VecModel::from(vec![
+                entry("a.txt", false),
+                entry("dir", true),
+            ]))
+            .into(),
+        );
+        ui.set_left_sort_column(3);
+        ui.set_left_sort_ascending(false);
+        ui.set_left_selected_row(1);
+        ui.set_left_selected_rows(Rc::new(VecModel::from(vec![1])).into());
+        ui.set_left_selected_flags(Rc::new(VecModel::from(vec![false, true])).into());
+        ui.set_right_path("/remote/alpha".into());
+        ui.set_status_text("alpha status".into());
+
+        // Switch to the blank tab: the window shows that tab's own state and
+        // tab 0's state is preserved in `AppState`.
+        switch_to(&ui, &state, 1);
+        {
+            let st = state.borrow();
+            let tab = &st.tabs[0];
+            assert_eq!(tab.left.path, "/srv/alpha");
+            assert_eq!(tab.left.entries.len(), 2);
+            assert_eq!(tab.left.sort_column, 3);
+            assert!(!tab.left.sort_ascending);
+            assert_eq!(tab.left.selected_row, 1);
+            assert_eq!(tab.left.selected_rows, vec![1]);
+            assert_eq!(tab.left.selected_flags, vec![false, true]);
+            assert_eq!(tab.right.path, "/remote/alpha");
+            assert_eq!(tab.status, "alpha status");
+        }
+        assert_eq!(ui.get_left_path(), "/tmp/tab-two");
+        assert_eq!(ui.get_left_entries().row_count(), 0);
+        assert_eq!(ui.get_status_text(), "Ready");
+
+        // Edit tab 1, then switch back: tab 0 comes back exactly as stashed.
+        ui.set_left_path("/srv/beta".into());
+        ui.set_status_text("beta status".into());
+        switch_to(&ui, &state, 0);
+        assert_eq!(ui.get_left_path(), "/srv/alpha");
+        assert_eq!(ui.get_right_path(), "/remote/alpha");
+        assert_eq!(ui.get_status_text(), "alpha status");
+        assert_eq!(ui.get_left_sort_column(), 3);
+        assert!(!ui.get_left_sort_ascending());
+        assert_eq!(ui.get_left_selected_row(), 1);
+        assert_eq!(ui.get_left_entries().row_count(), 2);
+
+        // ... and tab 1 keeps its own edits.
+        switch_to(&ui, &state, 1);
+        assert_eq!(ui.get_left_path(), "/srv/beta");
+        assert_eq!(ui.get_status_text(), "beta status");
+    }
+
+    /// The tab bar mirrors `AppState`: connected tabs show `user@host` plus the
+    /// protocol, local tabs show "Local", and only the active tab is flagged.
+    #[test]
+    fn tab_bar_rows_reflect_connection_state() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().unwrap();
+        let state = two_blank_tabs();
+        {
+            let mut st = state.borrow_mut();
+            let session_id = st.alloc_session_id();
+            let options = SessionOptions {
+                host: "example.com".into(),
+                username: "luis".into(),
+                protocol: Protocol::Sftp,
+                ..SessionOptions::default()
+            };
+            st.sessions.insert(
+                session_id,
+                SessionRecord {
+                    id: session_id,
+                    options,
+                    client: None,
+                    busy: true,
+                    started_at: Instant::now(),
+                    no_host_verification: true,
+                },
+            );
+            st.tabs[1].session_id = Some(session_id);
+            st.tabs[1].right_is_local = false;
+            st.active_tab = 1;
+        }
+
+        sync_tab_bar(&ui, &state);
+
+        let rows = ui.get_tabs();
+        assert_eq!(rows.row_count(), 2);
+        let local = rows.row_data(0).unwrap();
+        assert_eq!(local.title, "Local");
+        assert_eq!(local.subtitle, "");
+        assert!(!local.connected);
+        assert!(!local.active);
+        let remote = rows.row_data(1).unwrap();
+        assert_eq!(remote.title, "luis@example.com");
+        assert_eq!(remote.subtitle, "SFTP");
+        assert!(remote.connected);
+        assert!(remote.active);
+        assert!(remote.busy);
+        assert_eq!(ui.get_active_tab_index(), 1);
     }
 }
 

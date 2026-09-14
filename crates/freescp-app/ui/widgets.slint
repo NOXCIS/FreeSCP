@@ -1,0 +1,284 @@
+// Shared UI widgets for the FreeSCP Slint front end.
+//
+// Imported by the entry `.slint` files (main-window.slint,
+// connection-dialog.slint, settings.slint, site-manager.slint, ...) and never
+// compiled on its own, so it has no Rust API of its own. Entry files still
+// re-export the components Rust uses (see build.rs).
+//
+// The `@tr` defaults below (Show/Hide, Choose…) are filled into the gettext
+// catalogs by scripts/po_fill_slint_contexts.py, which copies the translation
+// of the same source text from the context that used to hold it.
+
+import { Button, LineEdit } from "std-widgets.slint";
+
+// Icon-only toolbar button (26px wide; stretches vertically inside toolbars).
+export component ToolIcon inherits TouchArea {
+    in property <image> source;
+    in property <string> tooltip: "";
+    width: 26px;
+    mouse-cursor: MouseCursor.pointer;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover ? (root.enabled ? #3a3a44 : #00000000) : #00000000;
+        border-radius: 4px;
+    }
+    Image {
+        source: root.source;
+        width: 15px;
+        height: 15px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        opacity: root.enabled ? 1.0 : 0.35;
+    }
+    Tooltip { text: @markdown("\{root.tooltip}"); }
+}
+
+// Toolbar button with icon and text. Width sizes to the label; min-width
+// keeps the layout from squeezing labels when the toolbar is crowded.
+export component ToolTextButton inherits TouchArea {
+    in property <image> source;
+    in property <string> text;
+    in property <string> tooltip: "";
+    mouse-cursor: MouseCursor.pointer;
+    property <length> content-w: 7px + 15px + 5px + label.preferred-width + 10px;
+    width: root.content-w;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover ? (root.enabled ? #3a3a44 : #00000000) : #00000000;
+        border-radius: 4px;
+    }
+    Image {
+        source: root.source;
+        width: 15px;
+        height: 15px;
+        x: 7px;
+        y: (parent.height - self.height) / 2;
+        opacity: root.enabled ? 1.0 : 0.35;
+    }
+    label := Text {
+        text: root.text;
+        x: 27px;
+        y: 0px;
+        height: parent.height;
+        vertical-alignment: center;
+        color: root.enabled ? #e6e6e9 : #6f6f77;
+        font-size: 12px;
+    }
+    Tooltip { text: @markdown("\{root.tooltip}"); }
+}
+
+// One row of an in-window context menu popup. `compact` matches the tighter
+// rows used by the transfer-queue row menu (24px, inset highlight).
+export component MenuRow inherits TouchArea {
+    in property <string> text;
+    in property <bool> compact: false;
+    height: root.compact ? 24px : 26px;
+    mouse-cursor: MouseCursor.pointer;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover && root.enabled ? #3a3a44 : #00000000;
+        border-radius: root.compact ? 4px : 0px;
+    }
+    Text {
+        text: root.text;
+        x: root.compact ? 8px : 10px;
+        y: 0px;
+        width: parent.width - (root.compact ? 16px : 20px);
+        height: parent.height;
+        vertical-alignment: center;
+        overflow: elide;
+        color: root.enabled ? #e6e6e9 : #6f6f77;
+        font-size: 12px;
+    }
+}
+
+// Menu row with a leading check glyph (the pane-header column menus).
+// Two-way bind `checked` to a visibility property; clicking toggles it.
+export component MenuCheckRow inherits TouchArea {
+    in property <string> text;
+    in-out property <bool> checked;
+    height: 26px;
+    mouse-cursor: MouseCursor.pointer;
+    clicked => { root.checked = !root.checked; }
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover ? #3a3a44 : #00000000;
+    }
+    Text {
+        text: "✓";
+        x: 8px;
+        width: 14px;
+        height: parent.height;
+        vertical-alignment: center;
+        color: #4a90d9;
+        font-size: 12px;
+        visible: root.checked;
+    }
+    Text {
+        text: root.text;
+        x: 26px;
+        width: parent.width - 34px;
+        height: parent.height;
+        vertical-alignment: center;
+        overflow: elide;
+        color: #e6e6e9;
+        font-size: 12px;
+    }
+}
+
+// Opaque frame for menu PopupWindows (the popup surface itself is transparent).
+// Children go inside so the fill always paints behind the menu rows.
+export component MenuPopupFrame inherits Rectangle {
+    background: #2d2d32;
+    border-width: 1px;
+    border-color: #3c3c42;
+    border-radius: 4px;
+    @children
+}
+
+// Breadcrumb path-segment button.
+// NOTE: never bind `width` to `self.preferred-width` here — that makes the
+// width fixed in layout constraint terms and clamps every ancestor layout
+// (the whole pane stops stretching). min-width + label insets instead.
+export component CrumbButton inherits TouchArea {
+    in property <string> text;
+    height: 100%;
+    min-width: 22px;
+    mouse-cursor: MouseCursor.pointer;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover ? #3a3a44 : #00000000;
+        border-radius: 4px;
+    }
+    Text {
+        text: root.text;
+        x: 5px;
+        width: parent.width - 10px;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        color: #c9c9cf;
+        font-size: 12px;
+    }
+}
+
+// Menu bar button (plain text label with hover highlight).
+export component MenuBarButton inherits TouchArea {
+    in property <string> text;
+    in property <bool> open: false;
+    height: 100%;
+    min-width: 44px;
+    mouse-cursor: MouseCursor.pointer;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover || root.open ? #3a3a44 : #00000000;
+        border-radius: 4px;
+    }
+    Text {
+        text: root.text;
+        x: 8px;
+        width: parent.width - 16px;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        color: #e6e6e9;
+        font-size: 12px;
+    }
+}
+
+// Draggable boundary between two file columns, placed in the pane header.
+// `width-value` is two-way bound to the width of the column to the RIGHT of
+// the handle: dragging right shrinks that column and grows the columns to
+// its left (the Name column absorbs the remainder). The drag math is
+// incremental (width-value + cursor delta) so the handle tracks the cursor
+// 1:1 even though the handle itself moves while the column resizes.
+export component ColumnHandle inherits TouchArea {
+    in-out property <length> width-value;
+    in property <length> width-max: 420px;
+    property <length> anchor-x: 0px;
+    width: 9px;
+    mouse-cursor: MouseCursor.ew-resize;
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        width: root.pressed || root.has-hover ? 2px : 1px;
+        height: parent.height;
+        background: root.pressed ? #4a90d9 : (root.has-hover ? #9a9aa2 : #00000000);
+    }
+    pointer-event(event) => {
+        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+            root.anchor-x = self.pressed-x;
+        }
+    }
+    moved => {
+        if (self.pressed) {
+            root.width-value = clamp(root.width-value - (self.mouse-x - root.anchor-x), 32px, root.width-max);
+        }
+    }
+}
+
+// Label + control row (Settings and Site Manager editors). `label-width`
+// matches the pre-refactor per-dialog label columns (220px settings, 190px
+// site manager); `spacing` is set by the caller because the two dialogs
+// spaced label and control differently.
+export component FormRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <length> label-width: 220px;
+    spacing: 0px;
+    Text {
+        text: root.label;
+        width: root.label-width;
+        vertical-alignment: center;
+    }
+    @children
+}
+
+// Right-aligned dialog footer: the flexible spacer first, the buttons the
+// caller declares as children. `spacing` defaults to the dialogs' 8px.
+export component DialogFooter inherits HorizontalLayout {
+    spacing: 8px;
+    Rectangle { horizontal-stretch: 1; }
+    @children
+}
+
+// Password/passphrase field with the Show/Hide toggle used by the connection
+// dialog and the site-manager editor.
+export component PasswordEdit inherits HorizontalLayout {
+    in-out property <string> text;
+    in property <string> placeholder: "optional";
+    in-out property <bool> show: false;
+    spacing: 6px;
+    LineEdit {
+        text <=> root.text;
+        placeholder-text: root.placeholder;
+        input-type: root.show ? InputType.text : InputType.password;
+        horizontal-stretch: 1;
+    }
+    Button {
+        text: root.show ? @tr("Hide") : @tr("Show");
+        clicked => { root.show = !root.show; }
+    }
+}
+
+// LineEdit + "Choose…" file-browse button (keys, known_hosts, CA bundles).
+export component BrowseEdit inherits HorizontalLayout {
+    in-out property <string> text;
+    in property <string> placeholder: "";
+    in property <string> button-text: @tr("Choose…");
+    in property <bool> button-enabled: true;
+    callback browse-requested();
+    spacing: 6px;
+    LineEdit {
+        text <=> root.text;
+        placeholder-text: root.placeholder;
+        horizontal-stretch: 1;
+    }
+    Button {
+        text: root.button-text;
+        enabled: root.button-enabled;
+        clicked => { root.browse-requested(); }
+    }
+}

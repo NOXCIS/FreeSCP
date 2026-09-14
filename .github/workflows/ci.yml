@@ -7,6 +7,8 @@
 #                           then SFTP/SCP integration against a temporary SSH
 #                           server, including SOCKS5/HTTP-CONNECT proxy and
 #                           SSH jump-host transport variants)
+#   - both:                 website CSP guard (scripts/check_website_csp.py),
+#                           no Rust toolchain needed
 #
 # Integration test env contract: the suites in crates/freescp-core/tests/ self-
 # skip (print [SKIP] and pass) unless their FREESCP_IT_* env vars are set.
@@ -34,6 +36,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  website-csp:
+    # Guards the hand-written site in website/: its only <script> is a JSON-LD
+    # data block, so website/_headers can keep the strict `script-src 'none'`
+    # without any SHA-256 hash to maintain. Fails if an executable script is
+    # added without widening the policy deliberately.
+    name: Website CSP Guard
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check website ships no executable scripts
+        run: python3 scripts/check_website_csp.py
+
   quick-dev:
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     name: Quick Checks (push to dev)
@@ -412,6 +429,178 @@ jobs:
               main()
           PY
 
+      - name: Write Telnet integration server
+        run: |
+          cat > /tmp/freescp_telnet_server.py <<'PY'
+          import os
+          import socket
+          import threading
+
+          BIND_HOST = "127.0.0.1"
+          BIND_PORT = int(os.environ.get("IT_TELNET_PORT", "12323"))
+          USERNAME = os.environ.get("IT_TELNET_USER", "freescp_it")
+          PASSWORD = os.environ.get("IT_TELNET_PASS", "freescp_it_pass")
+
+          IAC, DONT, DO, WONT, WILL, SB, SE = 255, 254, 253, 252, 251, 250, 240
+          IAC_BYTE = b"\xff"
+          SUPPORTED = {1, 3, 24, 31}  # ECHO, SGA, TTYPE, NAWS
+
+
+          def negotiate(sock):
+              """Offer ECHO/SGA and ask for TTYPE/NAWS, like a real server."""
+              sock.sendall(
+                  bytes(
+                      [
+                          IAC, DO, 24,
+                          IAC, DO, 31,
+                          IAC, WILL, 1,
+                          IAC, WILL, 3,
+                      ]
+                  )
+              )
+
+
+          def negotiation_reply(command, option):
+              supported = option in SUPPORTED
+              if command == DO:
+                  return bytes([IAC, WILL if supported else WONT, option])
+              if command == WILL:
+                  return bytes([IAC, DO if supported else DONT, option])
+              return b""
+
+
+          def consume(pending):
+              """Strip IAC commands from a wire buffer.
+
+              Returns ``(application data, negotiation replies, leftover)``.
+              The leftover keeps an incomplete sequence for the next chunk.
+              """
+              app = bytearray()
+              replies = bytearray()
+              i = 0
+              length = len(pending)
+              while i < length:
+                  if pending[i] != IAC:
+                      end = pending.find(IAC_BYTE, i)
+                      if end == -1:
+                          app.extend(pending[i:])
+                          i = length
+                          break
+                      app.extend(pending[i:end])
+                      i = end
+                      continue
+                  if i + 1 >= length:
+                      break
+                  command = pending[i + 1]
+                  if command == IAC:
+                      app.append(IAC)
+                      i += 2
+                  elif command in (DO, DONT, WILL, WONT):
+                      if i + 2 >= length:
+                          break
+                      replies.extend(negotiation_reply(command, pending[i + 2]))
+                      i += 3
+                  elif command == SB:
+                      end = pending.find(bytes([IAC, SE]), i + 2)
+                      if end == -1:
+                          break
+                      i = end + 2
+                  else:
+                      i += 2
+              return bytes(app), bytes(replies), pending[i:]
+
+
+          def handle(client):
+              client.settimeout(30.0)
+              negotiate(client)
+              client.sendall(b"freescp telnet integration server\r\nlogin: ")
+              pending = b""
+              line = bytearray()
+              stage = "login"
+              while True:
+                  try:
+                      chunk = client.recv(4096)
+                  except OSError:
+                      break
+                  if not chunk:
+                      break
+                  data, replies, pending = consume(pending + chunk)
+                  if replies:
+                      client.sendall(replies)
+                  for byte in data:
+                      if byte not in (10, 13):
+                          line.append(byte)
+                          continue
+                      completed = bytes(line).strip()
+                      line.clear()
+                      if not completed:
+                          continue
+                      if stage == "login":
+                          if completed == USERNAME.encode():
+                              client.sendall(b"\r\nPassword: ")
+                              stage = "password"
+                          else:
+                              client.sendall(b"\r\nlogin: ")
+                      elif stage == "password":
+                          if completed == PASSWORD.encode():
+                              client.sendall(
+                                  b"\r\nwelcome to the freescp telnet integration server\r\n"
+                              )
+                              stage = "shell"
+                          else:
+                              client.sendall(b"\r\nLogin incorrect\r\nlogin: ")
+                              stage = "login"
+                      else:
+                          client.sendall(b"\r\n" + completed + b"\r\n")
+              client.close()
+
+
+          def main():
+              server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+              server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+              server.bind((BIND_HOST, BIND_PORT))
+              server.listen(64)
+              while True:
+                  client, _ = server.accept()
+                  threading.Thread(target=handle, args=(client,), daemon=True).start()
+
+
+          if __name__ == "__main__":
+              main()
+          PY
+
+      - name: Test (Linux, Telnet integration)
+        if: runner.os == 'Linux'
+        env:
+          FREESCP_IT_TELNET_HOST: 127.0.0.1
+          FREESCP_IT_TELNET_PORT: "12323"
+          FREESCP_IT_TELNET_USER: freescp_it
+          FREESCP_IT_TELNET_PASS: freescp_it_pass
+          FREESCP_IT_TELNET_EXPECT_LOGIN: "1"
+        run: |
+          if [[ ! -f crates/freescp-core/tests/telnet_integration.rs ]]; then
+            echo "crates/freescp-core/tests/telnet_integration.rs not written yet (sibling workstream); skipping"
+            exit 0
+          fi
+          set -euo pipefail
+          IT_TELNET_PORT=12323 \
+          IT_TELNET_USER=freescp_it \
+          IT_TELNET_PASS=freescp_it_pass \
+          python3 /tmp/freescp_telnet_server.py &
+          TELNET_PID=$!
+          trap 'kill "$TELNET_PID" 2>/dev/null || true; wait "$TELNET_PID" 2>/dev/null || true' EXIT
+          for i in {1..40}; do
+            if nc -z 127.0.0.1 12323 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.25
+          done
+          if ! nc -z 127.0.0.1 12323 >/dev/null 2>&1; then
+            echo "telnet integration server did not start"
+            exit 1
+          fi
+          cargo test -p freescp-core --test telnet_integration
+
       - name: Test (Linux, with SOCKS5 proxy integration)
         if: runner.os == 'Linux'
         env:
@@ -528,7 +717,7 @@ jobs:
         # FTP/FTPS/WebDAV suites print [SKIP] and pass unless their own
         # FREESCP_IT_* vars are set; running them here exercises the skip path.
         run: |
-          for suite in ftp_integration ftps_integration webdav_integration; do
+          for suite in ftp_integration ftps_integration webdav_integration smb_integration; do
             if [[ -f "crates/freescp-core/tests/${suite}.rs" ]]; then
               cargo test -p freescp-core --test "$suite"
             else
@@ -565,6 +754,38 @@ jobs:
           else
             echo "crates/freescp-core/tests/scp_integration.rs not written yet (sibling workstream); skipping"
           fi
+
+      - name: Test (macOS, Telnet integration)
+        if: runner.os == 'macOS'
+        env:
+          FREESCP_IT_TELNET_HOST: 127.0.0.1
+          FREESCP_IT_TELNET_PORT: "12323"
+          FREESCP_IT_TELNET_USER: freescp_it
+          FREESCP_IT_TELNET_PASS: freescp_it_pass
+          FREESCP_IT_TELNET_EXPECT_LOGIN: "1"
+        run: |
+          if [[ ! -f crates/freescp-core/tests/telnet_integration.rs ]]; then
+            echo "crates/freescp-core/tests/telnet_integration.rs not written yet (sibling workstream); skipping"
+            exit 0
+          fi
+          set -euo pipefail
+          IT_TELNET_PORT=12323 \
+          IT_TELNET_USER=freescp_it \
+          IT_TELNET_PASS=freescp_it_pass \
+          python3 /tmp/freescp_telnet_server.py &
+          TELNET_PID=$!
+          trap 'kill "$TELNET_PID" 2>/dev/null || true; wait "$TELNET_PID" 2>/dev/null || true' EXIT
+          for i in {1..40}; do
+            if nc -z 127.0.0.1 12323 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.25
+          done
+          if ! nc -z 127.0.0.1 12323 >/dev/null 2>&1; then
+            echo "telnet integration server did not start"
+            exit 1
+          fi
+          cargo test -p freescp-core --test telnet_integration
 
       - name: Test (macOS, with SOCKS5 proxy integration)
         if: runner.os == 'macOS'
@@ -682,7 +903,7 @@ jobs:
       - name: Test (macOS, remaining suites self-skip without env)
         if: runner.os == 'macOS'
         run: |
-          for suite in ftp_integration ftps_integration webdav_integration; do
+          for suite in ftp_integration ftps_integration webdav_integration smb_integration; do
             if [[ -f "crates/freescp-core/tests/${suite}.rs" ]]; then
               cargo test -p freescp-core --test "$suite"
             else

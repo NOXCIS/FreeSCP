@@ -981,7 +981,7 @@ fn legacy_string(raw: impl AsRef<str>) -> Option<String> {
 /// the allows keep `clippy -D warnings` green until that wiring lands.
 #[allow(dead_code)]
 pub const DEFAULT_LIBRARIES_TEXT: &str = "\
-Third-party libraries used by FreeSCP (Rust rewrite)
+Third-party libraries used by FreeSCP
 (Operating system frameworks such as Security and AppKit on macOS, and the
 system Secret Service on Linux, are excluded.)
 
@@ -1018,11 +1018,28 @@ Protocol backends
   License: MIT
   Site: https://github.com/tafia/quick-xml
   Copyright: The quick-xml developers
+- smb2
+  Description: SMB2/SMB3 (CIFS) client used by the SMB backend.
+  License: MIT OR Apache-2.0
+  Site: https://github.com/vdavid/smb2
+  Copyright: vdavid and contributors
 - tokio-socks
   Description: SOCKS5 proxy support for the protocol backends.
   License: MIT
   Site: https://github.com/sticnarf/tokio-socks
   Copyright: The tokio-socks developers
+- rustls / tokio-rustls / rustls-pemfile
+  Description: TLS transport for FTPS, HTTPS WebDAV and TLS Telnet.
+  License: Apache-2.0 OR ISC OR MIT (rustls, rustls-pemfile); MIT OR Apache-2.0 (tokio-rustls)
+  Site: https://github.com/rustls/rustls | https://github.com/rustls/tokio-rustls | https://github.com/rustls/pemfile
+  Copyright: The rustls developers
+
+Terminal console
+- vt100
+  Description: VT100/VT220 terminal emulation for the embedded Telnet console.
+  License: MIT
+  Site: https://github.com/doy/vt100-rust
+  Copyright: Jesse Luehrs and contributors
 
 Runtime and plumbing
 - tokio / futures-util / async-trait
@@ -1116,9 +1133,9 @@ Notes:
 - Thanks to the authors and communities of each project for their work.
 - Full license texts are distributed with the sources of each crate
   (crates.io) and in the projects' repositories.
-- The legacy Qt/C++ build of OpenSCP used Qt, libssh2, libcurl, tinyxml2,
-  OpenSSL and zlib; their credits and license texts remain in
-  docs/credits/CREDITS.md and docs/credits/LICENSES/.
+- Credits and license texts of the legacy Qt/C++ codebase (Qt, libssh2,
+  libcurl, tinyxml2, OpenSSL and zlib) remain in docs/credits/CREDITS.md
+  and docs/credits/LICENSES/.
 
 Icons: Tango Icon Theme (Public Domain)";
 
@@ -1961,7 +1978,7 @@ path=/srv/a\\nb
         test_backend();
         let dialog = crate::ui::about::AboutDialog::new().expect("create AboutDialog");
         assert_eq!(dialog.get_libraries_text().as_str(), DEFAULT_LIBRARIES_TEXT);
-        assert!(dialog.get_version_text().contains("Rust rewrite"));
+        assert!(dialog.get_version_text().contains("0.9.0"));
     }
 
     /// Clicks `close-button := Button` in ui/about.slint through the Slint
@@ -2103,18 +2120,20 @@ path=/srv/a\\nb
     #[test]
     fn shortcut_candidates_are_present_in_the_slint_recorder() {
         // Slint cannot build `KeyBinding`s dynamically, so `ShortcutRecorder`
-        // hard-codes the accepted chords in `chord-supported`; this keeps the
-        // two spellings from drifting.
-        let slint =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/ui/settings.slint"))
-                .expect("read ui/settings.slint");
+        // (ui/shortcut-recorder.slint) hard-codes the accepted chords in
+        // `chord-supported`; this keeps the two spellings from drifting.
+        let slint = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/ui/shortcut-recorder.slint"
+        ))
+        .expect("read ui/shortcut-recorder.slint");
         for chord in QUEUE_SHORTCUT_CANDIDATES
             .iter()
             .chain(HISTORY_SHORTCUT_CANDIDATES.iter())
         {
             assert!(
                 slint.contains(chord),
-                "{chord} missing from ui/settings.slint"
+                "{chord} missing from ui/shortcut-recorder.slint"
             );
         }
     }

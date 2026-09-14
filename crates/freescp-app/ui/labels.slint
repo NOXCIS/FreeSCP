@@ -1,0 +1,156 @@
+// Shared label/index mappings for the protocol, security, proxy and WebDAV
+// combo boxes (previously duplicated verbatim in settings.slint and
+// site-manager.slint).
+//
+// The gettext context of these strings is the global's name (`Labels`);
+// scripts/po_fill_slint_contexts.py copies the translation of the same
+// English text into it after a move.
+//
+// Keep the numbers in sync with the session-option contract documented at the
+// top of connection-dialog.slint (0 SFTP ... 6 Telnet, known-hosts 0/1/2,
+// integrity 0/1/2, proxy 0/1/2).
+
+export global Labels {
+    public pure function protocol-label(storage: string) -> string {
+        if storage == "scp" {
+            return "SCP";
+        }
+        if storage == "ftp" {
+            return "FTP";
+        }
+        if storage == "ftps" {
+            return "FTPS";
+        }
+        if storage == "webdav" {
+            return "WebDAV";
+        }
+        if storage == "smb" {
+            return "SMB";
+        }
+        if storage == "telnet" {
+            return "Telnet";
+        }
+        return "SFTP";
+    }
+
+    public pure function protocol-storage-name(label: string) -> string {
+        if label == "SCP" {
+            return "scp";
+        }
+        if label == "FTP" {
+            return "ftp";
+        }
+        if label == "FTPS" {
+            return "ftps";
+        }
+        if label == "WebDAV" {
+            return "webdav";
+        }
+        if label == "SMB" {
+            return "smb";
+        }
+        if label == "Telnet" {
+            return "telnet";
+        }
+        return "sftp";
+    }
+
+    public pure function kh-policy-label(value: int) -> string {
+        if value == 1 {
+            return @tr("Accept new (TOFU)");
+        }
+        if value == 2 {
+            return @tr("No verification (double confirmation, expires in 15 min)");
+        }
+        return @tr("Strict");
+    }
+
+    public pure function kh-policy-index(label: string) -> int {
+        if label == @tr("Accept new (TOFU)") {
+            return 1;
+        }
+        if label == @tr("No verification (double confirmation, expires in 15 min)") {
+            return 2;
+        }
+        return 0;
+    }
+
+    public pure function integrity-label(value: int) -> string {
+        if value == 0 {
+            return @tr("Off (not recommended)");
+        }
+        if value == 2 {
+            return @tr("Required (strict)");
+        }
+        return @tr("Optional (recommended)");
+    }
+
+    public pure function integrity-index(label: string) -> int {
+        if label == @tr("Off (not recommended)") {
+            return 0;
+        }
+        if label == @tr("Required (strict)") {
+            return 2;
+        }
+        return 1;
+    }
+
+    public pure function proxy-label(value: int) -> string {
+        if value == 1 {
+            return "SOCKS5";
+        }
+        if value == 2 {
+            return "HTTP CONNECT";
+        }
+        return @tr("Direct (no proxy)");
+    }
+
+    public pure function proxy-index(label: string) -> int {
+        if label == "SOCKS5" {
+            return 1;
+        }
+        if label == "HTTP CONNECT" {
+            return 2;
+        }
+        return 0;
+    }
+
+    // WebDAV scheme combo: display labels from ConnectionDialog.cpp
+    // ("HTTPS (recommended)" / "HTTP (insecure)") mapped to storage names.
+    public pure function webdav-scheme-label(storage: string) -> string {
+        if storage == "http" {
+            return @tr("HTTP (insecure)");
+        }
+        return @tr("HTTPS (recommended)");
+    }
+
+    public pure function webdav-scheme-storage(label: string) -> string {
+        if label == @tr("HTTP (insecure)") {
+            return "http";
+        }
+        return "https";
+    }
+
+    // Per-protocol host placeholder (Qt updateProtocolUi setPlaceholderText).
+    public pure function host-placeholder(storage: string) -> string {
+        if storage == "scp" {
+            return @tr("scp.example.com");
+        }
+        if storage == "ftp" {
+            return @tr("ftp.example.com");
+        }
+        if storage == "ftps" {
+            return @tr("ftps.example.com");
+        }
+        if storage == "webdav" {
+            return @tr("webdav.example.com");
+        }
+        if storage == "smb" {
+            return @tr("smb.example.com");
+        }
+        if storage == "telnet" {
+            return @tr("telnet.example.com");
+        }
+        return @tr("sftp.example.com");
+    }
+}

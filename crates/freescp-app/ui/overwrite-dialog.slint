@@ -8,6 +8,7 @@
 // wait in the transfer manager.
 
 import { Button } from "std-widgets.slint";
+import { DialogFooter } from "widgets.slint";
 
 export component OverwriteDialog inherits Window {
     title: @tr("Overwrite confirmation");
@@ -31,9 +32,7 @@ export component OverwriteDialog inherits Window {
             vertical-stretch: 1;
         }
         Rectangle { } // spacer
-        HorizontalLayout {
-            spacing: 8px;
-            Rectangle { } // spacer: right-align the buttons
+        DialogFooter {
             Button {
                 text: @tr("Overwrite");
                 primary: true;

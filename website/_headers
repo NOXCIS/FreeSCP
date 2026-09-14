@@ -1,0 +1,13 @@
+# JSON-LD (<script type="application/ld+json">) is a data block, not executable
+# code, so CSP's script-src never applies to it and no hash or nonce is needed.
+# The site ships no executable JavaScript, which is why the policy below can use
+# the strongest possible script-src 'none' with nothing to keep in sync.
+# scripts/check_website_csp.py enforces that invariant in CI; if executable
+# script is ever added, widen the policy and that guard together.
+/*
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Content-Security-Policy: default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'

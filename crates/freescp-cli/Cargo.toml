@@ -1,0 +1,26 @@
+[package]
+name = "freescp-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FreeSCP command-line client"
+
+[[bin]]
+name = "freescp"
+path = "src/main.rs"
+
+[dependencies]
+freescp-core = { path = "../freescp-core" }
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+dialoguer.workspace = true
+indicatif.workspace = true
+rustyline.workspace = true
+crossterm.workspace = true

@@ -1,4 +1,4 @@
-Librerías de terceros utilizadas por FreeSCP (reescritura en Rust)
+Librerías de terceros utilizadas por FreeSCP
 (Se excluyen los frameworks del sistema operativo como Security y AppKit en
 macOS, y el Secret Service del sistema en Linux.)
 
@@ -35,11 +35,28 @@ Backends de protocolo
   Licencia: MIT
   Sitio: https://github.com/tafia/quick-xml
   Copyright: The quick-xml developers
+- smb2
+  Descripción: cliente SMB2/SMB3 (CIFS) usado por el backend SMB.
+  Licencia: MIT OR Apache-2.0
+  Sitio: https://github.com/vdavid/smb2
+  Copyright: vdavid and contributors
 - tokio-socks
+- rustls / tokio-rustls / rustls-pemfile
+  Descripción: transporte TLS para FTPS, WebDAV sobre HTTPS y Telnet con TLS.
+  Licencia: Apache-2.0 OR ISC OR MIT (rustls, rustls-pemfile); MIT OR Apache-2.0 (tokio-rustls)
+  Sitio: https://github.com/rustls/rustls | https://github.com/rustls/tokio-rustls | https://github.com/rustls/pemfile
+  Copyright: The rustls developers
   Descripción: soporte de proxy SOCKS5 para los backends de protocolo.
   Licencia: MIT
   Sitio: https://github.com/sticnarf/tokio-socks
   Copyright: The tokio-socks developers
+
+Consola de terminal
+- vt100
+  Descripción: emulación de terminal VT100/VT220 para la consola Telnet integrada.
+  Licencia: MIT
+  Sitio: https://github.com/doy/vt100-rust
+  Copyright: Jesse Luehrs and contributors
 
 Runtime e infraestructura
 - tokio / futures-util / async-trait

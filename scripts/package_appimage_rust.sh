@@ -94,7 +94,7 @@ prepare_desktop() {
 Type=Application
 Name=FreeSCP
 GenericName=SFTP Client
-Comment=Two-panel SFTP client focused on simplicity and security
+Comment=SFTP client focused on simplicity and security
 Exec=freescp-app
 Icon=freescp
 Terminal=false

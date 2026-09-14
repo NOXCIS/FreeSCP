@@ -1,0 +1,64 @@
+# FreeSCP
+
+> FreeSCP is a free, open-source, cross-platform SFTP/SCP/FTP/FTPS/WebDAV/SMB file-transfer client for Windows, macOS and Linux, with an embedded Telnet console, a pure-Rust core (russh, russh-sftp, suppaftp, reqwest, smb2) and a Slint-based desktop UI. Released under the MIT license.
+
+FreeSCP is a cross-platform file-transfer client focused on simplicity and
+security. It connects over SFTP, SCP, FTP, FTPS, WebDAV and SMB/CIFS
+(SMB2/SMB3), and supports SSH jump hosts, SOCKS5/HTTP-CONNECT proxies and
+Cloudflare Tunnel (cloudflared) hosts through standard OpenSSH ProxyCommand
+entries in ~/.ssh/config. An embedded Telnet console (plain TCP and TLS)
+provides a VT100/VT220 terminal with scrollback, copy/paste, NAWS resizing
+and optional auto-login.
+
+## Features
+
+- Transfer backends: SFTP, SCP (SSH jump hosts, cloudflared tunnels,
+  SOCKS5/HTTP-CONNECT proxies), FTP, FTPS, WebDAV, SMB/CIFS (SMB2/SMB3;
+  no SMB1, proxy, or jump-host support)
+- Telnet console: plain TCP and TLS, VT100/VT220 terminal, scrollback,
+  copy/paste, NAWS window resizing, optional auto-login
+- File manager: transfer queue, integrity verification, drag & drop,
+  permissions editor, remote search
+- Site manager: SSH config import, connection history, keychain-backed secret
+  storage
+- SSH connectivity: SSH jump hosts and Cloudflare Tunnel hosts via standard
+  ~/.ssh/config ProxyCommand entries (e.g. `cloudflared access ssh`)
+- Cloudflare Tunnel (cloudflared): add a line such as
+  `ProxyCommand cloudflared access ssh --hostname ssh.example.com` to the
+  host's entry in ~/.ssh/config and import it from the site manager; FreeSCP
+  honors the proxy command when opening SFTP/SCP connections and terminal
+  sessions, with no extra setup inside the app
+- Localizations: English, Spanish, French, Portuguese
+
+## Supported protocols
+
+- SFTP: supported (SSH jump hosts, cloudflared tunnels)
+- SCP: supported (SSH jump hosts, cloudflared tunnels, SOCKS5/HTTP-CONNECT
+  proxies)
+- FTP: supported
+- FTPS: supported
+- WebDAV: supported
+- SMB/CIFS: supported (SMB2/SMB3; no SMB1, proxy, or jump host)
+- Telnet: supported (plain TCP and TLS console)
+
+## Download
+
+- [Prebuilt binaries (GitHub Releases)](https://github.com/NOXCIS/FreeSCP/releases)
+- Build from source: `git clone https://github.com/NOXCIS/FreeSCP.git && cd FreeSCP && cargo build --workspace && cargo run -p freescp-app`
+
+## Source Code
+
+- [GitHub](https://github.com/NOXCIS/FreeSCP)
+- [GitLab](https://gitlab.com/Noxcis/FreeSCP)
+
+## License
+
+- [MIT License](https://github.com/NOXCIS/FreeSCP/blob/main/LICENSE);
+  third-party credits are listed in the repository's docs/credits/ directory
+
+## Support
+
+- [Report an issue (GitHub Issues)](https://github.com/NOXCIS/FreeSCP/issues)
+
+FreeSCP is maintained by [NOXCIS](https://github.com/NOXCIS). Website:
+https://freescp.org/
