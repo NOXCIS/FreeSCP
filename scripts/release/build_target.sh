@@ -111,6 +111,30 @@ write_sha256() {
   sha256sum "$1" | awk '{print $1}' > "$1.sha256"
 }
 
+# Download an AppImage tool and only accept it if it is a type-2 AppImage for
+# the expected machine. The continuous release assets are re-uploaded hourly
+# and a truncated/garbage 200 response once slipped through as an executable,
+# failing much later with a cryptic "Exec format error" (exit 126).
+fetch_tool() {
+  local url="$1" out="$2" want_mach="$3"
+  local attempt mach_hex
+  for attempt in 1 2 3; do
+    rm -f "$out"
+    curl -fsSL --retry 2 --retry-delay 5 --retry-all-errors -o "$out" "$url" || {
+      err "download failed (attempt $attempt/3): $url"; sleep 10; continue; }
+    chmod +x "$out"
+    if (( $(wc -c < "$out") >= 1000000 )) \
+      && [[ "$(head -c4 "$out")" == $'\x7fELF' ]] \
+      && [[ "$(dd if="$out" bs=1 skip=8 count=2 2>/dev/null)" == "AI" ]] \
+      && mach_hex="$(od -An -tx1 -j18 -N2 "$out" | tr -d ' \n')" \
+      && [[ "$mach_hex" == "$want_mach" ]]; then
+      return 0
+    fi
+    err "downloaded file is not a valid $want_mach AppImage (attempt $attempt/3): $(wc -c < "$out") bytes"; sleep 10
+  done
+  die "could not fetch a valid tool from $url"
+}
+
 # ---------------------------------------------------------------- linux ----
 package_linux() {
   local src_stage stage tarball appimage
@@ -131,17 +155,18 @@ package_linux() {
 
   # AppImage: linuxdeploy bundles every non-glibc shared library (GTK deps,
   # libxkbcommon, fontconfig, ...) that ldd reports for the GUI binary.
-  local mach a
-  mach="$(uname -m)"; case "$mach" in x86_64) a=x86_64 ;; aarch64) a=aarch64 ;; *) die "unsupported container arch $mach" ;; esac
+  local mach mach_hex a
+  mach="$(uname -m)"; case "$mach" in x86_64) a=x86_64; mach_hex=3e00 ;; aarch64) a=aarch64; mach_hex=b700 ;; *) die "unsupported container arch $mach" ;; esac
   local tools="$DIST/.tools"
-  mkdir -p "$tools"
   local linuxdeploy="$tools/linuxdeploy-${a}.AppImage"
   local appimagetool="$tools/appimagetool-${a}.AppImage"
-  [[ -x "$linuxdeploy" ]] || curl -fsSL -o "$linuxdeploy" \
-    "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${a}.AppImage"
-  [[ -x "$appimagetool" ]] || curl -fsSL -o "$appimagetool" \
-    "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${a}.AppImage"
-  chmod +x "$linuxdeploy" "$appimagetool"
+  mkdir -p "$tools"
+  fetch_tool \
+    "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${a}.AppImage" \
+    "$tools/linuxdeploy-${a}.AppImage" "$mach_hex"
+  fetch_tool \
+    "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${a}.AppImage" \
+    "$tools/appimagetool-${a}.AppImage" "$mach_hex"
 
   local appdir="$stage/${APP_NAME}.AppDir"
   mkdir -p "$appdir/usr/bin" \

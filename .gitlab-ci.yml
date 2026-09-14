@@ -35,7 +35,7 @@ mirror-github-release:
       # finish, which can lag this tag-triggered job by an hour or more.
       echo "Waiting for the GitHub release ${CI_COMMIT_TAG} to publish assets..."
       ASSETS=""
-      for i in $(seq 1 120); do
+      for i in $(seq 1 240); do
         ASSETS=$(curl -fsSL "${AUTH[@]}" "${TAG_URL}" | jq -r '.assets[].browser_download_url' 2>/dev/null || true)
         if [ -n "${ASSETS}" ]; then
           N=$(printf '%s\n' "${ASSETS}" | wc -l)
