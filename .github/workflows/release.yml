@@ -8,11 +8,13 @@
 #   windows-x86_64  FreeSCP-<v>-windows-x86_64-UNSIGNED.zip (FreeSCP.exe + CLI)
 #   windows-arm64   FreeSCP-<v>-windows-arm64-UNSIGNED.zip
 #
-# All builds run in containers; the aarch64 Linux job uses QEMU binfmt for the
-# packaging container. macOS/Windows binaries are cross-compiled (zig /
-# llvm-mingw) so no Apple or Windows runners are needed. Artifacts are
-# unsigned; zip names carry the -UNSIGNED marker. Manual runs
-# (workflow_dispatch) only build and upload run artifacts — no release.
+# All builds run in containers, each on a runner whose native architecture
+# matches its build container: the Linux ARM64 target builds on GitHub's free
+# arm64 hosted runner, so nothing in the matrix runs under QEMU emulation.
+# macOS/Windows binaries are cross-compiled (zig / llvm-mingw) so no Apple or
+# Windows runners are needed. Artifacts are unsigned; zip names carry the
+# -UNSIGNED marker. Manual runs (workflow_dispatch) only build and upload run
+# artifacts — no release.
 
 name: Release (Docker cross-builds)
 
@@ -36,27 +38,33 @@ jobs:
   # ------------------------------------------------------------- builds ----
   build:
     name: ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - linux-x86_64
-          - linux-aarch64
-          - macos-x86_64
-          - macos-arm64
-          - windows-x86_64
-          - windows-arm64
+        include:
+          # Linux targets build natively on a matching-arch runner. The arm64
+          # hosted runner is free for public repositories and removes the QEMU
+          # emulation that made linux-aarch64 take hours and then fail while
+          # executing the arm64 AppImage tooling.
+          - target: linux-x86_64
+            runner: ubuntu-latest
+          - target: linux-aarch64
+            runner: ubuntu-24.04-arm
+          # macOS/Windows cross-compile, so they stay on the native amd64
+          # runner.
+          - target: macos-x86_64
+            runner: ubuntu-latest
+          - target: macos-arm64
+            runner: ubuntu-latest
+          - target: windows-x86_64
+            runner: ubuntu-latest
+          - target: windows-arm64
+            runner: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up QEMU (arm64 containers on amd64 runner)
-        if: matrix.target == 'linux-aarch64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -68,9 +76,8 @@ jobs:
           file: docker/Dockerfile
           load: true
           tags: ${{ env.IMAGE }}
-          # The aarch64 Linux job runs its build container under QEMU, so it
-          # needs the arm64 image variant; everything else uses amd64.
-          platforms: ${{ matrix.target == 'linux-aarch64' && 'linux/arm64' || 'linux/amd64' }}
+          # Image layers are architecture-specific, so keep one cache scope
+          # per runner arch.
           cache-from: type=gha,scope=img-${{ matrix.target == 'linux-aarch64' && 'arm64' || 'amd64' }}
           cache-to: type=gha,scope=img-${{ matrix.target == 'linux-aarch64' && 'arm64' || 'amd64' }},mode=max
 

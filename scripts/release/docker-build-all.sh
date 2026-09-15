@@ -6,11 +6,12 @@
 #   scripts/release/docker-build-all.sh                    # all six targets
 #   scripts/release/docker-build-all.sh macos-arm64 windows-x86_64
 #
-# Linux targets always run in a container whose --platform matches the target
-# (linux/aarch64 runs under QEMU binfmt on amd64 hosts; install
-# docker/setup-qemu-action equivalents — on GitHub runners this is automatic).
-# macOS and Windows targets cross-compile, so they run in a container of the
-# host's native arch.
+# Linux targets always run in a container whose --platform matches the target.
+# Prefer a host of the matching architecture (the CI matrix builds
+# linux-aarch64 on an arm64 runner); on a mismatched host the container runs
+# under QEMU binfmt, which is slow and cannot execute the arm64 AppImage
+# tooling. macOS and Windows targets cross-compile, so they run in a container
+# of the host's native arch.
 #
 # Env:
 #   IMAGE_NAME   (default freescp-build)   Build image tag

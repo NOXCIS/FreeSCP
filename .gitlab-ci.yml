@@ -22,10 +22,11 @@ stages:
 mirror-github-release:
   stage: release
   image: alpine:3.20
-  # The polling window below can legitimately run ~3.5h (waiting for the
-  # QEMU-emulated linux-aarch64 build to finish on GitHub); the project
-  # build_timeout is set to 4h to match. retry covers flaky downloads and
-  # restarts the wait if an attempt still runs out of time.
+  # The window below is deliberately generous: a cold release run (no cached
+  # image layers or cargo registry) takes a while even with all six targets
+  # building natively. The project build_timeout is set to 4h to match. retry
+  # covers flaky downloads and restarts the wait if an attempt still runs out
+  # of time.
   timeout: 3h 30m
   retry:
     max: 1
