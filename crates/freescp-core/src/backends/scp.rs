@@ -317,11 +317,21 @@ impl Shared {
                 KnownHostsPolicy::AcceptNew => {
                     let (algorithm, fingerprint) = host_key_info(key);
                     let can_save = !file.as_os_str().is_empty();
-                    let confirmed = self.hostkey_confirm.as_ref().is_some_and(|cb| {
-                        cb(&self.host, self.port, &algorithm, &fingerprint, can_save)
-                    });
-                    if !confirmed {
-                        return Err("Unknown host: fingerprint not confirmed by user".into());
+                    let decision = self
+                        .hostkey_confirm
+                        .as_ref()
+                        .map_or(crate::types::HostKeyDecision::Reject, |cb| {
+                            cb(&self.host, self.port, &algorithm, &fingerprint, can_save)
+                        });
+                    match decision {
+                        crate::types::HostKeyDecision::Reject => {
+                            return Err("Unknown host: fingerprint not confirmed by user".into());
+                        }
+                        crate::types::HostKeyDecision::AcceptOnce => return Ok(()),
+                        crate::types::HostKeyDecision::AcceptAndSave => {}
+                    }
+                    if !can_save {
+                        return Ok(());
                     }
                     match crate::known_hosts::save_host(
                         &file,

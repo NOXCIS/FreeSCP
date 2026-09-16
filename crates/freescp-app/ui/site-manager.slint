@@ -44,6 +44,19 @@ export struct SiteRow {
     protocol: string,
     host: string,
     username: string,
+    // Route summary for the table (e.g. "2 routes" / "auto · 2 routes").
+    route-summary: string,
+}
+
+// One alternate-route row of the editor's routes list.
+export struct RouteRow {
+    label: string,
+    // "host[:port]" or "(inherit)".
+    endpoint: string,
+    // "direct", "SOCKS5 proxy", "HTTP proxy", "jump bastion".
+    transport: string,
+    // Last probe outcome ("3 ms", "unreachable", "—").
+    probe: string,
 }
 
 export component SiteManagerDialog inherits Window {
@@ -102,6 +115,42 @@ export component SiteManagerDialog inherits Window {
     in-out property <int> sort-column: 0;
     in-out property <bool> sort-ascending: true;
 
+    // ---- Alternate routes (Rust-only feature) ---------------------------
+    // Route rows shown in the editor list (full data lives in Rust; the
+    // widgets below only edit/inspect).
+    in-out property <[RouteRow]> editor-routes;
+    // Index of the selected route row (-1 = none).
+    in-out property <int> route-selected-row: -1;
+    // 0 = automatic (probe + failover), 1 = manual (pinned).
+    in-out property <int> editor-route-policy: 0;
+    // Pinned route label ("" = primary endpoint); model is set from Rust.
+    in-out property <string> editor-pinned-label;
+    in-out property <[string]> pinned-route-model: ["Primary"];
+    // Summary line under the list ("LAN 3 ms · Cloudflare n/a").
+    in-out property <string> probe-status;
+    // Route sub-editor (add/edit one route).
+    in-out property <bool> route-editor-visible: false;
+    in-out property <bool> route-editor-is-edit: false;
+    // 0 direct, 1 socks5, 2 http-connect, 3 ssh-jump.
+    in-out property <int> route-editor-type: 0;
+    in-out property <string> route-editor-label;
+    in-out property <string> route-editor-host;
+    in-out property <int> route-editor-port;
+    in-out property <string> route-editor-username;
+    in-out property <string> route-editor-key-path;
+    in-out property <string> route-editor-proxy-host;
+    in-out property <int> route-editor-proxy-port: 1080;
+    in-out property <string> route-editor-proxy-username;
+    in-out property <string> route-editor-jump-host;
+    in-out property <int> route-editor-jump-port: 22;
+    in-out property <string> route-editor-jump-username;
+    in-out property <string> route-editor-jump-key-path;
+    // "Copy endpoint from another saved site" merge panel.
+    in-out property <bool> merge-visible: false;
+    in-out property <[string]> merge-source-model;
+    in-out property <string> merge-source;
+    in-out property <bool> merge-delete-source: true;
+
     // Show/hide toggles for the three credential fields (Qt passToggle /
     // keyPassToggle / proxyPassToggle in ConnectionDialog.cpp).
     property <bool> show-password: false;
@@ -150,8 +199,28 @@ export component SiteManagerDialog inherits Window {
     // Fired when the user toggles Telnet TLS (Rust follows the port 23<->992
     // when it still holds the previous default).
     callback telnet-tls-changed();
-    // Fired from the header cells (0 name, 1 protocol, 2 host, 3 user).
+    // Fired from the header cells (0 name, 1 protocol, 2 host, 3 user,
+    // 4 routes).
     callback sort-requested(int);
+
+    // ---- Alternate-route callbacks (Rust-only feature) ------------------
+    // Opens the route sub-editor for a new route.
+    callback route-add-requested();
+    // Opens the route sub-editor for the selected row.
+    callback route-edit-requested(int);
+    // Removes the given route row.
+    callback route-remove-requested(int);
+    // Stores the sub-editor fields (add or replace).
+    callback route-save-requested();
+    callback route-editor-cancel-requested();
+    // Probes the primary endpoint plus all routes and refreshes the list.
+    callback probe-routes-requested();
+    // Opens the "copy endpoint from another saved site" panel.
+    callback merge-open-requested();
+    callback merge-confirm-requested();
+    callback merge-cancel-requested();
+    // Fires when a route row is clicked (selection).
+    callback route-row-clicked(int);
 
     function move-selection(delta: int) {
         if (root.rows.length == 0) {
@@ -178,13 +247,13 @@ export component SiteManagerDialog inherits Window {
 
     VerticalLayout {
         padding: 12px;
-        spacing: 10px;
+        spacing: 8px;
 
         // Header row (click a header to sort, like the Qt table).
         HorizontalLayout {
             spacing: 0px;
             SortHeader {
-                width: 34%;
+                width: 26%;
                 text: @tr("Name");
                 column: 0;
                 sort-column: root.sort-column;
@@ -192,7 +261,7 @@ export component SiteManagerDialog inherits Window {
                 sort-requested(col) => { root.sort-requested(col); }
             }
             SortHeader {
-                width: 18%;
+                width: 14%;
                 text: @tr("Protocol");
                 column: 1;
                 sort-column: root.sort-column;
@@ -200,7 +269,7 @@ export component SiteManagerDialog inherits Window {
                 sort-requested(col) => { root.sort-requested(col); }
             }
             SortHeader {
-                width: 30%;
+                width: 25%;
                 text: @tr("Host");
                 column: 2;
                 sort-column: root.sort-column;
@@ -208,9 +277,17 @@ export component SiteManagerDialog inherits Window {
                 sort-requested(col) => { root.sort-requested(col); }
             }
             SortHeader {
-                width: 18%;
+                width: 14%;
                 text: @tr("User");
                 column: 3;
+                sort-column: root.sort-column;
+                sort-ascending: root.sort-ascending;
+                sort-requested(col) => { root.sort-requested(col); }
+            }
+            SortHeader {
+                width: 21%;
+                text: @tr("Routes");
+                column: 4;
                 sort-column: root.sort-column;
                 sort-ascending: root.sort-ascending;
                 sort-requested(col) => { root.sort-requested(col); }
@@ -265,7 +342,7 @@ export component SiteManagerDialog inherits Window {
                             Text {
                                 text: site.name;
                                 overflow: elide;
-                                width: 34%;
+                                width: 26%;
                                 vertical-alignment: center;
                                 color: idx == root.current-row ? Palette.accent-foreground : Palette.foreground;
                                 Tooltip { text: @markdown("\{site.name}"); }
@@ -273,7 +350,7 @@ export component SiteManagerDialog inherits Window {
                             Text {
                                 text: site.protocol;
                                 overflow: elide;
-                                width: 18%;
+                                width: 14%;
                                 vertical-alignment: center;
                                 color: idx == root.current-row ? Palette.accent-foreground : Palette.foreground;
                                 Tooltip { text: @markdown("\{site.protocol}"); }
@@ -281,7 +358,7 @@ export component SiteManagerDialog inherits Window {
                             Text {
                                 text: site.host;
                                 overflow: elide;
-                                width: 30%;
+                                width: 25%;
                                 vertical-alignment: center;
                                 color: idx == root.current-row ? Palette.accent-foreground : Palette.foreground;
                                 Tooltip { text: @markdown("\{site.host}"); }
@@ -289,10 +366,19 @@ export component SiteManagerDialog inherits Window {
                             Text {
                                 text: site.username;
                                 overflow: elide;
-                                width: 18%;
+                                width: 14%;
                                 vertical-alignment: center;
                                 color: idx == root.current-row ? Palette.accent-foreground : Palette.foreground;
                                 Tooltip { text: @markdown("\{site.username}"); }
+                            }
+                            Text {
+                                text: site.route-summary;
+                                overflow: elide;
+                                width: 21%;
+                                vertical-alignment: center;
+                                font-size: 11px;
+                                color: idx == root.current-row ? Palette.accent-foreground : Palette.foreground;
+                                Tooltip { text: @markdown("\{site.route-summary}"); }
                             }
                         }
                     }
@@ -304,7 +390,7 @@ export component SiteManagerDialog inherits Window {
         if root.editor-visible : Rectangle {
             border-width: 1px;
             border-color: Palette.border;
-            height: 320px;
+            height: 400px;
             ScrollView {
                 VerticalLayout {
                     padding: 8px;
@@ -838,19 +924,423 @@ export component SiteManagerDialog inherits Window {
                                 horizontal-stretch: 1;
                             }
                         }
+
+                        // ---- Alternate routes (Rust-only feature) ----
+                        Row {
+                            Text {
+                                text: @tr("Route policy:");
+                                width: 190px;
+                                vertical-alignment: center;
+                            }
+                            ComboBox {
+                                model: [
+                                    @tr("Automatic (use the fastest route)"),
+                                    @tr("Manual (always use the route below)"),
+                                ];
+                                current-value: root.editor-route-policy == 1
+                                    ? @tr("Manual (always use the route below)")
+                                    : @tr("Automatic (use the fastest route)");
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    root.editor-route-policy = value == @tr("Manual (always use the route below)") ? 1 : 0;
+                                }
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Pinned route:");
+                                width: 190px;
+                                vertical-alignment: center;
+                                visible: root.editor-route-policy == 1;
+                            }
+                            ComboBox {
+                                model: root.pinned-route-model;
+                                current-value: root.editor-pinned-label;
+                                enabled: root.editor-route-policy == 1;
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    root.editor-pinned-label = value;
+                                }
+                                visible: root.editor-route-policy == 1;
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: @tr("Alternate routes:");
+                                width: 190px;
+                                vertical-alignment: top;
+                            }
+                            VerticalLayout {
+                                spacing: 6px;
+                                horizontal-stretch: 1;
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Button {
+                                        text: @tr("Add route…");
+                                        clicked => { root.route-add-requested(); }
+                                    }
+                                    Button {
+                                        text: @tr("Edit");
+                                        enabled: root.route-selected-row >= 0;
+                                        clicked => {
+                                            if root.route-selected-row >= 0 {
+                                                root.route-edit-requested(root.route-selected-row);
+                                            }
+                                        }
+                                    }
+                                    Button {
+                                        text: @tr("Remove");
+                                        enabled: root.route-selected-row >= 0;
+                                        clicked => {
+                                            if root.route-selected-row >= 0 {
+                                                root.route-remove-requested(root.route-selected-row);
+                                            }
+                                        }
+                                    }
+                                    Button {
+                                        text: @tr("From saved site…");
+                                        clicked => { root.merge-open-requested(); }
+                                    }
+                                    Button {
+                                        text: @tr("Probe");
+                                        clicked => { root.probe-routes-requested(); }
+                                        Tooltip {
+                                            text: @markdown("Measure which endpoint answers first (TCP connect); used by *Automatic* route selection.");
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    border-width: 1px;
+                                    border-color: Palette.border;
+                                    height: 26px + 24px * min(3, max(1, root.editor-routes.length));
+                                    visible: root.editor-routes.length > 0;
+                                    clip: true;
+                                    ListView {
+                                        for route[idx] in root.editor-routes : Rectangle {
+                                            height: 24px;
+                                            background: idx == root.route-selected-row
+                                                ? Palette.accent-background
+                                                : (mod(idx, 2) == 0 ? Palette.background : Palette.alternate-background);
+                                            TouchArea {
+                                                clicked => { root.route-row-clicked(idx); }
+                                            }
+                                            HorizontalLayout {
+                                                padding-left: 4px;
+                                                spacing: 0px;
+                                                Text {
+                                                    text: route.label;
+                                                    width: 90px;
+                                                    overflow: elide;
+                                                    vertical-alignment: center;
+                                                    font-size: 11px;
+                                                    color: idx == root.route-selected-row ? Palette.accent-foreground : Palette.foreground;
+                                                }
+                                                Text {
+                                                    text: route.endpoint;
+                                                    horizontal-stretch: 1;
+                                                    overflow: elide;
+                                                    vertical-alignment: center;
+                                                    font-size: 11px;
+                                                    color: idx == root.route-selected-row ? Palette.accent-foreground : Palette.foreground;
+                                                }
+                                                Text {
+                                                    text: route.transport;
+                                                    width: 150px;
+                                                    overflow: elide;
+                                                    vertical-alignment: center;
+                                                    font-size: 11px;
+                                                    color: idx == root.route-selected-row ? Palette.accent-foreground : Palette.foreground;
+                                                }
+                                                Text {
+                                                    text: route.probe;
+                                                    width: 100px;
+                                                    overflow: elide;
+                                                    vertical-alignment: center;
+                                                    font-size: 11px;
+                                                    color: idx == root.route-selected-row ? Palette.accent-foreground : Palette.foreground;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Text {
+                                    text: root.probe-status;
+                                    font-size: 11px;
+                                    color: Palette.foreground;
+                                    visible: root.probe-status != "";
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- Route sub-editor (add/edit one alternate route) ----
+                    if root.route-editor-visible : Rectangle {
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        VerticalLayout {
+                            padding: 8px;
+                            spacing: 6px;
+                            Text {
+                                text: root.route-editor-is-edit ? @tr("Edit route") : @tr("Add route");
+                                font-weight: 700;
+                            }
+                            GridLayout {
+                                spacing: 6px;
+                                Row {
+                                    Text {
+                                        text: @tr("Label:");
+                                        width: 150px;
+                                        vertical-alignment: center;
+                                    }
+                                    LineEdit {
+                                        text <=> root.route-editor-label;
+                                        placeholder-text: @tr("LAN");
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                                Row {
+                                    Text {
+                                        text: @tr("Host / Port:");
+                                        width: 150px;
+                                        vertical-alignment: center;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        horizontal-stretch: 1;
+                                        LineEdit {
+                                            text <=> root.route-editor-host;
+                                            placeholder-text: @tr("empty = same as the site host");
+                                            horizontal-stretch: 1;
+                                        }
+                                        SpinBox {
+                                            minimum: 0;
+                                            maximum: 65535;
+                                            value <=> root.route-editor-port;
+                                            width: 110px;
+                                            Tooltip { text: @markdown("0 = inherit the site port"); }
+                                        }
+                                    }
+                                }
+                                Row {
+                                    Text {
+                                        text: @tr("User:");
+                                        width: 150px;
+                                        vertical-alignment: center;
+                                    }
+                                    LineEdit {
+                                        text <=> root.route-editor-username;
+                                        placeholder-text: @tr("empty = same as the site user");
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                                Row {
+                                    Text {
+                                        text: @tr("Transport:");
+                                        width: 150px;
+                                        vertical-alignment: center;
+                                    }
+                                    ComboBox {
+                                        model: [
+                                            @tr("Direct"),
+                                            "SOCKS5",
+                                            "HTTP CONNECT",
+                                            @tr("SSH jump host"),
+                                        ];
+                                        current-value: root.route-editor-type == 3
+                                            ? @tr("SSH jump host")
+                                            : Labels.proxy-label(root.route-editor-type);
+                                        horizontal-stretch: 1;
+                                        selected(value) => {
+                                            if (value == @tr("SSH jump host")) {
+                                                root.route-editor-type = 3;
+                                            } else {
+                                                root.route-editor-type = Labels.proxy-index(value);
+                                            }
+                                        }
+                                    }
+                                }
+                                Row {
+                                    Text {
+                                        text: @tr("Proxy host / port:");
+                                        width: 150px;
+                                        vertical-alignment: center;
+                                        visible: root.route-editor-type == 1 || root.route-editor-type == 2;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        horizontal-stretch: 1;
+                                        visible: root.route-editor-type == 1 || root.route-editor-type == 2;
+                                        LineEdit {
+                                            text <=> root.route-editor-proxy-host;
+                                            placeholder-text: @tr("proxy.example.com");
+                                            horizontal-stretch: 1;
+                                        }
+                                        SpinBox {
+                                            minimum: 1;
+                                            maximum: 65535;
+                                            value <=> root.route-editor-proxy-port;
+                                            width: 110px;
+                                        }
+                                    }
+                                }
+                                Row {
+                                    Text {
+                                        text: @tr("Proxy user:");
+                                        width: 150px;
+                                        vertical-alignment: center;
+                                        visible: root.route-editor-type == 1 || root.route-editor-type == 2;
+                                    }
+                                    LineEdit {
+                                        text <=> root.route-editor-proxy-username;
+                                        placeholder-text: @tr("optional");
+                                        horizontal-stretch: 1;
+                                        visible: root.route-editor-type == 1 || root.route-editor-type == 2;
+                                    }
+                                }
+                                Row {
+                                    Text {
+                                        text: @tr("Jump host / port:");
+                                        width: 150px;
+                                        vertical-alignment: center;
+                                        visible: root.route-editor-type == 3;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        horizontal-stretch: 1;
+                                        visible: root.route-editor-type == 3;
+                                        LineEdit {
+                                            text <=> root.route-editor-jump-host;
+                                            placeholder-text: @tr("bastion or cloudflared alias");
+                                            horizontal-stretch: 1;
+                                        }
+                                        SpinBox {
+                                            minimum: 1;
+                                            maximum: 65535;
+                                            value <=> root.route-editor-jump-port;
+                                            width: 110px;
+                                        }
+                                    }
+                                }
+                                Row {
+                                    Text {
+                                        text: @tr("Jump user:");
+                                        width: 150px;
+                                        vertical-alignment: center;
+                                        visible: root.route-editor-type == 3;
+                                    }
+                                    LineEdit {
+                                        text <=> root.route-editor-jump-username;
+                                        placeholder-text: @tr("optional");
+                                        horizontal-stretch: 1;
+                                        visible: root.route-editor-type == 3;
+                                    }
+                                }
+                                Row {
+                                    Text {
+                                        text: @tr("Private key path:");
+                                        width: 150px;
+                                        vertical-alignment: center;
+                                        visible: root.editor-is-ssh;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        horizontal-stretch: 1;
+                                        visible: root.editor-is-ssh;
+                                        BrowseEdit {
+                                            text <=> root.route-editor-key-path;
+                                            placeholder: @tr("empty = same as the site key");
+                                            horizontal-stretch: 1;
+                                            browse-requested => { root.browse-path-requested("route-key"); }
+                                        }
+                                        BrowseEdit {
+                                            text <=> root.route-editor-jump-key-path;
+                                            placeholder: @tr("jump key (optional)");
+                                            visible: root.route-editor-type == 3;
+                                            browse-requested => { root.browse-path-requested("route-jump-key"); }
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                text: @tr("Cloudflared / ProxyCommand bastions do not resolve in DNS; they are tried after measured routes instead of probed.");
+                                font-size: 11px;
+                                color: Palette.foreground;
+                                wrap: word-wrap;
+                                visible: root.route-editor-type == 3;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Rectangle { horizontal-stretch: 1; }
+                                Button {
+                                    text: @tr("Cancel");
+                                    clicked => { root.route-editor-cancel-requested(); }
+                                }
+                                Button {
+                                    text: @tr("OK");
+                                    primary: true;
+                                    clicked => { root.route-save-requested(); }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- Merge panel (copy an endpoint from another site) ----
+                    if root.merge-visible : Rectangle {
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        VerticalLayout {
+                            padding: 8px;
+                            spacing: 6px;
+                            Text {
+                                text: @tr("Add route from saved site");
+                                font-weight: 700;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Text {
+                                    text: @tr("Site:");
+                                    vertical-alignment: center;
+                                }
+                                ComboBox {
+                                    model: root.merge-source-model;
+                                    current-value: root.merge-source;
+                                    horizontal-stretch: 1;
+                                    selected(value) => { root.merge-source = value; }
+                                }
+                            }
+                            CheckBox {
+                                text: @tr("Delete the source site after adding its route");
+                                checked <=> root.merge-delete-source;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Rectangle { horizontal-stretch: 1; }
+                                Button {
+                                    text: @tr("Cancel");
+                                    clicked => { root.merge-cancel-requested(); }
+                                }
+                                Button {
+                                    text: @tr("Add route");
+                                    primary: true;
+                                    clicked => { root.merge-confirm-requested(); }
+                                }
+                            }
+                        }
                     }
                     HorizontalLayout {
+                        Rectangle { horizontal-stretch: 1; }
+                        Button {
+                            text: @tr("Cancel");
+                            clicked => {
+                                root.editor-cancel-requested();
+                            }
+                        }
                         Button {
                             text: @tr("Save");
                             primary: true;
                             clicked => {
                                 root.save-requested();
-                            }
-                        }
-                        Button {
-                            text: @tr("Cancel");
-                            clicked => {
-                                root.editor-cancel-requested();
                             }
                         }
                     }

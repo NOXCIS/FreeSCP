@@ -49,6 +49,7 @@ pub enum UiEvent {
         tab: Option<u64>,
         opt: Box<SessionOptions>,
         client: Box<dyn SftpClient>,
+        route: crate::routing::RouteChoice,
     },
     /// Reload the local pane after an async local operation finished.
     ReloadLocal { path: String },
@@ -86,15 +87,17 @@ pub enum UiEvent {
     /// A dialog-driven connect against `tab` ended without a session (cancel,
     /// failure, or dismissed dialog): clears the tab's `connecting` flag.
     ConnectFailed { tab: Option<u64> },
-    /// A Telnet (console) session finished connecting: installs an embedded
-    /// terminal into the tab's right pane. Console sessions never enter
-    /// `AppState::sessions` (they have no `SftpClient`); the UI thread keeps
-    /// them in `crate::console`.
+    /// A console session (Telnet terminal or SSH shell) finished connecting:
+    /// installs an embedded terminal into the tab's right pane, or into the
+    /// whole workspace for the terminal workspace. Console sessions never
+    /// enter `AppState::sessions` (they have no `SftpClient`); the UI thread
+    /// keeps them in `crate::console`.
     ConsoleSession {
         tab: Option<u64>,
         opt: Box<SessionOptions>,
-        session: freescp_core::telnet::TelnetSession,
-        events: tokio::sync::mpsc::UnboundedReceiver<freescp_core::telnet::TelnetEvent>,
+        session: crate::console::ConsoleTransport,
+        events: crate::console::ConsoleEventStream,
+        route: crate::routing::RouteChoice,
     },
     /// Decoded terminal output for the console of tab `tab` (the forwarding
     /// task keeps running while the tab is in the background).
@@ -130,8 +133,6 @@ pub struct AppPreferences {
     pub no_host_verification_ttl_min: i64,
     /// Open the Site Manager automatically after a disconnect.
     pub open_site_manager_on_disconnect: bool,
-    /// Open the Site Manager automatically at startup.
-    pub open_site_manager_on_startup: bool,
 }
 
 impl Default for AppPreferences {
@@ -144,7 +145,6 @@ impl Default for AppPreferences {
             show_queue_on_enqueue: true,
             no_host_verification_ttl_min: 15,
             open_site_manager_on_disconnect: true,
-            open_site_manager_on_startup: true,
         }
     }
 }
@@ -152,7 +152,9 @@ impl Default for AppPreferences {
 impl AppPreferences {
     /// Converts the settings workstream's persisted
     /// [`crate::settings::Preferences`] into the UI-behavior subset (port of
-    /// the preference reads in `MainWindow.hpp`).
+    /// the preference reads in `MainWindow.hpp`). The startup workspace is not
+    /// part of this subset: it is read from the store when the app starts
+    /// (`UI/startupMode`, see [`crate::settings::StartupMode`]).
     pub fn from_settings(prefs: &crate::settings::Preferences) -> Self {
         AppPreferences {
             show_hidden: prefs.show_hidden,
@@ -161,7 +163,6 @@ impl AppPreferences {
             show_queue_on_enqueue: prefs.show_queue_on_enqueue,
             no_host_verification_ttl_min: prefs.no_host_verification_ttl_min,
             open_site_manager_on_disconnect: prefs.open_site_manager_on_disconnect,
-            open_site_manager_on_startup: prefs.open_site_manager_on_startup,
         }
     }
 }
@@ -254,6 +255,9 @@ pub struct SessionRecord {
     /// True when the session runs without host-key verification; drives the
     /// status-bar risk banner.
     pub no_host_verification: bool,
+    /// The alternate route the session connected through (empty label for
+    /// the primary endpoint); drives the status-bar route suffix.
+    pub route: crate::routing::RouteChoice,
 }
 
 /// Rust-side mirror of one pane's visible state (the flat `left-*` /
@@ -676,13 +680,23 @@ impl AppState {
         }
     }
 
-    /// Show/hide the "Connecting…" progress affordance.
-    ///
-    /// TODO(integration): `main-window.slint` has no progress widget yet;
-    /// only the status bar is driven until the main-window workstream adds
-    /// one.
+    /// Show/hide the "Connecting…" progress affordance on the main window
+    /// (disables Connect actions and paints the right-pane overlay).
     pub fn set_connect_progress(&self, active: bool) {
-        tracing::debug!(active, "connect progress indicator (not wired to UI yet)");
+        if let Some(ui) = &self.ui {
+            let ui = ui.clone();
+            if slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui.upgrade() {
+                    ui.set_connect_in_progress(active);
+                }
+            })
+            .is_err()
+            {
+                tracing::debug!(active, "connect progress update dropped (event loop not running)");
+            }
+        } else {
+            tracing::debug!(active, "connect progress update skipped (no UI yet)");
+        }
     }
 
     /// Applies freshly saved settings to the live state: UI-behavior prefs,
@@ -723,6 +737,7 @@ impl AppState {
         tab: Option<u64>,
         opt: SessionOptions,
         client: Box<dyn SftpClient>,
+        route: crate::routing::RouteChoice,
     ) {
         let Some(tx) = &self.ui_events_tx else {
             tracing::warn!("session dropped: UI event channel not attached");
@@ -733,6 +748,7 @@ impl AppState {
                 tab,
                 opt: Box::new(opt),
                 client,
+                route,
             })
             .is_err()
         {
@@ -752,16 +768,18 @@ impl AppState {
         }
     }
 
-    /// Installs a freshly connected Telnet console session by forwarding it to
-    /// the UI event loop; the main window then links it to `tab` (or the
-    /// active tab / a new tab when `tab` is `None`). Safe to call from any
-    /// thread: `self` may be a clone of the UI-thread original.
+    /// Installs a freshly connected console session (Telnet terminal or SSH
+    /// shell) by forwarding it to the UI event loop; the main window then
+    /// links it to `tab` (or the active tab / a new tab when `tab` is
+    /// `None`). Safe to call from any thread: `self` may be a clone of the
+    /// UI-thread original.
     pub fn install_console_session(
         &self,
         tab: Option<u64>,
         opt: SessionOptions,
-        session: freescp_core::telnet::TelnetSession,
-        events: tokio::sync::mpsc::UnboundedReceiver<freescp_core::telnet::TelnetEvent>,
+        session: crate::console::ConsoleTransport,
+        events: crate::console::ConsoleEventStream,
+        route: crate::routing::RouteChoice,
     ) {
         let Some(tx) = &self.ui_events_tx else {
             tracing::warn!("console session dropped: UI event channel not attached");
@@ -773,6 +791,7 @@ impl AppState {
                 opt: Box::new(opt),
                 session,
                 events,
+                route,
             })
             .is_err()
         {
@@ -811,6 +830,7 @@ mod tests {
             busy: false,
             started_at: Instant::now(),
             no_host_verification: false,
+            route: crate::routing::RouteChoice::default(),
         }
     }
 

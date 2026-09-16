@@ -12,15 +12,21 @@ import { DialogFooter } from "widgets.slint";
 
 export component OverwriteDialog inherits Window {
     title: @tr("Overwrite confirmation");
-    width: 520px;
-    height: 320px;
+    width: 560px;
+    height: 360px;
 
     in-out property <string> message: "";
+    in-out property <string> source-info: "";
+    in-out property <string> dest-info: "";
+    in-out property <bool> can-resume: false;
 
     callback overwrite();
     callback skip();
     callback overwrite-all();
     callback skip-all();
+    callback resume();
+    // Abort the remaining transfer batch (distinct from Skip this file).
+    callback cancel();
 
     VerticalLayout {
         padding: 16px;
@@ -29,26 +35,51 @@ export component OverwriteDialog inherits Window {
         Text {
             text: root.message;
             wrap: word-wrap;
-            vertical-stretch: 1;
         }
-        Rectangle { } // spacer
+        if root.source-info != "" : Text {
+            text: @tr("Source: ") + root.source-info;
+            wrap: word-wrap;
+            font-size: 12px;
+            color: #404040;
+        }
+        if root.dest-info != "" : Text {
+            text: @tr("Destination: ") + root.dest-info;
+            wrap: word-wrap;
+            font-size: 12px;
+            color: #404040;
+        }
+        Text {
+            text: @tr("Skip leaves this file unchanged. Cancel stops the rest of the transfer.");
+            color: #6f6f77;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        Rectangle { vertical-stretch: 1; }
         DialogFooter {
             Button {
-                text: @tr("Overwrite");
-                primary: true;
-                clicked => { root.overwrite(); }
+                text: @tr("Cancel");
+                clicked => { root.cancel(); }
             }
             Button {
                 text: @tr("Skip");
+                primary: true;
                 clicked => { root.skip(); }
             }
+            if root.can-resume : Button {
+                text: @tr("Resume");
+                clicked => { root.resume(); }
+            }
             Button {
-                text: @tr("Overwrite all");
-                clicked => { root.overwrite-all(); }
+                text: @tr("Overwrite");
+                clicked => { root.overwrite(); }
             }
             Button {
                 text: @tr("Skip all");
                 clicked => { root.skip-all(); }
+            }
+            Button {
+                text: @tr("Overwrite all");
+                clicked => { root.overwrite-all(); }
             }
         }
     }

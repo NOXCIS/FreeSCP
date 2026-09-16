@@ -92,7 +92,10 @@ export component SearchDialog inherits Window {
     in-out property <[string]> results: [];
 
     callback search-requested();
+    // Cancels an in-flight recursive search (keep the dialog open).
     callback cancel-requested();
+    // Double-click / activate a result path (basename or full path).
+    callback result-activated(string);
 
     width: 560px;
     height: 480px;
@@ -140,8 +143,8 @@ export component SearchDialog inherits Window {
             }
             Button {
                 text: @tr("Cancel");
-                enabled: !root.busy;
-                clicked => { cancel-requested(); root.hide(); }
+                enabled: root.busy;
+                clicked => { cancel-requested(); }
             }
             Text {
                 text: root.busy ? @tr("Searching…") : "";
@@ -152,7 +155,10 @@ export component SearchDialog inherits Window {
             Rectangle { horizontal-stretch: 1; }
             Button {
                 text: @tr("Close");
-                clicked => { root.hide(); }
+                clicked => {
+                    if (root.busy) { cancel-requested(); }
+                    root.hide();
+                }
             }
         }
         Text {
@@ -175,10 +181,16 @@ export component SearchDialog inherits Window {
                 y: 12px;
             }
             if root.results.length > 0 : ListView {
-                for result[i] in root.results : Rectangle {
+                for result[i] in root.results : TouchArea {
                     width: 100%;
                     height: 24px;
-                    background: mod(i, 2) == 0 ? #2c2c31 : #2d2d32;
+                    mouse-cursor: MouseCursor.pointer;
+                    Rectangle {
+                        width: parent.width;
+                        height: parent.height;
+                        background: parent.has-hover ? #33506e : (mod(i, 2) == 0 ? #2c2c31 : #2d2d32);
+                    }
+                    double-clicked => { root.result-activated(result); }
                     Text {
                         text: result;
                         x: 10px;

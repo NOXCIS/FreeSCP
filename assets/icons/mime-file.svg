@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <!-- Generic file — outline + lines, not a solid white slab -->
+  <path d="M12 6h16l10 10v26a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" fill="none" stroke="#e6e6e9" stroke-width="2.5"/>
+  <path d="M28 6v10h10" fill="none" stroke="#e6e6e9" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M16 26h16M16 32h12" fill="none" stroke="#c8c8ce" stroke-width="2.2" stroke-linecap="round"/>
+</svg>

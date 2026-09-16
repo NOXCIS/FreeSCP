@@ -1,0 +1,347 @@
+// Startup workspace selector ("Start Page").
+//
+// Shown inside MainWindow — replacing the tab bar, toolbar and panes — while
+// `start-page-visible` is set. The user picks a workspace (two-panel transfer
+// or SSH terminal) and optionally a saved/recent site; Rust reads those
+// properties back in `start-page-open-requested` and starts the right
+// connect. Imported by main-window.slint (like console.slint), so this file
+// needs no build.rs entry; main-window.slint re-exports `StartSiteRow` for
+// src/main.rs.
+
+import { Button, ListView } from "std-widgets.slint";
+
+export struct StartSiteRow {
+    // 0 = saved site, 1 = recent server. `id` is the saved site name, or the
+    // recent entry's index as text; Rust resolves it when opening.
+    kind: int,
+    id: string,
+    name: string,
+    subtitle: string,
+}
+
+// One of the two workspace cards. The whole card is the hit target.
+component ModeCard inherits TouchArea {
+    in property <string> glyph;
+    in property <string> title;
+    in property <string> subtitle;
+    in property <bool> active: false;
+    callback picked();
+
+    height: 78px;
+    mouse-cursor: MouseCursor.pointer;
+    clicked => { root.picked(); }
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        border-radius: 6px;
+        background: root.active ? #2f3c50 : (root.has-hover ? #33333a : #2b2b30);
+        border-width: root.active ? 2px : 1px;
+        border-color: root.active ? #4a90d9 : #3c3c42;
+    }
+    Text {
+        text: root.glyph;
+        x: 12px;
+        y: 0px;
+        width: 34px;
+        height: parent.height;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        color: root.active ? #7fb2ea : #9a9aa2;
+        font-size: 20px;
+    }
+    Text {
+        text: root.title;
+        x: 50px;
+        y: 14px;
+        width: parent.width - 62px;
+        overflow: elide;
+        color: #e6e6e9;
+        font-size: 13px;
+        font-weight: 600;
+    }
+    Text {
+        text: root.subtitle;
+        x: 50px;
+        y: 36px;
+        width: parent.width - 62px;
+        height: 30px;
+        wrap: word-wrap;
+        overflow: elide;
+        color: #9a9aa2;
+        font-size: 11px;
+    }
+    // Selection dot, so the active mode is obvious without relying on color.
+    Rectangle {
+        x: parent.width - 20px;
+        y: 14px;
+        width: 10px;
+        height: 10px;
+        border-radius: 5px;
+        background: root.active ? #4a90d9 : #00000000;
+        border-width: root.active ? 0px : 1px;
+        border-color: #5a5a62;
+    }
+}
+
+export component StartPage inherits Rectangle {
+    in-out property <[StartSiteRow]> sites;
+    // Index into `sites`; -1 selects "no site" (local window / quick connect).
+    in-out property <int> selected-row: -1;
+    // 0 = two-panel transfer, 1 = SSH terminal.
+    in-out property <int> mode: 0;
+    in-out property <bool> remember: false;
+    // One-line explanation of what "Open" will do (computed by Rust on every
+    // selection/mode change).
+    in property <string> hint: "";
+
+    callback row-selected(int);
+    callback open-requested();
+    callback site-manager-requested();
+    callback quick-connect-requested();
+    callback settings-requested();
+    // Leave the Start Page without opening (back to the current session).
+    callback dismiss-requested();
+    // Workspace card / "Remember my choice" changes: Rust recomputes the hint.
+    callback mode-selected(int);
+    callback remember-toggled(bool);
+
+    background: #26262a;
+
+    VerticalLayout {
+        // Center a readable column; stretch keeps it vertically centered.
+        padding: 24px;
+        spacing: 0px;
+        alignment: center;
+
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            background: transparent;
+
+            VerticalLayout {
+                width: min(parent.width, 640px);
+                height: min(parent.height, 560px);
+                alignment: center;
+                spacing: 16px;
+                x: (parent.width - self.width) / 2;
+
+                // ---- branding -------------------------------------------------
+                HorizontalLayout {
+                    spacing: 12px;
+                    Image {
+                        source: @image-url("../../../assets/program/icon-freescp.svg");
+                        width: 44px;
+                        height: 44px;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: @tr("FreeSCP");
+                            color: #e6e6e9;
+                            font-size: 22px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: @tr("Choose a workspace, then open a saved site or a fresh connection.");
+                            color: #9a9aa2;
+                            font-size: 12px;
+                        }
+                    }
+                }
+
+                // ---- workspace mode -------------------------------------------
+                Text {
+                    text: @tr("Workspace");
+                    color: #c9c9cf;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    two-panel := ModeCard {
+                        glyph: "▤";
+                        title: @tr("Two-panel transfer");
+                        subtitle: @tr("Local and remote file browsers side by side.");
+                        active: root.mode == 0;
+                        picked => { root.mode = 0; root.mode-selected(0); }
+                    }
+                    terminal := ModeCard {
+                        glyph: ">_";
+                        title: @tr("SSH terminal");
+                        subtitle: @tr("A login shell in a full-window terminal.");
+                        active: root.mode == 1;
+                        picked => { root.mode = 1; root.mode-selected(1); }
+                    }
+                }
+
+                // ---- site -----------------------------------------------------
+                Text {
+                    text: @tr("Site");
+                    color: #c9c9cf;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                    min-height: 120px;
+                    background: #2b2b30;
+                    border-width: 1px;
+                    border-color: #3c3c42;
+                    border-radius: 6px;
+
+                    VerticalLayout {
+                        padding: 4px;
+                        spacing: 0px;
+
+                        // "No site" row: local two-panel window, or the
+                        // quick-connect dialog in terminal mode.
+                        no-site := TouchArea {
+                            height: 44px;
+                            mouse-cursor: MouseCursor.pointer;
+                            clicked => { root.selected-row = -1; root.row-selected(-1); }
+                            Rectangle {
+                                width: parent.width;
+                                height: parent.height;
+                                border-radius: 4px;
+                                background: root.selected-row < 0 ? #33506e : (no-site.has-hover ? #3a3a44 : transparent);
+                            }
+                            Text {
+                                text: @tr("No site");
+                                x: 10px;
+                                width: 90px;
+                                height: parent.height;
+                                vertical-alignment: center;
+                                color: #e6e6e9;
+                                font-size: 12px;
+                            }
+                            Text {
+                                text: root.mode == 1 ? @tr("Ask for a connection…") : @tr("Open local folders only");
+                                x: 104px;
+                                width: parent.width - 116px;
+                                height: parent.height;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                color: #9a9aa2;
+                                font-size: 11px;
+                            }
+                        }
+
+                        list-view := ListView {
+                            vertical-stretch: 1;
+                            for row[i] in root.sites : Rectangle {
+                                height: 44px;
+                                row-touch := TouchArea {
+                                    width: 100%;
+                                    height: 100%;
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => { root.selected-row = i; root.row-selected(i); }
+                                    double-clicked => { root.selected-row = i; root.row-selected(i); root.open-requested(); }
+                                    Rectangle {
+                                        width: parent.width;
+                                        height: parent.height;
+                                        border-radius: 4px;
+                                        background: root.selected-row == i ? #33506e : (row-touch.has-hover ? #3a3a44 : transparent);
+                                    }
+                                }
+                                HorizontalLayout {
+                                    x: 10px;
+                                    width: parent.width - 20px;
+                                    height: parent.height;
+                                    spacing: 10px;
+                                    Text {
+                                        text: row.name;
+                                        width: 40%;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        color: #e6e6e9;
+                                        font-size: 12px;
+                                    }
+                                    Text {
+                                        text: row.subtitle;
+                                        horizontal-stretch: 1;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        color: #9a9aa2;
+                                        font-size: 11px;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- footer ---------------------------------------------------
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    remember-toggle := TouchArea {
+                        width: content.preferred-width + 8px;
+                        height: 24px;
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => { root.remember = !root.remember; root.remember-toggled(root.remember); }
+                        content := HorizontalLayout {
+                            spacing: 6px;
+                            Rectangle {
+                                width: 13px;
+                                height: 13px;
+                                border-radius: 3px;
+                                background: root.remember ? #4a90d9 : transparent;
+                                border-width: 1px;
+                                border-color: root.remember ? #4a90d9 : #5a5a62;
+                                Text {
+                                    text: "✓";
+                                    width: parent.width;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: center;
+                                    color: #ffffff;
+                                    font-size: 11px;
+                                    visible: root.remember;
+                                }
+                            }
+                            Text {
+                                text: @tr("Remember my choice");
+                                vertical-alignment: center;
+                                color: #c9c9cf;
+                                font-size: 12px;
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.hint;
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: #9a9aa2;
+                        font-size: 11px;
+                    }
+
+                    Button {
+                        text: @tr("Cancel");
+                        clicked => { root.dismiss-requested(); }
+                    }
+                    Button {
+                        text: @tr("Settings…");
+                        clicked => { root.settings-requested(); }
+                    }
+                    Button {
+                        text: @tr("Site Manager…");
+                        clicked => { root.site-manager-requested(); }
+                    }
+                    Button {
+                        text: @tr("Quick connect…");
+                        clicked => { root.quick-connect-requested(); }
+                    }
+                    Button {
+                        text: @tr("Open");
+                        primary: true;
+                        clicked => { root.open-requested(); }
+                    }
+                }
+            }
+        }
+    }
+}

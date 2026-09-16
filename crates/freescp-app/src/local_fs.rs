@@ -767,32 +767,24 @@ pub fn open_url(url: &str) -> io::Result<()> {
     }
 }
 
-/// Format a byte count like the Qt transfer queue (1024-based units, one
-/// decimal when the value is < 10 and the unit is not bytes):
-/// e.g. `"512 B"`, `"1.5 KB"`, `"4.2 MB"`.
+/// Format a byte count for the local pane (1024-based IEC units, 2 decimals).
+/// e.g. `"512 bytes"`, `"1.50 KiB"`, `"4.00 GiB"`.
 pub fn format_size(bytes: u64) -> String {
     // QFileSystemModel renders local sizes with QLocale::formattedDataSize
     // (2 decimals, IEC units) and spells out byte counts ("5 bytes").
-    const UNITS: [&str; 6] = ["bytes", "KiB", "MiB", "GiB", "TiB", "PiB"];
-    if bytes < 1024 {
-        return if bytes == 1 {
-            "1 byte".to_string()
-        } else {
-            format!("{bytes} bytes")
-        };
-    }
-    let mut value = bytes as f64;
-    let mut unit = 0usize;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    format!("{value:.2} {}", UNITS[unit])
+    format_iec(bytes, 2)
 }
 
 /// Remote-pane size text: `RemoteModel::data` formats sizes with
 /// `QLocale::formattedDataSize(size, 1, DataSizeIecFormat)` — one decimal.
 pub fn format_size_remote(bytes: u64) -> String {
+    format_iec(bytes, 1)
+}
+
+/// Shared IEC (1024) humanizer. After choosing a unit, re-promotes when the
+/// rounded display would read as ≥1024 (e.g. 1048575 → `1024.00 KiB` without
+/// this step, `1.00 MiB` with it).
+fn format_iec(bytes: u64, decimals: usize) -> String {
     const UNITS: [&str; 6] = ["bytes", "KiB", "MiB", "GiB", "TiB", "PiB"];
     if bytes < 1024 {
         return if bytes == 1 {
@@ -807,7 +799,17 @@ pub fn format_size_remote(bytes: u64) -> String {
         value /= 1024.0;
         unit += 1;
     }
-    format!("{value:.1} {}", UNITS[unit])
+    // Promote again if rounding would show 1024.x of the current unit.
+    let factor = 10f64.powi(decimals as i32);
+    while unit < UNITS.len() - 1 && (value * factor).round() / factor >= 1024.0 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    match decimals {
+        0 => format!("{:.0} {}", value, UNITS[unit]),
+        1 => format!("{:.1} {}", value, UNITS[unit]),
+        _ => format!("{:.2} {}", value, UNITS[unit]),
+    }
 }
 
 /// Format an epoch-seconds timestamp for the local panel (port of
@@ -1244,10 +1246,15 @@ mod tests {
         assert_eq!(format_size(4294967296), "4.00 GiB");
         assert_eq!(format_size(1099511627776), "1.00 TiB");
         assert_eq!(format_size(10240), "10.00 KiB");
+        // Values that round to 1024 of a unit must promote (not "1024.00 KiB").
+        assert_eq!(format_size(1_048_571), "1.00 MiB");
+        assert_eq!(format_size(1_048_575), "1.00 MiB");
+        assert_eq!(format_size(5_368_709_120), "5.00 GiB");
         // RemoteModel uses one decimal (DataSizeIecFormat with precision 1).
         assert_eq!(format_size_remote(1536), "1.5 KiB");
         assert_eq!(format_size_remote(10240), "10.0 KiB");
         assert_eq!(format_size_remote(512), "512 bytes");
+        assert_eq!(format_size_remote(1_048_526), "1.0 MiB");
     }
 
     #[test]

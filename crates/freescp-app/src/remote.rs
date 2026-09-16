@@ -885,6 +885,10 @@ pub fn format_size(bytes: u64) -> String {
     if unit == 0 {
         format!("{bytes} B")
     } else {
+        while unit < UNITS.len() - 1 && (value * 10.0).round() / 10.0 >= 1024.0 {
+            value /= 1024.0;
+            unit += 1;
+        }
         format!("{value:.1} {}", UNITS[unit])
     }
 }
@@ -1179,6 +1183,7 @@ pub fn open_permissions_dialog(
     dialog.set_path(entry.name.clone().into());
     dialog.set_mode((current_mode & 0o777) as i32);
     dialog.set_recursive(false);
+    dialog.set_show_recursive(entry.is_dir);
 
     let weak = dialog.as_weak();
     let apply_tx = tx.clone();
@@ -1190,10 +1195,20 @@ pub fn open_permissions_dialog(
         }
     });
     let weak = dialog.as_weak();
-    dialog.on_close_requested(move || {
-        if let Some(d) = weak.upgrade() {
+    dialog.on_close_requested({
+        let tx = tx.clone();
+        move || {
+            if let Some(d) = weak.upgrade() {
+                let _ = tx.send(None);
+                let _ = d.hide();
+            }
+        }
+    });
+    dialog.window().on_close_requested({
+        let tx = tx.clone();
+        move || {
             let _ = tx.send(None);
-            let _ = d.hide();
+            slint::CloseRequestResponse::HideWindow
         }
     });
 

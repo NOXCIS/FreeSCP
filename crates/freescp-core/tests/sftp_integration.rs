@@ -25,8 +25,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use freescp_core::backends::sftp::RusshSftpClient;
 use freescp_core::client_factory::create_client;
 use freescp_core::{
-    ClientError, KbdIntPromptResult, KnownHostsPolicy, Protocol, ProxyType, SessionOptions,
-    SftpClient, TransferIntegrityPolicy,
+    ClientError, HostKeyDecision, KbdIntPromptResult, KnownHostsPolicy, Protocol, ProxyType,
+    SessionOptions, SftpClient, TransferIntegrityPolicy,
 };
 
 /// The payload used by the roundtrip tests (kept identical to the C++ suite).
@@ -340,7 +340,7 @@ async fn tofu_hostkey_mismatch_fails_before_callback() {
         opt.hostkey_confirm_cb = Some(Arc::new(
             move |_host: &str, _port: u16, _algo: &str, _fp: &str, _can_save: bool| {
                 called.store(true, Ordering::SeqCst);
-                true
+                HostKeyDecision::AcceptAndSave
             },
         ));
         opt
@@ -944,7 +944,7 @@ async fn tofu_accept_confirms_and_persists_key() {
         opt.hostkey_confirm_cb = Some(Arc::new(
             move |host: &str, port: u16, _algo: &str, _fp: &str, _can_save: bool| {
                 calls.lock().unwrap().push((host.to_string(), port));
-                true
+                HostKeyDecision::AcceptAndSave
             },
         ));
         opt
@@ -995,7 +995,9 @@ async fn tofu_reject_returns_host_key_rejected() {
         opt.known_hosts_policy = KnownHostsPolicy::AcceptNew;
         opt.known_hosts_path = Some(known_hosts.to_string_lossy().into_owned());
         opt.hostkey_confirm_cb = Some(Arc::new(
-            |_host: &str, _port: u16, _algo: &str, _fp: &str, _can_save: bool| false,
+            |_host: &str, _port: u16, _algo: &str, _fp: &str, _can_save: bool| {
+                HostKeyDecision::Reject
+            },
         ));
         opt
     };

@@ -58,8 +58,9 @@ use freescp_core::ssh_config::{self, ResolvedSshParams};
 use freescp_core::{
     capabilities_for_protocol, default_port_for_protocol, default_port_for_proxy_type,
     default_port_for_telnet, default_port_for_webdav_scheme, protocol_display_name,
-    HostKeyConfirmCb, KbdIntPromptResult, KbdIntPromptsCb, KnownHostsPolicy, Protocol, ProxyType,
-    ScpTransferMode, SessionOptions, SftpClient, TransferIntegrityPolicy, WebDavScheme,
+    HostKeyConfirmCb, HostKeyDecision, KbdIntPromptResult, KbdIntPromptsCb, KnownHostsPolicy,
+    Protocol, ProxyType, ScpTransferMode, SessionOptions, SftpClient, TransferIntegrityPolicy,
+    WebDavScheme,
 };
 
 // ---------------------------------------------------------------------------
@@ -432,13 +433,24 @@ pub enum ConnectOutcome {
     /// A filesystem session (`SftpClient`), installed through
     /// `AppState::install_session`.
     Session(Box<dyn SftpClient>),
-    /// A Telnet console: the transport handle plus its event stream, installed
-    /// through `AppState::install_console_session`. Telnet has no filesystem,
-    /// so it never becomes an `SftpClient`.
+    /// An interactive console: the transport handle plus its event stream,
+    /// installed through `AppState::install_console_session`. Covers both the
+    /// Telnet console and the SSH shell terminal workspace; neither has a
+    /// filesystem, so neither becomes an `SftpClient`.
     Console(
-        freescp_core::telnet::TelnetSession,
-        tokio::sync::mpsc::UnboundedReceiver<freescp_core::telnet::TelnetEvent>,
+        crate::console::ConsoleTransport,
+        crate::console::ConsoleEventStream,
     ),
+}
+
+/// What the caller wants a connect attempt to open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectIntent {
+    /// The classic file session (two-panel browser).
+    Filesystem,
+    /// The terminal workspace: an SSH shell, or a Telnet console when the
+    /// site's protocol is Telnet. `cols`/`rows` size the initial PTY.
+    Terminal { cols: u16, rows: u16 },
 }
 
 /// Connects `opt`, picking the transport its protocol needs: everything with a
@@ -448,9 +460,63 @@ pub async fn run_any_connect(opt: SessionOptions) -> Result<ConnectOutcome, Conn
         let (session, events) = freescp_core::telnet::connect(&opt)
             .await
             .map_err(translate_client_error)?;
-        return Ok(ConnectOutcome::Console(session, events));
+        return Ok(ConnectOutcome::Console(
+            crate::console::ConsoleTransport::Telnet(session),
+            crate::console::ConsoleEventStream::Telnet(events),
+        ));
     }
     run_connect(opt).await.map(ConnectOutcome::Session)
+}
+
+/// Opens an interactive SSH shell (terminal workspace) for `opt`.
+///
+/// The protocol in `opt` only supplies connection parameters: an SFTP/SCP
+/// site opened as a terminal runs a plain login shell over the same transport
+/// (proxy, jump host, known-hosts policy and auth chain all apply). Telnet
+/// sites keep their Telnet console and never reach this function — see
+/// [`run_intent`].
+pub async fn run_shell_connect(
+    mut opt: SessionOptions,
+    cols: u16,
+    rows: u16,
+) -> Result<ConnectOutcome, ConnectError> {
+    freescp_core::ssh_config::apply_user_config(&mut opt);
+    let (session, events) = freescp_core::shell::connect(&opt, cols, rows)
+        .await
+        .map_err(translate_client_error)?;
+    Ok(ConnectOutcome::Console(
+        crate::console::ConsoleTransport::Shell(session),
+        crate::console::ConsoleEventStream::Shell(events),
+    ))
+}
+
+/// Runs the transport `intent` picked for `opt`.
+async fn run_intent(
+    intent: ConnectIntent,
+    opt: SessionOptions,
+) -> Result<ConnectOutcome, ConnectError> {
+    match intent {
+        ConnectIntent::Filesystem => run_any_connect(opt).await,
+        ConnectIntent::Terminal { cols, rows } => match opt.protocol {
+            Protocol::Telnet => run_any_connect(opt).await,
+            _ => run_shell_connect(opt, cols, rows).await,
+        },
+    }
+}
+
+/// Status-bar protocol label for a finished connect: the shell transport
+/// reports "SSH terminal" instead of the site's file protocol.
+fn outcome_label(outcome: &ConnectOutcome, protocol_display: &str) -> String {
+    match outcome {
+        ConnectOutcome::Session(_) => protocol_display.to_string(),
+        ConnectOutcome::Console(session, _) => {
+            if session.is_terminal_workspace() {
+                "SSH terminal".to_string()
+            } else {
+                protocol_display.to_string()
+            }
+        }
+    }
 }
 
 /// Connect with a fully prepared [`SessionOptions`] (no dialog): spawns the
@@ -465,22 +531,69 @@ pub async fn run_any_connect(opt: SessionOptions) -> Result<ConnectOutcome, Conn
 /// in [`open`]; the caller is responsible for validation, callback
 /// attachment, and any cancel handling.
 pub fn start_connect(state: &AppState, tab: Option<u64>, opt: SessionOptions) {
+    start_connect_intent(state, tab, opt, ConnectIntent::Filesystem);
+}
+
+/// Opens `opt` in the terminal workspace: an SSH shell for SFTP/SCP/FTP/...
+/// sites, the Telnet console for Telnet sites (see [`ConnectIntent`]).
+/// `cols`/`rows` size the initial PTY.
+pub fn start_terminal_connect(
+    state: &AppState,
+    tab: Option<u64>,
+    opt: SessionOptions,
+    cols: u16,
+    rows: u16,
+) {
+    start_connect_intent(state, tab, opt, ConnectIntent::Terminal { cols, rows });
+}
+
+/// Connect with a fully prepared [`SessionOptions`] (no dialog), opening the
+/// workspace `intent` asked for. Spawns the network work on tokio, then
+/// applies the result on the UI thread via `spawn_local` (port of
+/// `startSftpConnect` + `finalizeSftpConnect`).
+///
+/// `tab` is the tab the session should install into (the tab a dialog connect
+/// reserved, or the tab that asked for it). `None` lets the UI event loop pick:
+/// the active tab when it is idle, else a fresh tab.
+pub fn start_connect_intent(
+    state: &AppState,
+    tab: Option<u64>,
+    opt: SessionOptions,
+    intent: ConnectIntent,
+) {
     let state = state.clone();
     let host_display = opt.host.clone();
     let protocol_display = protocol_display_name(opt.protocol).to_string();
     let mut opt = opt;
     // ~/.ssh/config resolution (Rust-only feature): sites and quick-connect
     // entries store the alias; the resolved values drive the session only, so
-    // a saved site keeps working when the config changes.
+    // a saved site keeps working when the config changes. Route candidates
+    // re-apply this per endpoint (see `routing::build_candidates`).
     apply_ssh_config_defaults(&mut opt);
     let opt_for_install = opt.clone();
     state.set_connect_progress(true);
 
+    // Progress lines from inside the failover loop (probe start, route
+    // switches) hop to the UI thread; the final status is set below.
+    let report_state = state.clone();
+    let report: std::sync::Arc<dyn Fn(&str) + Send + Sync> =
+        std::sync::Arc::new(move |msg: &str| {
+            let msg = msg.to_string();
+            let state = report_state.clone();
+            let _ = slint::invoke_from_event_loop(move || state.set_status(&msg));
+        });
+
+    let route_settings = crate::settings::Preferences::load().route_settings();
+    let cache_dir = crate::settings::config_dir();
+
     let connect_state = state.clone();
     // UI callbacks are not inside a Tokio context; use AppState's runtime.
-    let task = state
-        .runtime_handle()
-        .spawn(async move { run_any_connect(opt).await });
+    let task = state.runtime_handle().spawn(async move {
+        crate::routing::connect_routed(&opt, &route_settings, &cache_dir, Some(report), move |o| {
+            run_intent(intent, o)
+        })
+        .await
+    });
 
     let _ = slint::spawn_local(async move {
         let outcome = task.await.unwrap_or_else(|join_error| {
@@ -489,17 +602,28 @@ pub fn start_connect(state: &AppState, tab: Option<u64>, opt: SessionOptions) {
         });
         connect_state.set_connect_progress(false);
         match outcome {
-            Ok(ConnectOutcome::Session(client)) => {
+            Ok((outcome, route)) => {
                 start_indicators(&connect_state);
-                connect_state
-                    .set_status(&format!("Connected ({protocol_display}) to {host_display}"));
-                connect_state.install_session(tab, opt_for_install, client);
-            }
-            Ok(ConnectOutcome::Console(session, events)) => {
-                start_indicators(&connect_state);
-                connect_state
-                    .set_status(&format!("Connected ({protocol_display}) to {host_display}"));
-                connect_state.install_console_session(tab, opt_for_install, session, events);
+                connect_state.set_status(&format!(
+                    "Connected ({}) to {}{}",
+                    outcome_label(&outcome, &protocol_display),
+                    route_host_display(&route, &host_display),
+                    route.status_suffix()
+                ));
+                match outcome {
+                    ConnectOutcome::Session(client) => {
+                        connect_state.install_session(tab, opt_for_install, client, route);
+                    }
+                    ConnectOutcome::Console(session, events) => {
+                        connect_state.install_console_session(
+                            tab,
+                            opt_for_install,
+                            session,
+                            events,
+                            route,
+                        );
+                    }
+                }
             }
             Err(ConnectError::Cancelled) => {
                 connect_state.set_status("Connection canceled");
@@ -517,6 +641,16 @@ pub fn start_connect(state: &AppState, tab: Option<u64>, opt: SessionOptions) {
             }
         }
     });
+}
+
+/// After a failover the session is talking to the chosen route's endpoint,
+/// not the site's primary host; show what actually connected.
+fn route_host_display<'a>(route: &'a crate::routing::RouteChoice, primary: &'a str) -> &'a str {
+    if route.host.is_empty() {
+        primary
+    } else {
+        &route.host
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -693,6 +827,13 @@ pub fn prompt_user_sync(
                 }
             }
         });
+        dlg.window().on_close_requested({
+            let tx = tx.clone();
+            move || {
+                let _ = tx.send(PromptOutcome::Cancelled);
+                slint::CloseRequestResponse::HideWindow
+            }
+        });
         let _ = dlg.show(); // showing the prompt is best-effort
     });
     if posted.is_err() {
@@ -712,7 +853,7 @@ pub fn prompt_user_sync(
 fn tofu_confirm_callback(state: AppState) -> HostKeyConfirmCb {
     Arc::new(
         move |host: &str, _port: u16, algorithm: &str, fingerprint: &str, can_save: bool| {
-            let (tx, rx) = mpsc::sync_channel::<bool>(1);
+            let (tx, rx) = mpsc::sync_channel::<HostKeyDecision>(1);
             let host_s = host.to_string();
             let algorithm_s = algorithm.to_string();
             // C++ passed settings "Security/fpHex" to the display helper.
@@ -723,7 +864,7 @@ fn tofu_confirm_callback(state: AppState) -> HostKeyConfirmCb {
                 let tx = tx.clone();
                 move || {
                     let Ok(dlg) = connection_dialog::HostKeyDialog::new() else {
-                        let _ = tx.send(false);
+                        let _ = tx.send(HostKeyDecision::Reject);
                         return;
                     };
                     dlg.set_host(host_s.into());
@@ -743,7 +884,7 @@ fn tofu_confirm_callback(state: AppState) -> HostKeyConfirmCb {
                         let tx = tx.clone();
                         let close = close.clone();
                         move || {
-                            let _ = tx.send(true);
+                            let _ = tx.send(HostKeyDecision::AcceptAndSave);
                             close();
                         }
                     });
@@ -751,7 +892,7 @@ fn tofu_confirm_callback(state: AppState) -> HostKeyConfirmCb {
                         let tx = tx.clone();
                         let close = close.clone();
                         move || {
-                            let _ = tx.send(true);
+                            let _ = tx.send(HostKeyDecision::AcceptOnce);
                             close();
                         }
                     });
@@ -759,24 +900,40 @@ fn tofu_confirm_callback(state: AppState) -> HostKeyConfirmCb {
                         let tx = tx.clone();
                         let close = close.clone();
                         move || {
-                            let _ = tx.send(false);
+                            let _ = tx.send(HostKeyDecision::Reject);
                             close();
+                        }
+                    });
+                    dlg.window().on_close_requested({
+                        let tx = tx.clone();
+                        move || {
+                            let _ = tx.send(HostKeyDecision::Reject);
+                            slint::CloseRequestResponse::HideWindow
                         }
                     });
                     let _ = dlg.show(); // showing the prompt is best-effort
                 }
             });
             if posted.is_err() {
-                return false;
+                return HostKeyDecision::Reject;
             }
-            let accepted = rx.recv_timeout(Duration::from_secs(120)).unwrap_or(false);
+            let decision = rx
+                .recv_timeout(Duration::from_secs(120))
+                .unwrap_or(HostKeyDecision::Reject);
             // Status wording mirrors MainWindow::onTofuFinished.
-            if !can_save && accepted {
-                state.set_status("Could not save fingerprint; allowing one-time connection");
-            } else if !accepted {
-                state.set_status("Connection cancelled: fingerprint not accepted");
+            match decision {
+                HostKeyDecision::AcceptOnce if can_save => {
+                    state.set_status("Fingerprint accepted for this connection only");
+                }
+                HostKeyDecision::AcceptOnce => {
+                    state.set_status("Could not save fingerprint; allowing one-time connection");
+                }
+                HostKeyDecision::Reject => {
+                    state.set_status("Connection cancelled: fingerprint not accepted");
+                }
+                HostKeyDecision::AcceptAndSave => {}
             }
-            accepted
+            decision
         },
     )
 }
@@ -873,6 +1030,22 @@ pub fn attach_session_callbacks(mut opt: SessionOptions, state: &AppState) -> Se
     opt
 }
 
+/// Prepares a connect from a stored preset (a saved site or a recent server):
+/// applies the global known-hosts display preferences, runs the
+/// "no verification" double confirmation, and attaches the TOFU /
+/// keyboard-interactive callbacks. `None` means the user declined the
+/// confirmation, so the caller must not start the connect.
+pub fn prepare_preset_connect(state: &AppState, mut opt: SessionOptions) -> Option<SessionOptions> {
+    let prefs = crate::settings::Preferences::load();
+    opt.known_hosts_hash_names = prefs.known_hosts_hashed;
+    opt.show_fp_hex = prefs.fp_hex;
+    if !confirm_insecure_host_policy(state, &opt) {
+        state.set_status("Connection canceled: no-verification policy not confirmed");
+        return None;
+    }
+    Some(attach_session_callbacks(opt, state))
+}
+
 // ---------------------------------------------------------------------------
 // "No verification" (known_hosts Off) double confirmation
 // ---------------------------------------------------------------------------
@@ -948,6 +1121,13 @@ pub fn confirm_insecure_host_policy(state: &AppState, opt: &SessionOptions) -> b
                     if let Some(d) = weak.upgrade() {
                         let _ = d.hide(); // answered; closing is cosmetic
                     }
+                }
+            });
+            dlg.window().on_close_requested({
+                let tx = tx.clone();
+                move || {
+                    let _ = tx.send(false);
+                    slint::CloseRequestResponse::HideWindow
                 }
             });
             let _ = dlg.show(); // showing the prompt is best-effort
@@ -1106,6 +1286,13 @@ pub fn confirm_sync(title: &str, message: &str, yes_label: &str, no_label: &str)
                 if let Some(d) = weak.upgrade() {
                     let _ = d.hide();
                 }
+            }
+        });
+        dlg.window().on_close_requested({
+            let tx = tx.clone();
+            move || {
+                let _ = tx.send(false);
+                slint::CloseRequestResponse::HideWindow
             }
         });
         let _ = dlg.show();
@@ -1336,6 +1523,30 @@ fn protocol_can_start_connect(protocol: Protocol) -> bool {
 /// `tab` is the tab reserved by the caller (`main.rs` marks it `connecting`
 /// and passes its id); a successful connect installs into exactly that tab.
 pub fn open(win: &main_window::MainWindow, state: &AppState, tab: Option<u64>) {
+    open_with_intent(win, state, tab, ConnectIntent::Filesystem);
+}
+
+/// Opens the quick-connect dialog in terminal mode: a successful connect
+/// installs an SSH shell (or a Telnet console for Telnet sites) instead of a
+/// file session. The PTY starts at 80x24; the view's first layout pass
+/// resizes it through [`crate::console::ConsoleState::resize`].
+pub fn open_terminal(win: &main_window::MainWindow, state: &AppState, tab: Option<u64>) {
+    open_with_intent(
+        win,
+        state,
+        tab,
+        ConnectIntent::Terminal { cols: 80, rows: 24 },
+    );
+}
+
+/// Shared body of [`open`] / [`open_terminal`]: `intent` decides which
+/// workspace a successful connect opens.
+fn open_with_intent(
+    win: &main_window::MainWindow,
+    state: &AppState,
+    tab: Option<u64>,
+    intent: ConnectIntent,
+) {
     if connect_in_progress() {
         // The caller has already reserved `tab`; release it so the tab bar
         // does not stay on "Connecting…" for an attempt that never started.
@@ -1640,14 +1851,14 @@ pub fn open(win: &main_window::MainWindow, state: &AppState, tab: Option<u64>) {
                     &site_name,
                 )
                 .await;
-                let result = run_any_connect(opt).await;
+                let result = run_intent(intent, opt).await;
                 if task_cancel.load(Ordering::SeqCst) {
                     if let Ok(ConnectOutcome::Session(client)) = &result {
                         client.interrupt();
                     }
                     return Err(ConnectError::Cancelled);
                 }
-                result
+                result.map(|outcome| (outcome, crate::routing::RouteChoice::default()))
             });
 
             let _ = slint::spawn_local(async move {
@@ -1664,25 +1875,29 @@ pub fn open(win: &main_window::MainWindow, state: &AppState, tab: Option<u64>) {
                 }
                 ui_state.set_connect_progress(false);
                 match outcome {
-                    Ok(ConnectOutcome::Session(client)) => {
+                    Ok((outcome, route)) => {
                         if let Some(ui_dlg) = ui_dlg.upgrade() {
                             let _ = ui_dlg.hide(); // connected; closing is cosmetic
                         }
                         start_indicators(&ui_state);
                         ui_state.set_status(&format!(
-                            "Connected ({protocol_display}) to {host_display}"
+                            "Connected ({}) to {host_display}",
+                            outcome_label(&outcome, &protocol_display)
                         ));
-                        ui_state.install_session(tab, opt_for_install, client);
-                    }
-                    Ok(ConnectOutcome::Console(session, events)) => {
-                        if let Some(ui_dlg) = ui_dlg.upgrade() {
-                            let _ = ui_dlg.hide(); // connected; closing is cosmetic
+                        match outcome {
+                            ConnectOutcome::Session(client) => {
+                                ui_state.install_session(tab, opt_for_install, client, route);
+                            }
+                            ConnectOutcome::Console(session, events) => {
+                                ui_state.install_console_session(
+                                    tab,
+                                    opt_for_install,
+                                    session,
+                                    events,
+                                    route,
+                                );
+                            }
                         }
-                        start_indicators(&ui_state);
-                        ui_state.set_status(&format!(
-                            "Connected ({protocol_display}) to {host_display}"
-                        ));
-                        ui_state.install_console_session(tab, opt_for_install, session, events);
                     }
                     Err(ConnectError::Cancelled) => {
                         ui_state.set_status("Connection canceled");
@@ -1755,6 +1970,8 @@ pub(crate) fn pick_connection_file(field: &str) -> Option<std::path::PathBuf> {
     let (title, start_dir) = match field {
         "private-key" => ("Select private key", ssh_dir()),
         "jump-key" => ("Select jump private key", ssh_dir()),
+        "route-key" => ("Select private key", ssh_dir()),
+        "route-jump-key" => ("Select jump private key", ssh_dir()),
         "known-hosts" => ("Select known_hosts", ssh_dir()),
         "ftps-ca" => ("Select FTPS CA bundle", home_dir()),
         "webdav-ca" => ("Select WebDAV CA bundle", home_dir()),

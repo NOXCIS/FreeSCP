@@ -137,6 +137,74 @@ pub fn default_staging_root() -> PathBuf {
     default_download_dir().join("FreeSCP-Dragged")
 }
 
+/// What the main window shows right after launch (`UI/startupMode`).
+///
+/// Rust-only preference: the C++ app always opened the two-panel window and
+/// optionally popped the Site Manager (`UI/showConnOnStart`). The Start Page
+/// adds the in-window workspace selector as the default, while the legacy
+/// behaviors stay selectable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StartupMode {
+    /// Start Page: pick a workspace (and optionally a site) on every launch.
+    #[default]
+    StartPage,
+    /// Straight into the blank local/local two-panel window.
+    DualPanel,
+    /// Straight into a terminal workspace; without a saved site this asks for
+    /// a connection through the Quick Connect dialog.
+    Terminal,
+    /// Legacy `UI/showConnOnStart`: two-panel window with the Site Manager
+    /// popped over it.
+    SiteManager,
+}
+
+impl StartupMode {
+    /// Every mode, in the order the Settings dropdown lists them.
+    pub const ALL: [StartupMode; 4] = [
+        StartupMode::StartPage,
+        StartupMode::DualPanel,
+        StartupMode::Terminal,
+        StartupMode::SiteManager,
+    ];
+
+    /// Storage name for `UI/startupMode`.
+    pub fn storage_name(self) -> &'static str {
+        match self {
+            StartupMode::StartPage => "start-page",
+            StartupMode::DualPanel => "two-panel",
+            StartupMode::Terminal => "terminal",
+            StartupMode::SiteManager => "site-manager",
+        }
+    }
+
+    /// Parses a stored name; unknown values fall back to the default
+    /// (Start Page), like the other stored-enum fallbacks.
+    pub fn from_storage_name(name: &str) -> StartupMode {
+        match name.trim().to_lowercase().as_str() {
+            "two-panel" => StartupMode::DualPanel,
+            "terminal" => StartupMode::Terminal,
+            "site-manager" => StartupMode::SiteManager,
+            _ => StartupMode::StartPage,
+        }
+    }
+
+    /// Index into [`StartupMode::ALL`], for the Settings dropdown.
+    pub fn index(self) -> i32 {
+        StartupMode::ALL
+            .iter()
+            .position(|mode| *mode == self)
+            .unwrap_or(0) as i32
+    }
+
+    /// `ALL[index]`, falling back to the default for out-of-range values.
+    pub fn from_index(index: i32) -> StartupMode {
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| StartupMode::ALL.get(index).copied())
+            .unwrap_or(StartupMode::StartPage)
+    }
+}
+
 /// All user preferences. Field names map 1:1 to the QSettings keys in
 /// `ui/SettingsDialog.cpp` (key name documented per field). Missing keys in
 /// the TOML file fall back to [`Default`].
@@ -161,8 +229,14 @@ pub struct Preferences {
     pub show_queue_on_enqueue: bool,
     /// `UI/defaultDownloadDir`.
     pub default_download_dir: String,
-    /// `UI/showConnOnStart` — open the Site Manager on startup.
+    /// `UI/showConnOnStart` — legacy "open the Site Manager on startup" flag.
+    /// Still written for compatibility, but derived from
+    /// [`Preferences::startup_mode`] (`site-manager` → true); new code reads
+    /// the startup mode instead.
     pub open_site_manager_on_startup: bool,
+    /// `UI/startupMode` — "start-page" | "two-panel" | "terminal" |
+    /// "site-manager" (Rust-only; see [`StartupMode`]).
+    pub startup_mode: String,
     /// `UI/openSiteManagerOnDisconnect`.
     pub open_site_manager_on_disconnect: bool,
     /// `Sites/deleteSecretsOnRemove` — when deleting a site, also remove its
@@ -212,6 +286,13 @@ pub struct Preferences {
     pub session_health_interval_sec: i64,
     /// `Network/remoteWriteabilityTtlMs` (1000..=120000).
     pub remote_writeability_ttl_ms: i64,
+    /// `Network/autoRouteEnabled` — automatic route selection for sites with
+    /// alternate routes (Rust-only feature).
+    pub auto_route_enabled: bool,
+    /// `Network/routeProbeBudgetMs` (100..=5000).
+    pub route_probe_budget_ms: i64,
+    /// `Network/routeCacheTtlSec` (30..=86400).
+    pub route_cache_ttl_sec: i64,
     /// `Advanced/stagingRoot`.
     pub staging_root: String,
     /// `Advanced/autoCleanStaging`.
@@ -240,6 +321,7 @@ impl Default for Preferences {
             show_queue_on_enqueue: true,
             default_download_dir: default_download_dir().to_string_lossy().into_owned(),
             open_site_manager_on_startup: true,
+            startup_mode: StartupMode::default().storage_name().to_string(),
             open_site_manager_on_disconnect: true,
             delete_secrets_on_remove: false,
             default_protocol: freescp_core::protocol_storage_name(freescp_core::Protocol::Sftp)
@@ -265,6 +347,9 @@ impl Default for Preferences {
             default_queue_auto_clear_minutes: 15,
             session_health_interval_sec: 600,
             remote_writeability_ttl_ms: 15_000,
+            auto_route_enabled: true,
+            route_probe_budget_ms: 900,
+            route_cache_ttl_sec: 300,
             staging_root: default_staging_root().to_string_lossy().into_owned(),
             auto_clean_staging: true,
             staging_retention_days: 7,
@@ -335,9 +420,29 @@ impl Preferences {
         freescp_core::protocol_from_storage_name(&self.default_protocol)
     }
 
+    /// `startup_mode` parsed as a [`StartupMode`] (unknown values fall back to
+    /// the Start Page).
+    pub fn startup_mode_enum(&self) -> StartupMode {
+        StartupMode::from_storage_name(&self.startup_mode)
+    }
+
     /// `default_scp_mode` parsed as a core [`freescp_core::ScpTransferMode`].
     pub fn default_scp_mode_enum(&self) -> freescp_core::ScpTransferMode {
         freescp_core::scp_transfer_mode_from_storage_name(&self.default_scp_mode)
+    }
+
+    /// Route-selection settings snapshot for `crate::routing`, with the
+    /// probe budget and cache TTL clamped to their documented ranges.
+    pub fn route_settings(&self) -> crate::routing::RouteSettings {
+        crate::routing::RouteSettings {
+            auto_enabled: self.auto_route_enabled,
+            probe_budget: std::time::Duration::from_millis(
+                self.route_probe_budget_ms.clamp(100, 5000) as u64,
+            ),
+            cache_ttl: std::time::Duration::from_secs(
+                self.route_cache_ttl_sec.clamp(30, 86_400) as u64
+            ),
+        }
     }
 
     /// `default_known_hosts_policy` as a core enum (0 Strict, 1 AcceptNew,
@@ -359,6 +464,19 @@ impl Preferences {
             _ => freescp_core::TransferIntegrityPolicy::Optional,
         }
     }
+}
+
+/// Persists `UI/startupMode` without touching the other preferences (the
+/// Start Page's "Remember my choice" box, and the terminal/two-panel entries
+/// that skip the page). Returns the error message on a failed write so the
+/// caller can surface it in the status bar.
+pub fn set_startup_mode(mode: StartupMode) -> Result<(), String> {
+    let mut prefs = Preferences::load();
+    if prefs.startup_mode_enum() == mode {
+        return Ok(());
+    }
+    prefs.startup_mode = mode.storage_name().to_string();
+    prefs.save()
 }
 
 // ---------------------------------------------------------------------------
@@ -779,6 +897,16 @@ pub fn preferences_from_legacy(map: &BTreeMap<String, String>) -> Option<Prefere
         "UI/showConnOnStart",
         legacy_bool
     );
+    // The startup workspace is a Rust-only preference; the legacy boolean has
+    // no direct equivalent, so it seeds the closest mode (Rust-only feature).
+    if let Some(value) = map.get("UI/showConnOnStart").and_then(legacy_bool) {
+        prefs.startup_mode = if value {
+            StartupMode::SiteManager.storage_name().to_string()
+        } else {
+            StartupMode::DualPanel.storage_name().to_string()
+        };
+        applied = true;
+    }
     legacy_set!(
         delete_secrets_on_remove,
         "Sites/deleteSecretsOnRemove",
@@ -1255,7 +1383,8 @@ fn load_dialog_from_prefs(dialog: &crate::ui::settings::SettingsDialog, prefs: &
     dialog.set_open_transfers_shortcut(prefs.open_transfers_shortcut.clone().into());
     dialog.set_open_history_shortcut(prefs.open_history_shortcut.clone().into());
     dialog.set_show_queue_on_enqueue(prefs.show_queue_on_enqueue);
-    dialog.set_open_site_manager_on_startup(prefs.open_site_manager_on_startup);
+    dialog.set_open_site_manager_on_disconnect(prefs.open_site_manager_on_disconnect);
+    dialog.set_startup_mode_index(prefs.startup_mode_enum().index());
     dialog.set_open_site_manager_on_disconnect(prefs.open_site_manager_on_disconnect);
     dialog.set_delete_secrets_on_remove(prefs.delete_secrets_on_remove);
     dialog.set_default_protocol(prefs.default_protocol.clone().into());
@@ -1277,6 +1406,9 @@ fn load_dialog_from_prefs(dialog: &crate::ui::settings::SettingsDialog, prefs: &
     dialog.set_default_queue_auto_clear_minutes(clamp_i32(prefs.default_queue_auto_clear_minutes));
     dialog.set_session_health_interval_sec(clamp_i32(prefs.session_health_interval_sec));
     dialog.set_remote_writeability_ttl_ms(clamp_i32(prefs.remote_writeability_ttl_ms));
+    dialog.set_auto_route_enabled(prefs.auto_route_enabled);
+    dialog.set_route_probe_budget_ms(clamp_i32(prefs.route_probe_budget_ms));
+    dialog.set_route_cache_ttl_sec(clamp_i32(prefs.route_cache_ttl_sec));
     dialog.set_default_download_dir(prefs.default_download_dir.clone().into());
     dialog.set_staging_root(prefs.staging_root.clone().into());
     dialog.set_auto_clean_staging(prefs.auto_clean_staging);
@@ -1288,8 +1420,14 @@ fn load_dialog_from_prefs(dialog: &crate::ui::settings::SettingsDialog, prefs: &
     dialog.set_dirty(false);
 }
 
-/// Collects [`Preferences`] from the dialog's properties.
-fn collect_dialog_prefs(dialog: &crate::ui::settings::SettingsDialog) -> Preferences {
+/// Collects [`Preferences`] from the dialog's properties. Fields the dialog
+/// does not (yet) expose are carried over from `untouched` so Apply never
+/// resets them.
+fn collect_dialog_prefs(
+    dialog: &crate::ui::settings::SettingsDialog,
+    _untouched: &Preferences,
+) -> Preferences {
+    let startup_mode = StartupMode::from_index(dialog.get_startup_mode_index());
     Preferences {
         language: dialog.get_language().to_string(),
         show_hidden: dialog.get_show_hidden(),
@@ -1298,7 +1436,8 @@ fn collect_dialog_prefs(dialog: &crate::ui::settings::SettingsDialog) -> Prefere
         open_transfers_shortcut: dialog.get_open_transfers_shortcut().to_string(),
         open_history_shortcut: dialog.get_open_history_shortcut().to_string(),
         show_queue_on_enqueue: dialog.get_show_queue_on_enqueue(),
-        open_site_manager_on_startup: dialog.get_open_site_manager_on_startup(),
+        open_site_manager_on_startup: startup_mode == StartupMode::SiteManager,
+        startup_mode: startup_mode.storage_name().to_string(),
         open_site_manager_on_disconnect: dialog.get_open_site_manager_on_disconnect(),
         delete_secrets_on_remove: dialog.get_delete_secrets_on_remove(),
         default_protocol: dialog.get_default_protocol().to_string(),
@@ -1337,6 +1476,10 @@ fn collect_dialog_prefs(dialog: &crate::ui::settings::SettingsDialog) -> Prefere
         staging_confirm_items: dialog.get_staging_confirm_items() as i64,
         staging_confirm_mib: dialog.get_staging_confirm_mib() as i64,
         max_folder_depth: dialog.get_max_folder_depth() as i64,
+        // Route-selection preferences (Network tab, Rust-only feature).
+        auto_route_enabled: dialog.get_auto_route_enabled(),
+        route_probe_budget_ms: dialog.get_route_probe_budget_ms() as i64,
+        route_cache_ttl_sec: dialog.get_route_cache_ttl_sec() as i64,
     }
 }
 
@@ -1351,7 +1494,7 @@ fn dialog_matches_prefs(
     dialog: &crate::ui::settings::SettingsDialog,
     baseline: &Preferences,
 ) -> bool {
-    &collect_dialog_prefs(dialog) == baseline
+    &collect_dialog_prefs(dialog, baseline) == baseline
 }
 
 /// Wires the dialog's `field-edited` callback to the Apply dirty flag, port
@@ -1411,13 +1554,16 @@ pub fn open(
     merged.show_queue_on_enqueue = live.show_queue_on_enqueue;
     merged.no_host_verification_ttl_min = live.no_host_verification_ttl_min;
     merged.open_site_manager_on_disconnect = live.open_site_manager_on_disconnect;
-    merged.open_site_manager_on_startup = live.open_site_manager_on_startup;
+    // `open_site_manager_on_startup` is not merged: it is derived from
+    // `startup_mode` when the dialog is collected (see `collect_dialog_prefs`).
 
     load_dialog_from_prefs(&dialog, &merged);
     dialog.set_is_macos(cfg!(target_os = "macos"));
     // Dirty-flag baseline: the dialog's normalized view of the merged
     // preferences it was just populated with (see `bind_dirty_tracking`).
-    let baseline = std::rc::Rc::new(std::cell::RefCell::new(collect_dialog_prefs(&dialog)));
+    let baseline = std::rc::Rc::new(std::cell::RefCell::new(collect_dialog_prefs(
+        &dialog, &merged,
+    )));
     bind_dirty_tracking(&dialog, std::rc::Rc::clone(&baseline));
 
     let weak = dialog.as_weak();
@@ -1429,7 +1575,7 @@ pub fn open(
         let prev = Preferences::load();
         let prev_language = prev.language.clone();
         let prev_show_hidden = prev.show_hidden;
-        let mut prefs = collect_dialog_prefs(&dialog);
+        let mut prefs = collect_dialog_prefs(&dialog, &prev);
         // The shortcut recorders only ever store a candidate chord, but a
         // value loaded from disk (or pushed by main.rs) may still be
         // unsupported: those fall back to the default, are reported through
@@ -1495,9 +1641,40 @@ pub fn open(
         // to dismiss it.
     });
     let weak = dialog.as_weak();
-    dialog.on_close_requested(move || {
-        if let Some(dialog) = weak.upgrade() {
+    let close_if_allowed = std::rc::Rc::new({
+        let weak = weak.clone();
+        move || -> bool {
+            let Some(dialog) = weak.upgrade() else {
+                return true;
+            };
+            if dialog.get_dirty() {
+                let choice = rfd::MessageDialog::new()
+                    .set_title("Unsaved settings")
+                    .set_description("You have unsaved settings changes. Discard them?")
+                    .set_buttons(rfd::MessageButtons::YesNo)
+                    .show();
+                if choice != rfd::MessageDialogResult::Yes {
+                    return false;
+                }
+            }
             let _ = dialog.hide();
+            true
+        }
+    });
+    dialog.on_close_requested({
+        let close_if_allowed = std::rc::Rc::clone(&close_if_allowed);
+        move || {
+            let _ = close_if_allowed();
+        }
+    });
+    dialog.window().on_close_requested({
+        let close_if_allowed = std::rc::Rc::clone(&close_if_allowed);
+        move || {
+            if close_if_allowed() {
+                slint::CloseRequestResponse::HideWindow
+            } else {
+                slint::CloseRequestResponse::KeepWindowShown
+            }
         }
     });
     let reset_state = std::rc::Rc::clone(state);
@@ -1652,6 +1829,72 @@ mod tests {
         assert_eq!(p.remote_writeability_ttl_ms, 15000);
         assert!(p.auto_clean_staging);
         assert_eq!(p.max_folder_depth, 32);
+        // The startup workspace defaults to the Start Page (`Always ask`).
+        assert_eq!(p.startup_mode_enum(), StartupMode::StartPage);
+    }
+
+    #[test]
+    fn startup_mode_storage_names_round_trip() {
+        for mode in StartupMode::ALL {
+            assert_eq!(StartupMode::from_storage_name(mode.storage_name()), mode);
+            assert_eq!(StartupMode::from_index(mode.index()), mode);
+            // Storage names are the TOML spelling, so they stay lowercase.
+            assert_eq!(mode.storage_name(), mode.storage_name().to_lowercase());
+        }
+        assert_eq!(StartupMode::default(), StartupMode::StartPage);
+        // Unknown / out-of-range values fall back like the other enums.
+        assert_eq!(
+            StartupMode::from_storage_name("bogus"),
+            StartupMode::StartPage
+        );
+        assert_eq!(
+            StartupMode::from_storage_name(" Site-Manager "),
+            StartupMode::SiteManager
+        );
+        assert_eq!(StartupMode::from_index(-1), StartupMode::StartPage);
+        assert_eq!(StartupMode::from_index(9), StartupMode::StartPage);
+    }
+
+    #[test]
+    fn startup_mode_round_trips_through_toml() {
+        let p = Preferences {
+            startup_mode: StartupMode::Terminal.storage_name().to_string(),
+            ..Preferences::default()
+        };
+        let text = toml::to_string(&p).unwrap();
+        assert!(text.contains("startup_mode = \"terminal\""));
+        let parsed: Preferences = toml::from_str(&text).unwrap();
+        assert_eq!(parsed.startup_mode_enum(), StartupMode::Terminal);
+        assert_eq!(p, parsed);
+        // A file written before the preference existed loads the default.
+        let legacy_file: Preferences = toml::from_str("language = \"fr\"\n").unwrap();
+        assert_eq!(legacy_file.startup_mode_enum(), StartupMode::StartPage);
+    }
+
+    #[test]
+    fn startup_mode_round_trips_through_the_dialog() {
+        test_backend();
+        let dialog = crate::ui::settings::SettingsDialog::new().expect("create SettingsDialog");
+        let prefs = Preferences {
+            startup_mode: StartupMode::DualPanel.storage_name().to_string(),
+            open_site_manager_on_startup: false,
+            ..Preferences::default()
+        };
+        load_dialog_from_prefs(&dialog, &prefs);
+        assert_eq!(
+            dialog.get_startup_mode_index(),
+            StartupMode::DualPanel.index()
+        );
+        assert_eq!(collect_dialog_prefs(&dialog, &prefs), prefs);
+        // Picking the Site Manager entry also flips the legacy boolean the
+        // mode replaced.
+        dialog.set_startup_mode_index(StartupMode::SiteManager.index());
+        let collected = collect_dialog_prefs(&dialog, &prefs);
+        assert_eq!(collected.startup_mode_enum(), StartupMode::SiteManager);
+        assert!(collected.open_site_manager_on_startup);
+        // An unedited dialog stays clean against its baseline.
+        load_dialog_from_prefs(&dialog, &prefs);
+        assert_eq!(collect_dialog_prefs(&dialog, &prefs), prefs);
     }
 
     #[test]
@@ -1806,6 +2049,10 @@ path=/srv/a\\nb
         assert!(prefs.show_hidden);
         // Rule 2: openSiteManagerOnDisconnect copies showConnOnStart.
         assert!(!prefs.open_site_manager_on_disconnect);
+        // The legacy boolean also seeds the startup workspace (Rust-only
+        // preference): "don't show the connection dialog at startup" is the
+        // plain two-panel window.
+        assert_eq!(prefs.startup_mode_enum(), StartupMode::DualPanel);
         // Rule 1: openBehaviorMode absent → derived from openRevealInFolder.
         assert_eq!(prefs.open_behavior, "reveal");
         // Out-of-range ints keep the Rust default via the C++ clamp.
@@ -1827,6 +2074,17 @@ path=/srv/a\\nb
         let prefs = preferences_from_legacy(&explicit).expect("importable keys");
         assert_eq!(prefs.open_behavior, "open");
         assert!(prefs.open_site_manager_on_disconnect);
+
+        // `showConnOnStart = true` (the C++ default) keeps the Site Manager
+        // startup.
+        let mut conn_on_start = BTreeMap::new();
+        conn_on_start.insert("UI/showConnOnStart".to_string(), "true".to_string());
+        assert_eq!(
+            preferences_from_legacy(&conn_on_start)
+                .unwrap()
+                .startup_mode_enum(),
+            StartupMode::SiteManager
+        );
 
         // Unknown mode strings fall back like the C++ findData lookup.
         let mut unknown = BTreeMap::new();
@@ -2068,6 +2326,9 @@ path=/srv/a\\nb
         let dialog = crate::ui::settings::SettingsDialog::new().expect("create SettingsDialog");
         let prefs = Preferences {
             enable_insecure_secret_fallback: true,
+            // The legacy startup boolean follows the startup mode, so the
+            // round-trip compares against its derived value.
+            open_site_manager_on_startup: false,
             ..Preferences::default()
         };
         load_dialog_from_prefs(&dialog, &prefs);
@@ -2077,7 +2338,30 @@ path=/srv/a\\nb
             "hidden checkbox must keep the loaded value"
         );
         // Round-trip lossless: the hidden field is still collected and saved.
-        assert_eq!(collect_dialog_prefs(&dialog), prefs);
+        assert_eq!(collect_dialog_prefs(&dialog, &prefs), prefs);
+    }
+
+    #[test]
+    fn route_preferences_round_trip_through_the_dialog() {
+        test_backend();
+        let dialog = crate::ui::settings::SettingsDialog::new().expect("create SettingsDialog");
+        let prefs = Preferences {
+            auto_route_enabled: false,
+            route_probe_budget_ms: 250,
+            route_cache_ttl_sec: 120,
+            // The legacy startup boolean follows the startup mode, so the
+            // round-trip compares against its derived value.
+            open_site_manager_on_startup: false,
+            ..Preferences::default()
+        };
+        load_dialog_from_prefs(&dialog, &prefs);
+        assert!(!dialog.get_auto_route_enabled());
+        assert_eq!(dialog.get_route_probe_budget_ms(), 250);
+        assert_eq!(dialog.get_route_cache_ttl_sec(), 120);
+        assert_eq!(collect_dialog_prefs(&dialog, &prefs), prefs);
+        // Editing the checkbox marks the dialog dirty against the baseline.
+        dialog.set_auto_route_enabled(true);
+        assert_ne!(collect_dialog_prefs(&dialog, &prefs), prefs);
     }
 
     #[test]
@@ -2086,7 +2370,10 @@ path=/srv/a\\nb
         let dialog = crate::ui::settings::SettingsDialog::new().expect("create SettingsDialog");
         let prefs = Preferences::default();
         load_dialog_from_prefs(&dialog, &prefs);
-        let baseline = std::rc::Rc::new(std::cell::RefCell::new(collect_dialog_prefs(&dialog)));
+        let baseline = std::rc::Rc::new(std::cell::RefCell::new(collect_dialog_prefs(
+            &dialog,
+            &Preferences::default(),
+        )));
         bind_dirty_tracking(&dialog, std::rc::Rc::clone(&baseline));
 
         // Slint defers `changed` callbacks to the next event-loop pass; flush

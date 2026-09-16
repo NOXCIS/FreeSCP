@@ -39,6 +39,39 @@
 //! save_credentials = true
 //! ```
 //!
+//! ## Alternate routes (Rust-only feature)
+//!
+//! A site may list alternate endpoints for the same logical server. The
+//! primary endpoint stays in the flat fields above; each route inherits
+//! everything it leaves empty:
+//!
+//! ```toml
+//! [[sites]]
+//! name = "server"
+//! host = "ssh.example.com"
+//! port = 22
+//! route_policy = "auto"        # auto | manual
+//! route_pin = ""               # label used while policy = "manual"
+//!
+//! [[sites.routes]]
+//! label = "LAN"
+//! host = "192.168.1.50"
+//! port = 22                    # 0 = inherit the site/protocol port
+//! user = ""                    # empty = inherit the site username
+//! key_path = ""
+//! proxy_type = 0               # 0 none, 1 socks5, 2 http-connect
+//! proxy_host = ""
+//! proxy_port = 0
+//! proxy_user = ""
+//! jump_host = ""               # e.g. a cloudflared ProxyJump alias
+//! jump_port = 22
+//! jump_user = ""
+//! jump_key_path = ""
+//! ```
+//!
+//! Files without `routes`/`route_policy` load unchanged (empty routes,
+//! auto policy). See `src/routing.rs` for the probe/rank/failover logic.
+//!
 //! ## Secrets (port of SecretStore key scheme in SiteManagerDialog.cpp)
 //!
 //! Passwords/passphrases are never stored in the TOML. They go to the
@@ -52,13 +85,15 @@
 //! (`site:<name>:<item>`); reads fall back to those keys like the C++ code.
 
 use crate::secrets;
+use freescp_core::route::ProbeStatus;
 use freescp_core::{
     capabilities_for_protocol, default_port_for_protocol, default_port_for_proxy_type,
     default_port_for_telnet, default_port_for_webdav_scheme, protocol_display_name,
     protocol_from_storage_name, protocol_storage_name, proxy_type_from_storage_value,
-    scp_transfer_mode_from_storage_name, scp_transfer_mode_storage_name,
-    webdav_scheme_from_storage_name, webdav_scheme_storage_name, KnownHostsPolicy, Protocol,
-    ProxyType, ScpTransferMode, SessionOptions, TransferIntegrityPolicy, WebDavScheme,
+    route_policy_from_storage_name, route_policy_storage_name, scp_transfer_mode_from_storage_name,
+    scp_transfer_mode_storage_name, webdav_scheme_from_storage_name, webdav_scheme_storage_name,
+    KnownHostsPolicy, Protocol, ProxyType, RoutePolicy, ScpTransferMode, SessionOptions,
+    SessionRoute, TransferIntegrityPolicy, WebDavScheme,
 };
 use serde::{Deserialize, Serialize};
 use slint::{ComponentHandle, Model, SharedString};
@@ -126,6 +161,12 @@ pub struct SiteEntry {
     pub jump_port: u16,
     pub jump_username: Option<String>,
     pub jump_private_key_path: Option<String>,
+    /// Alternate endpoints for the same logical server (Rust-only feature;
+    /// see `src/routing.rs`).
+    pub routes: Vec<SessionRoute>,
+    pub route_policy: RoutePolicy,
+    /// Label of the pinned route while `route_policy` is `Manual`.
+    pub route_pin: Option<String>,
 }
 
 impl SiteEntry {
@@ -164,6 +205,9 @@ impl SiteEntry {
             jump_port: self.jump_port,
             jump_username: self.jump_username.clone(),
             jump_private_key_path: self.jump_private_key_path.clone(),
+            routes: self.routes.clone(),
+            route_policy: self.route_policy,
+            route_pin: self.route_pin.clone(),
             ..SessionOptions::default()
         }
     }
@@ -218,6 +262,79 @@ struct SiteFileEntry {
     telnet_ca_cert_path: String,
     telnet_auto_login: Option<bool>,
     save_credentials: Option<bool>,
+    routes: Vec<RouteFileEntry>,
+    route_policy: String,
+    route_pin: String,
+}
+
+/// TOML storage shape of one `[[sites.routes]]` entry. Same key naming as the
+/// flat site fields; empty strings / `0` ports mean "inherit from the site".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct RouteFileEntry {
+    label: String,
+    host: String,
+    port: u16,
+    user: String,
+    key_path: String,
+    proxy_type: i32,
+    proxy_host: String,
+    proxy_port: u16,
+    proxy_user: String,
+    jump_host: String,
+    jump_port: u16,
+    jump_user: String,
+    jump_key_path: String,
+}
+
+fn file_route_from(route: &SessionRoute) -> RouteFileEntry {
+    let opt = |o: &Option<String>| o.clone().unwrap_or_default();
+    RouteFileEntry {
+        label: route.label.clone(),
+        host: route.host.clone(),
+        port: route.port,
+        user: opt(&route.username),
+        key_path: opt(&route.private_key_path),
+        proxy_type: proxy_type_storage_value(route.proxy_type),
+        proxy_host: route.proxy_host.clone(),
+        proxy_port: route.proxy_port,
+        proxy_user: opt(&route.proxy_username),
+        jump_host: opt(&route.jump_host),
+        jump_port: route.jump_port,
+        jump_user: opt(&route.jump_username),
+        jump_key_path: opt(&route.jump_private_key_path),
+    }
+}
+
+fn route_from_file(f: RouteFileEntry) -> SessionRoute {
+    let opt_or = |s: String| {
+        if s.trim().is_empty() {
+            None
+        } else {
+            Some(s)
+        }
+    };
+    let proxy_type = proxy_type_from_storage_value(f.proxy_type);
+    SessionRoute {
+        label: f.label.trim().to_string(),
+        host: f.host.trim().to_string(),
+        // 0 stays 0: inherit the site (or protocol default) at connect time.
+        port: f.port,
+        username: opt_or(f.user),
+        private_key_path: opt_or(f.key_path),
+        proxy_type,
+        proxy_host: f.proxy_host.trim().to_string(),
+        proxy_port: if f.proxy_port == 0 {
+            default_port_for_proxy_type(proxy_type)
+        } else {
+            f.proxy_port
+        },
+        proxy_username: opt_or(f.proxy_user),
+        jump_host: opt_or(f.jump_host),
+        jump_port: if f.jump_port == 0 { 22 } else { f.jump_port },
+        jump_username: opt_or(f.jump_user),
+        jump_private_key_path: opt_or(f.jump_key_path),
+    }
 }
 
 impl From<&SiteEntry> for SiteFileEntry {
@@ -254,6 +371,9 @@ impl From<&SiteEntry> for SiteFileEntry {
             telnet_ca_cert_path: opt(&e.telnet_ca_cert_path),
             telnet_auto_login: Some(e.telnet_auto_login),
             save_credentials: Some(e.save_credentials),
+            routes: e.routes.iter().map(file_route_from).collect(),
+            route_policy: route_policy_storage_name(e.route_policy).to_string(),
+            route_pin: opt(&e.route_pin),
         }
     }
 }
@@ -328,6 +448,9 @@ impl From<SiteFileEntry> for SiteEntry {
             password: None,
             private_key_passphrase: None,
             proxy_password: None,
+            routes: f.routes.into_iter().map(route_from_file).collect(),
+            route_policy: route_policy_from_storage_name(&f.route_policy),
+            route_pin: opt_or(&Some(f.route_pin)),
         };
         // C++: plain-HTTP WebDAV forces peer verification off.
         if e.protocol == Protocol::WebDav && e.webdav_scheme == WebDavScheme::Http {
@@ -631,6 +754,9 @@ fn ssh_alias_to_site(
         jump_port,
         jump_username,
         jump_private_key_path: None,
+        routes: Vec::new(),
+        route_policy: RoutePolicy::Auto,
+        route_pin: None,
     }
 }
 
@@ -692,6 +818,11 @@ fn entry_from_options(id: &str, name: &str, opt: &SessionOptions) -> SiteEntry {
         jump_port: opt.jump_port,
         jump_username: opt.jump_username.clone(),
         jump_private_key_path: opt.jump_private_key_path.clone(),
+        // Quick-connect persistence never carries routes; editing the saved
+        // site in the manager is where alternates get added.
+        routes: Vec::new(),
+        route_policy: RoutePolicy::Auto,
+        route_pin: None,
     }
 }
 
@@ -883,9 +1014,26 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
     dialog.set_sort_ascending(true);
     refresh_rows(&dialog, 0, true);
 
+    // Alternate-route editor state (Rust-only feature): the widgets show a
+    // projection; the canonical list lives here. `upgrade_in_event_loop`
+    // closures must be `Send`, so `Arc<Mutex<..>>` instead of `Rc<RefCell>`.
+    let editor_routes: std::sync::Arc<std::sync::Mutex<Vec<SessionRoute>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let probe_summaries: std::sync::Arc<std::sync::Mutex<ProbeSummaries>> =
+        std::sync::Arc::new(std::sync::Mutex::new(ProbeSummaries::new()));
+    let route_edit_index: std::sync::Arc<std::sync::Mutex<usize>> =
+        std::sync::Arc::new(std::sync::Mutex::new(usize::MAX));
+    // Site id whose probe cache was last warmed (avoid re-probing per click).
+    let last_warmed: std::sync::Arc<std::sync::Mutex<Option<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+
     dialog.on_new_requested({
         let weak = weak.clone();
+        let editor_routes = editor_routes.clone();
+        let probe_summaries = probe_summaries.clone();
         move || {
+            let editor_routes = editor_routes.clone();
+            let probe_summaries = probe_summaries.clone();
             let _ = weak.upgrade_in_event_loop(
                 move |dialog: crate::ui::site_manager::SiteManagerDialog| {
                     let prefs = crate::settings::Preferences::load();
@@ -935,6 +1083,15 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
                     dialog.set_editor_known_hosts_path("".into());
                     dialog.set_editor_mode_is_add(true);
                     dialog.set_editing_site_id("".into());
+                    editor_routes.lock().unwrap().clear();
+                    probe_summaries.lock().unwrap().clear();
+                    dialog.set_editor_route_policy(0);
+                    dialog.set_editor_pinned_label("".into());
+                    dialog.set_route_selected_row(-1);
+                    dialog.set_probe_status("".into());
+                    dialog.set_route_editor_visible(false);
+                    dialog.set_merge_visible(false);
+                    sync_route_widgets(&dialog, &[]);
                     dialog.set_editor_visible(true);
                 },
             );
@@ -943,15 +1100,326 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
 
     dialog.on_edit_requested({
         let weak = weak.clone();
+        let editor_routes = editor_routes.clone();
         move |name: SharedString| {
+            let editor_routes = editor_routes.clone();
             let _ = weak.upgrade_in_event_loop(
                 move |dialog: crate::ui::site_manager::SiteManagerDialog| {
                     let site = load_sites()
                         .into_iter()
                         .find(|e| e.name.eq_ignore_ascii_case(name.as_ref()))
                         .unwrap_or_default();
+                    *editor_routes.lock().unwrap() = site.routes.clone();
                     populate_editor(&dialog, &site);
+                    dialog.set_route_selected_row(-1);
+                    dialog.set_probe_status("".into());
+                    dialog.set_route_editor_visible(false);
+                    dialog.set_merge_visible(false);
                     dialog.set_editor_visible(true);
+                },
+            );
+        }
+    });
+
+    // ---- Alternate-route handlers (Rust-only feature) ---------------------
+
+    // Select a route row.
+    dialog.on_route_row_clicked({
+        let weak = weak.clone();
+        move |idx: i32| {
+            let _ = weak.upgrade_in_event_loop(
+                move |dialog: crate::ui::site_manager::SiteManagerDialog| {
+                    dialog.set_route_selected_row(idx);
+                },
+            );
+        }
+    });
+
+    // Open the sub-editor for a new route.
+    dialog.on_route_add_requested({
+        let weak = weak.clone();
+        move || {
+            let _ = weak.upgrade_in_event_loop(
+                move |dialog: crate::ui::site_manager::SiteManagerDialog| {
+                    let route = SessionRoute::default();
+                    populate_route_sub_editor(&dialog, &route);
+                    dialog.set_route_editor_is_edit(false);
+                    dialog.set_route_editor_visible(true);
+                },
+            );
+        }
+    });
+
+    // Open the sub-editor for the selected route.
+    dialog.on_route_edit_requested({
+        let weak = weak.clone();
+        let editor_routes = editor_routes.clone();
+        let route_edit_index = route_edit_index.clone();
+        move |idx: i32| {
+            let editor_routes = editor_routes.clone();
+            let route_edit_index = route_edit_index.clone();
+            let _ = weak.upgrade_in_event_loop(
+                move |dialog: crate::ui::site_manager::SiteManagerDialog| {
+                    let routes = editor_routes.lock().unwrap().clone();
+                    if idx < 0 || idx as usize >= routes.len() {
+                        return;
+                    }
+                    *route_edit_index.lock().unwrap() = idx as usize;
+                    populate_route_sub_editor(&dialog, &routes[idx as usize]);
+                    dialog.set_route_editor_is_edit(true);
+                    dialog.set_route_editor_visible(true);
+                },
+            );
+        }
+    });
+
+    // Remove a route row.
+    dialog.on_route_remove_requested({
+        let weak = weak.clone();
+        let editor_routes = editor_routes.clone();
+        let probe_summaries = probe_summaries.clone();
+        move |idx: i32| {
+            let editor_routes = editor_routes.clone();
+            let probe_summaries = probe_summaries.clone();
+            let _ = weak.upgrade_in_event_loop(
+                move |dialog: crate::ui::site_manager::SiteManagerDialog| {
+                    let mut routes = editor_routes.lock().unwrap();
+                    if idx < 0 || idx as usize >= routes.len() {
+                        return;
+                    }
+                    let removed = routes.remove(idx as usize).label.clone();
+                    probe_summaries.lock().unwrap().remove(&removed);
+                    let probes = probe_summaries.lock().unwrap().clone();
+                    sync_route_widgets_with_probes(&dialog, &routes, &probes);
+                },
+            );
+        }
+    });
+
+    // Store the sub-editor fields (add or replace).
+    dialog.on_route_save_requested({
+        let weak = weak.clone();
+        let editor_routes = editor_routes.clone();
+        let probe_summaries = probe_summaries.clone();
+        let route_edit_index = route_edit_index.clone();
+        move || {
+            let editor_routes = editor_routes.clone();
+            let probe_summaries = probe_summaries.clone();
+            let route_edit_index = route_edit_index.clone();
+            let _ = weak.upgrade_in_event_loop(
+                move |dialog: crate::ui::site_manager::SiteManagerDialog| {
+                    let editing = *route_edit_index.lock().unwrap();
+                    let mut routes = editor_routes.lock().unwrap();
+                    let new_route = route_from_sub_editor(&dialog);
+                    let editing = if dialog.get_route_editor_is_edit() && editing < routes.len() {
+                        editing
+                    } else {
+                        usize::MAX
+                    };
+                    if let Err(msg) = validate_route_label(&routes, &new_route.label, editing) {
+                        crate::connect::show_alert("Route label", &msg);
+                        return;
+                    }
+                    let route_type = dialog.get_route_editor_type();
+                    if route_type == 3 && new_route.jump_host.is_none() {
+                        crate::connect::show_alert(
+                            "Jump host required",
+                            "Enter the jump host (bastion) to route through.",
+                        );
+                        return;
+                    }
+                    if (route_type == 1 || route_type == 2) && new_route.proxy_host.is_empty() {
+                        crate::connect::show_alert(
+                            "Proxy host required",
+                            "Enter the proxy host to route through.",
+                        );
+                        return;
+                    }
+                    if editing == usize::MAX {
+                        routes.push(new_route.clone());
+                        dialog.set_route_selected_row(routes.len() as i32 - 1);
+                    } else {
+                        routes[editing] = new_route.clone();
+                    }
+                    let probes = probe_summaries.lock().unwrap().clone();
+                    sync_route_widgets_with_probes(&dialog, &routes, &probes);
+                    dialog.set_route_editor_visible(false);
+                    *route_edit_index.lock().unwrap() = usize::MAX;
+                },
+            );
+        }
+    });
+
+    // Close the sub-editor without storing.
+    dialog.on_route_editor_cancel_requested({
+        let weak = weak.clone();
+        let route_edit_index = route_edit_index.clone();
+        move || {
+            let route_edit_index = route_edit_index.clone();
+            let _ = weak.upgrade_in_event_loop(
+                move |dialog: crate::ui::site_manager::SiteManagerDialog| {
+                    dialog.set_route_editor_visible(false);
+                    *route_edit_index.lock().unwrap() = usize::MAX;
+                },
+            );
+        }
+    });
+
+    // Probe the primary endpoint plus every route and show the results.
+    dialog.on_probe_routes_requested({
+        let weak = weak.clone();
+        let state = state.clone();
+        let editor_routes = editor_routes.clone();
+        let probe_summaries = probe_summaries.clone();
+        move || {
+            let state = state.clone();
+            let editor_routes = editor_routes.clone();
+            let probe_summaries = probe_summaries.clone();
+            let weak_inner = weak.clone();
+            let _ = weak.upgrade_in_event_loop(
+                move |dialog: crate::ui::site_manager::SiteManagerDialog| {
+                    let routes = editor_routes.lock().unwrap().clone();
+                    let opt = editor_options(&dialog, &routes);
+                    let settings = crate::settings::Preferences::load().route_settings();
+                    dialog.set_probe_status(crate::connect::tr("Probing routes…", &[]).into());
+                    let weak = weak_inner.clone();
+                    let editor_routes = editor_routes.clone();
+                    let probe_summaries = probe_summaries.clone();
+                    state.runtime_handle().spawn(async move {
+                        let candidates = crate::routing::build_candidates(&opt);
+                        let results =
+                            crate::routing::run_probes(&candidates, settings.probe_budget).await;
+                        let mut summaries = ProbeSummaries::new();
+                        let mut line = String::new();
+                        for r in &results {
+                            let name = if r.label.is_empty() {
+                                "Primary".to_string()
+                            } else {
+                                r.label.clone()
+                            };
+                            let text = match &r.status {
+                                ProbeStatus::Reachable { .. } => match r.latency() {
+                                    Some(d) => format!("{} ms", d.as_millis()),
+                                    None => "reachable".to_string(),
+                                },
+                                ProbeStatus::Unprobeable(_) => "n/a".to_string(),
+                                ProbeStatus::Unreachable(_) => "unreachable".to_string(),
+                            };
+                            if !line.is_empty() {
+                                line.push_str("  ·  ");
+                            }
+                            line.push_str(&format!("{name} {text}"));
+                            summaries.insert(name, text);
+                        }
+                        let _ = weak.upgrade_in_event_loop(
+                            move |dialog: crate::ui::site_manager::SiteManagerDialog| {
+                                *probe_summaries.lock().unwrap() = summaries;
+                                let routes = editor_routes.lock().unwrap().clone();
+                                let probes = probe_summaries.lock().unwrap().clone();
+                                sync_route_widgets_with_probes(&dialog, &routes, &probes);
+                                dialog.set_probe_status(line.into());
+                            },
+                        );
+                    });
+                },
+            );
+        }
+    });
+
+    // Open the "copy an endpoint from another saved site" panel.
+    dialog.on_merge_open_requested({
+        let weak = weak.clone();
+        move || {
+            let _ = weak.upgrade_in_event_loop(
+                move |dialog: crate::ui::site_manager::SiteManagerDialog| {
+                    let editing_id = dialog.get_editing_site_id().to_string();
+                    let sources: Vec<SharedString> = load_sites()
+                        .into_iter()
+                        .filter(|s| s.id != editing_id)
+                        .map(|s| SharedString::from(s.name))
+                        .collect();
+                    if sources.is_empty() {
+                        crate::connect::show_alert(
+                            "No saved sites",
+                            "Save at least one other site first, then copy its endpoint as a route.",
+                        );
+                        return;
+                    }
+                    dialog.set_merge_source_model((&sources[..]).into());
+                    if sources.is_empty() {
+                        dialog.set_merge_source("".into());
+                    } else {
+                        dialog.set_merge_source(sources[0].clone());
+                    }
+                    dialog.set_merge_delete_source(true);
+                    dialog.set_merge_visible(true);
+                },
+            );
+        }
+    });
+
+    dialog.on_merge_cancel_requested({
+        let weak = weak.clone();
+        move || {
+            let _ = weak.upgrade_in_event_loop(
+                move |dialog: crate::ui::site_manager::SiteManagerDialog| {
+                    dialog.set_merge_visible(false);
+                },
+            );
+        }
+    });
+
+    // Add the selected site's endpoint as a route; optionally delete the
+    // source site afterwards.
+    dialog.on_merge_confirm_requested({
+        let weak = weak.clone();
+        let editor_routes = editor_routes.clone();
+        move || {
+            let editor_routes = editor_routes.clone();
+            let _ = weak.upgrade_in_event_loop(
+                move |dialog: crate::ui::site_manager::SiteManagerDialog| {
+                    let name = dialog.get_merge_source().to_string();
+                    let Some(source) = load_sites()
+                        .into_iter()
+                        .find(|s| s.name.eq_ignore_ascii_case(&name))
+                    else {
+                        return;
+                    };
+                    let mut route = route_from_site_entry(&source);
+                    // Unique label: append " 2", " 3", … on clashes.
+                    let routes = editor_routes.lock().unwrap().clone();
+                    let mut label = route.label.clone();
+                    let mut n = 2;
+                    while routes.iter().any(|r| r.label.eq_ignore_ascii_case(&label)) {
+                        label = format!("{} {n}", route.label);
+                        n += 1;
+                    }
+                    route.label = label;
+                    {
+                        let mut routes = editor_routes.lock().unwrap();
+                        routes.push(route.clone());
+                        dialog.set_route_selected_row(routes.len() as i32 - 1);
+                        sync_route_widgets(&dialog, &routes);
+                    }
+                    dialog.set_merge_visible(false);
+                    if dialog.get_merge_delete_source() {
+                        if let Err(e) = delete_site(&source.name) {
+                            tracing::warn!("Could not delete source site {}: {e}", source.name);
+                            crate::connect::show_alert(
+                                "Error",
+                                &crate::connect::tr(
+                                    "Route added, but the source site could not be deleted.\n%1",
+                                    &[e.to_string()],
+                                ),
+                            );
+                        } else {
+                            let (col, asc) = (
+                                dialog.get_sort_column().max(0) as usize,
+                                dialog.get_sort_ascending(),
+                            );
+                            refresh_rows(&dialog, col, asc);
+                        }
+                    }
                 },
             );
         }
@@ -961,8 +1429,28 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
         let weak = weak.clone();
         move |name: SharedString| {
             let name = name.to_string();
+            let prefs = crate::settings::Preferences::load();
+            let secrets_note = if prefs.delete_secrets_on_remove {
+                "\n\nSaved passwords/keys and the matching known_hosts entry will also be removed."
+            } else {
+                "\n\nStored credentials will be kept (Sites/deleteSecretsOnRemove is off)."
+            };
+            let confirmed = rfd::MessageDialog::new()
+                .set_title("Delete site")
+                .set_description(format!("Delete saved site \"{name}\"?{secrets_note}"))
+                .set_buttons(rfd::MessageButtons::YesNo)
+                .show()
+                == rfd::MessageDialogResult::Yes;
+            if !confirmed {
+                return;
+            }
             if let Err(e) = delete_site(&name) {
                 tracing::warn!("Could not delete site {name}: {e}");
+                crate::connect::show_alert(
+                    "Delete site",
+                    &crate::connect::tr("Could not delete site \"%1\": %2", &[name, e]),
+                );
+                return;
             }
             let _ = weak.upgrade_in_event_loop(
                 move |dialog: crate::ui::site_manager::SiteManagerDialog| {
@@ -1065,11 +1553,31 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
 
     dialog.on_site_clicked({
         let weak = weak.clone();
+        let state = state.clone();
+        let last_warmed = last_warmed.clone();
         let dialog_id = NEXT_DIALOG_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         move |idx: i32| {
+            let state = state.clone();
+            let last_warmed = last_warmed.clone();
             let _ = weak.upgrade_in_event_loop(
                 move |dialog: crate::ui::site_manager::SiteManagerDialog| {
                     handle_row_click(&dialog, idx, dialog_id);
+                    // Background probe-cache warm when a multi-route site is
+                    // selected (Rust-only nicety; silent).
+                    if let Some(row) = dialog.get_rows().row_data(idx.max(0) as usize) {
+                        let already = last_warmed
+                            .lock()
+                            .unwrap()
+                            .as_deref()
+                            .is_some_and(|id| row.id == id);
+                        if !already {
+                            *last_warmed.lock().unwrap() = Some(row.id.to_string());
+                            let id = row.id.to_string();
+                            if let Some(site) = load_sites().into_iter().find(|e| e.id == id) {
+                                warm_probe_cache(&state, &site);
+                            }
+                        }
+                    }
                 },
             );
         }
@@ -1078,8 +1586,10 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
     dialog.on_save_requested({
         let weak = weak.clone();
         let state = state.clone();
+        let editor_routes = editor_routes.clone();
         move || {
             let state = state.clone();
+            let editor_routes = editor_routes.clone();
             let _ = weak.upgrade_in_event_loop(
                 move |dialog: crate::ui::site_manager::SiteManagerDialog| {
                     let mut name = dialog.get_editor_name().trim().to_string();
@@ -1116,7 +1626,8 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
                     let old_name = existing_id
                         .and_then(|id| load_sites().into_iter().find(|e| e.id == id))
                         .map(|e| e.name);
-                    let opt = editor_options(&dialog);
+                    let routes = editor_routes.lock().unwrap().clone();
+                    let opt = editor_options(&dialog, &routes);
                     match save_site_with_issues(&state, &name, &opt, existing_id) {
                         Ok((id, issues)) => {
                             // C++ showPersistIssues: report keyring failures.
@@ -1171,7 +1682,7 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
         move |col: i32| {
             let _ = weak.upgrade_in_event_loop(
                 move |dialog: crate::ui::site_manager::SiteManagerDialog| {
-                    let col = col.clamp(0, 3);
+                    let col = col.clamp(0, 4);
                     let prev_col = dialog.get_sort_column();
                     let prev_asc = dialog.get_sort_ascending();
                     let asc = if prev_col == col { !prev_asc } else { true };
@@ -1203,6 +1714,8 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
                 "webdav-ca" => dialog.set_editor_webdav_ca_cert(path_s),
                 "telnet-ca" => dialog.set_editor_telnet_ca_cert(path_s),
                 "jump-key" => dialog.set_editor_jump_key_path(path_s),
+                "route-key" => dialog.set_route_editor_key_path(path_s),
+                "route-jump-key" => dialog.set_route_editor_jump_key_path(path_s),
                 other => tracing::warn!(field = %other, "unknown site-manager browse field"),
             }
         }
@@ -1385,21 +1898,27 @@ pub fn open(win: &crate::ui::main_window::MainWindow, state: &AppState) {
 /// prefs, and starts the connect pipeline (port of
 /// `SiteManagerDialog::onConnect` + `startSftpConnect`).
 fn start_site_connect(state: &AppState, name: &str) {
-    let Some(mut opt) = site_with_secrets(name) else {
+    start_site_connect_intent(state, name, crate::connect::ConnectIntent::Filesystem);
+}
+
+/// Like [`start_site_connect`], but opens the workspace `intent` asked for:
+/// the Start Page's terminal mode reuses the site's SSH parameters to open a
+/// login shell instead of the two-panel file session.
+pub fn start_site_connect_intent(
+    state: &AppState,
+    name: &str,
+    intent: crate::connect::ConnectIntent,
+) {
+    let Some(opt) = site_with_secrets(name) else {
         state.set_status(&format!("Site \"{name}\" not found"));
         return;
     };
-    let prefs = crate::settings::Preferences::load();
-    opt.known_hosts_hash_names = prefs.known_hosts_hashed;
-    opt.show_fp_hex = prefs.fp_hex;
-    if !crate::connect::confirm_insecure_host_policy(state, &opt) {
-        state.set_status("Connection canceled: no-verification policy not confirmed");
+    let Some(opt) = crate::connect::prepare_preset_connect(state, opt) else {
         return;
-    }
-    let opt = crate::connect::attach_session_callbacks(opt, state);
+    };
     // `None`: the session installs into the active tab when it is idle, else
     // a fresh tab opens for it.
-    crate::connect::start_connect(state, None, opt);
+    crate::connect::start_connect_intent(state, None, opt, intent);
 }
 
 /// Monotonic per-dialog instance id used by the double-click detector so a
@@ -1443,11 +1962,30 @@ fn handle_row_click(dialog: &crate::ui::site_manager::SiteManagerDialog, idx: i3
 }
 
 /// Rebuilds the dialog's `rows` model from [`load_sites`], sorted by the
-/// given column (`0` name, `1` protocol, `2` host, `3` user). The current
-/// selection is preserved by id — the C++ table stores the original model
-/// index in each item for the same purpose.
+/// given column (`0` name, `1` protocol, `2` host, `3` user, `4` routes).
+/// The current selection is preserved by id — the C++ table stores the
+/// original model index in each item for the same purpose.
 fn refresh_rows(dialog: &crate::ui::site_manager::SiteManagerDialog, sort_col: usize, asc: bool) {
     refresh_rows_from_sites(dialog, load_sites(), sort_col, asc);
+}
+
+/// Route summary for the table column, e.g. `"auto · 2 routes"`.
+fn route_summary(site: &SiteEntry) -> String {
+    if site.routes.is_empty() {
+        return "—".to_string();
+    }
+    let n = site.routes.len();
+    let plural = if n == 1 { "route" } else { "routes" };
+    if site.route_policy == RoutePolicy::Manual {
+        let pin = site
+            .route_pin
+            .as_deref()
+            .filter(|p| !p.is_empty())
+            .unwrap_or("primary");
+        format!("manual · {pin} (+{n} {plural})")
+    } else {
+        format!("auto · {n} {plural}")
+    }
 }
 
 /// Pure model rebuild so tests can drive it without touching the on-disk
@@ -1462,12 +2000,16 @@ fn refresh_rows_from_sites(
     let selected_id = selected_row_id(dialog);
     let mut rows: Vec<crate::ui::site_manager::SiteRow> = sites
         .into_iter()
-        .map(|e| crate::ui::site_manager::SiteRow {
-            id: e.id.clone().into(),
-            name: e.name.clone().into(),
-            protocol: protocol_display_name(e.protocol).into(),
-            host: e.host.clone().into(),
-            username: e.username.clone().into(),
+        .map(|e| {
+            let summary = route_summary(&e);
+            crate::ui::site_manager::SiteRow {
+                id: e.id.clone().into(),
+                name: e.name.clone().into(),
+                protocol: protocol_display_name(e.protocol).into(),
+                host: e.host.clone().into(),
+                username: e.username.clone().into(),
+                route_summary: summary.into(),
+            }
         })
         .collect();
     sort_site_rows(&mut rows, sort_col, asc);
@@ -1514,7 +2056,7 @@ fn scroll_row_into_view(dialog: &crate::ui::site_manager::SiteManagerDialog, idx
     dialog.invoke_ensure_row_visible(idx);
 }
 
-/// Case-insensitive sort over the four table columns (port of the Qt table
+/// Case-insensitive sort over the five table columns (port of the Qt table
 /// sorting enabled via `setSortingEnabled(true)`).
 fn sort_site_rows(rows: &mut [crate::ui::site_manager::SiteRow], col: usize, asc: bool) {
     let key = |row: &crate::ui::site_manager::SiteRow| -> String {
@@ -1522,6 +2064,7 @@ fn sort_site_rows(rows: &mut [crate::ui::site_manager::SiteRow], col: usize, asc
             1 => row.protocol.to_string(),
             2 => row.host.to_string(),
             3 => row.username.to_string(),
+            4 => row.route_summary.to_string(),
             _ => row.name.to_string(),
         }
         .to_lowercase()
@@ -1612,6 +2155,277 @@ fn populate_editor(dialog: &crate::ui::site_manager::SiteManagerDialog, site: &S
     dialog.set_editor_known_hosts_path(site.known_hosts_path.clone().unwrap_or_default().into());
     dialog.set_editor_mode_is_add(false);
     dialog.set_editing_site_id(site.id.clone().into());
+    dialog.set_editor_route_policy(if site.route_policy == RoutePolicy::Manual {
+        1
+    } else {
+        0
+    });
+    dialog.set_editor_pinned_label(site.route_pin.clone().unwrap_or_default().into());
+    sync_route_widgets(dialog, &site.routes);
+}
+
+// ---------------------------------------------------------------------------
+// Alternate-route editor widgets (Rust-only feature)
+// ---------------------------------------------------------------------------
+
+/// Probe outcome per label, for display in the routes list.
+type ProbeSummaries = std::collections::HashMap<String, String>;
+
+fn probe_text(summary: Option<&String>) -> String {
+    summary.cloned().unwrap_or_else(|| "—".to_string())
+}
+
+/// Rebuilds the editor's route widgets from `routes` and the latest probe
+/// summaries (kept across edits): the list model, the pinned-route model,
+/// and the selection.
+fn sync_route_widgets(
+    dialog: &crate::ui::site_manager::SiteManagerDialog,
+    routes: &[SessionRoute],
+) {
+    sync_route_widgets_with_probes(dialog, routes, &ProbeSummaries::new());
+}
+
+fn sync_route_widgets_with_probes(
+    dialog: &crate::ui::site_manager::SiteManagerDialog,
+    routes: &[SessionRoute],
+    probes: &ProbeSummaries,
+) {
+    let rows: Vec<crate::ui::site_manager::RouteRow> = routes
+        .iter()
+        .map(|route| {
+            let endpoint = if route.host.is_empty() {
+                "(inherit)".to_string()
+            } else if route.port != 0 {
+                format!("{}:{}", route.host, route.port)
+            } else {
+                route.host.clone()
+            };
+            let transport =
+                if let Some(jump) = route.jump_host.as_deref().filter(|j| !j.trim().is_empty()) {
+                    format!("jump {jump}")
+                } else if route.proxy_type != ProxyType::None && !route.proxy_host.is_empty() {
+                    match route.proxy_type {
+                        ProxyType::Socks5 => format!("SOCKS5 {}", route.proxy_host),
+                        _ => format!("HTTP {}", route.proxy_host),
+                    }
+                } else {
+                    "direct".to_string()
+                };
+            crate::ui::site_manager::RouteRow {
+                label: route.label.clone().into(),
+                endpoint: endpoint.into(),
+                transport: transport.into(),
+                probe: probe_text(probes.get(&route.label)).into(),
+            }
+        })
+        .collect();
+    dialog.set_editor_routes((&rows[..]).into());
+    // Pinned-route model: primary endpoint + every route label.
+    let mut pinned: Vec<SharedString> = Vec::with_capacity(routes.len() + 1);
+    pinned.push("Primary".into());
+    for route in routes {
+        pinned.push(route.label.clone().into());
+    }
+    dialog.set_pinned_route_model((&pinned[..]).into());
+    // Keep the selection and pin valid after removals/renames.
+    if dialog.get_route_selected_row() >= routes.len() as i32 {
+        dialog.set_route_selected_row(routes.len() as i32 - 1);
+    }
+    let pinned_model = dialog.get_pinned_route_model();
+    let current_pin = dialog.get_editor_pinned_label().to_string();
+    let pin_valid = current_pin.is_empty()
+        || pinned_model
+            .iter()
+            .any(|label| label.as_str() == current_pin.as_str());
+    if !pin_valid {
+        dialog.set_editor_pinned_label("".into());
+    }
+}
+
+/// Maps a pinned-route combo value back to the label stored in
+/// `SessionOptions::route_pin` (`"Primary"` / empty = the primary endpoint).
+fn pinned_label_to_pin(value: &str) -> Option<String> {
+    if value.eq_ignore_ascii_case("primary") || value.trim().is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+/// Builds a [`SessionRoute`] from the route sub-editor fields.
+fn route_from_sub_editor(dialog: &crate::ui::site_manager::SiteManagerDialog) -> SessionRoute {
+    let route_type = dialog.get_route_editor_type();
+    let use_jump = route_type == 3;
+    let proxy_type = match route_type {
+        1 => ProxyType::Socks5,
+        2 => ProxyType::HttpConnect,
+        _ => ProxyType::None,
+    };
+    let nonempty = |s: SharedString| {
+        let t = s.trim().to_string();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    };
+    SessionRoute {
+        label: dialog.get_route_editor_label().trim().to_string(),
+        host: dialog.get_route_editor_host().trim().to_string(),
+        port: dialog.get_route_editor_port().max(0) as u16,
+        username: nonempty(dialog.get_route_editor_username()),
+        private_key_path: nonempty(dialog.get_route_editor_key_path()),
+        proxy_type,
+        proxy_host: dialog.get_route_editor_proxy_host().trim().to_string(),
+        proxy_port: dialog.get_route_editor_proxy_port().max(0) as u16,
+        proxy_username: nonempty(dialog.get_route_editor_proxy_username()),
+        jump_host: if use_jump {
+            nonempty(dialog.get_route_editor_jump_host())
+        } else {
+            None
+        },
+        jump_port: if use_jump {
+            let p = dialog.get_route_editor_jump_port().max(0) as u16;
+            if p == 0 {
+                22
+            } else {
+                p
+            }
+        } else {
+            22
+        },
+        jump_username: if use_jump {
+            nonempty(dialog.get_route_editor_jump_username())
+        } else {
+            None
+        },
+        jump_private_key_path: if use_jump {
+            nonempty(dialog.get_route_editor_jump_key_path())
+        } else {
+            None
+        },
+    }
+}
+
+/// Fills the route sub-editor from an existing route (edit mode).
+fn populate_route_sub_editor(
+    dialog: &crate::ui::site_manager::SiteManagerDialog,
+    route: &SessionRoute,
+) {
+    dialog.set_route_editor_label(route.label.clone().into());
+    dialog.set_route_editor_host(route.host.clone().into());
+    dialog.set_route_editor_port(route.port as i32);
+    dialog.set_route_editor_username(route.username.clone().unwrap_or_default().into());
+    dialog.set_route_editor_key_path(route.private_key_path.clone().unwrap_or_default().into());
+    let route_type = if route
+        .jump_host
+        .as_deref()
+        .is_some_and(|j| !j.trim().is_empty())
+    {
+        3
+    } else {
+        match route.proxy_type {
+            ProxyType::Socks5 => 1,
+            ProxyType::HttpConnect => 2,
+            ProxyType::None => 0,
+        }
+    };
+    dialog.set_route_editor_type(route_type);
+    dialog.set_route_editor_proxy_host(route.proxy_host.clone().into());
+    dialog.set_route_editor_proxy_port(if route.proxy_port != 0 {
+        route.proxy_port as i32
+    } else {
+        default_port_for_proxy_type(ProxyType::Socks5) as i32
+    });
+    dialog.set_route_editor_proxy_username(route.proxy_username.clone().unwrap_or_default().into());
+    dialog.set_route_editor_jump_host(route.jump_host.clone().unwrap_or_default().into());
+    dialog.set_route_editor_jump_port(if route.jump_port != 0 {
+        route.jump_port as i32
+    } else {
+        22
+    });
+    dialog.set_route_editor_jump_username(route.jump_username.clone().unwrap_or_default().into());
+    dialog.set_route_editor_jump_key_path(
+        route
+            .jump_private_key_path
+            .clone()
+            .unwrap_or_default()
+            .into(),
+    );
+}
+
+/// Validates a route label: non-empty and unique among the others.
+fn validate_route_label(
+    routes: &[SessionRoute],
+    label: &str,
+    editing: usize,
+) -> Result<(), String> {
+    if label.is_empty() {
+        return Err("Enter a route label (e.g. LAN).".to_string());
+    }
+    let clash = routes
+        .iter()
+        .enumerate()
+        .any(|(idx, r)| idx != editing && r.label.eq_ignore_ascii_case(label));
+    if clash {
+        return Err(format!("A route named \"{label}\" already exists."));
+    }
+    Ok(())
+}
+
+/// Builds an alternate route from another saved site's endpoint (the
+/// "From saved site…" merge flow). The label defaults to the source site
+/// name; host/port/user/key and the transport carry over.
+fn route_from_site_entry(source: &SiteEntry) -> SessionRoute {
+    SessionRoute {
+        label: source.name.clone(),
+        host: source.host.trim().to_string(),
+        port: source.port,
+        username: if source.username.trim().is_empty() {
+            None
+        } else {
+            Some(source.username.trim().to_string())
+        },
+        private_key_path: source.private_key_path.clone(),
+        proxy_type: source.proxy_type,
+        proxy_host: source.proxy_host.trim().to_string(),
+        proxy_port: source.proxy_port,
+        proxy_username: source.proxy_username.clone(),
+        jump_host: source.jump_host.clone(),
+        jump_port: source.jump_port,
+        jump_username: source.jump_username.clone(),
+        jump_private_key_path: source.jump_private_key_path.clone(),
+    }
+}
+
+/// Refreshes a site's probe cache in the background so the next connect
+/// starts with a fresh ranking (called when its row is selected in the
+/// Site Manager). No UI: silent and best-effort.
+pub fn warm_probe_cache(state: &AppState, site: &SiteEntry) {
+    let mut opt = site.to_session_options();
+    if opt.routes.is_empty() {
+        return;
+    }
+    opt.route_policy = RoutePolicy::Auto;
+    let settings = crate::settings::Preferences::load().route_settings();
+    if !settings.auto_enabled {
+        return;
+    }
+    let dir = crate::settings::config_dir();
+    state.runtime_handle().spawn(async move {
+        let candidates = crate::routing::build_candidates(&opt);
+        if candidates.len() < 2 {
+            return;
+        }
+        let key = crate::routing::cache_key(&candidates);
+        let now = chrono::Utc::now().timestamp();
+        let mut cache = crate::routing::RouteCache::load(&dir);
+        let probes = crate::routing::run_probes(&candidates, settings.probe_budget).await;
+        cache.record_probes(&key, &probes, now);
+        if let Err(e) = cache.save(&dir, now) {
+            tracing::debug!("Could not persist warmed route cache: {e}");
+        }
+    });
 }
 
 /// Builds [`SessionOptions`] from the editor fields, porting
@@ -1619,7 +2433,10 @@ fn populate_editor(dialog: &crate::ui::site_manager::SiteManagerDialog, site: &S
 /// wins over proxy, never combined) and the protocol-specific resets (SCP
 /// mode forced to Auto outside SCP, FTPS/WebDAV TLS fields cleared for other
 /// protocols).
-fn editor_options(dialog: &crate::ui::site_manager::SiteManagerDialog) -> SessionOptions {
+fn editor_options(
+    dialog: &crate::ui::site_manager::SiteManagerDialog,
+    routes: &[SessionRoute],
+) -> SessionOptions {
     let protocol = protocol_from_storage_name(&dialog.get_editor_protocol());
     let caps = capabilities_for_protocol(protocol);
     let port_raw = dialog.get_editor_port().max(0) as u16;
@@ -1786,6 +2603,15 @@ fn editor_options(dialog: &crate::ui::site_manager::SiteManagerDialog) -> Sessio
             None
         },
         known_hosts_path: non_empty(dialog.get_editor_known_hosts_path()),
+        // Alternate routes (Rust-only feature): full data lives in the
+        // editor-scoped route cell; widgets only display it.
+        routes: routes.to_vec(),
+        route_policy: if dialog.get_editor_route_policy() == 1 {
+            RoutePolicy::Manual
+        } else {
+            RoutePolicy::Auto
+        },
+        route_pin: pinned_label_to_pin(&dialog.get_editor_pinned_label()),
         // Fields the site dialog does not edit: inherit global preferences.
         known_hosts_hash_names: prefs.known_hosts_hashed,
         show_fp_hex: prefs.fp_hex,
@@ -1886,6 +2712,94 @@ mod tests {
     }
 
     #[test]
+    fn site_entry_toml_roundtrip_with_routes() {
+        let e = SiteEntry {
+            id: new_site_id(),
+            name: "server".to_string(),
+            protocol: Protocol::Sftp,
+            host: "ssh.example.com".to_string(),
+            port: 22,
+            username: "root".to_string(),
+            routes: vec![
+                SessionRoute {
+                    label: "LAN".to_string(),
+                    host: "192.168.1.50".to_string(),
+                    port: 22,
+                    username: Some("admin".to_string()),
+                    ..SessionRoute::default()
+                },
+                SessionRoute {
+                    label: "Cloudflare".to_string(),
+                    host: "ssh.example.com".to_string(),
+                    port: 0, // inherit
+                    jump_host: Some("myserver-cf".to_string()),
+                    jump_port: 0, // -> 22
+                    ..SessionRoute::default()
+                },
+            ],
+            route_policy: RoutePolicy::Manual,
+            route_pin: Some("LAN".to_string()),
+            ..SiteEntry::default()
+        };
+        let text = toml::to_string(&e).unwrap();
+        assert!(text.contains("[[routes]]"));
+        assert!(text.contains("route_policy = \"manual\""));
+        let parsed: SiteEntry = toml::from_str(&text).unwrap();
+        assert_eq!(parsed.routes.len(), 2);
+        assert_eq!(parsed.route_policy, RoutePolicy::Manual);
+        assert_eq!(parsed.route_pin.as_deref(), Some("LAN"));
+        // Inherited values survive the round trip; jump_port 0 normalizes
+        // to the SSH default like the flat site fields.
+        assert_eq!(parsed.routes[0].label, "LAN");
+        assert_eq!(parsed.routes[0].host, "192.168.1.50");
+        assert_eq!(parsed.routes[0].username.as_deref(), Some("admin"));
+        assert_eq!(parsed.routes[0].port, 22);
+        assert_eq!(parsed.routes[1].label, "Cloudflare");
+        assert_eq!(parsed.routes[1].port, 0);
+        assert_eq!(parsed.routes[1].jump_host.as_deref(), Some("myserver-cf"));
+        assert_eq!(parsed.routes[1].jump_port, 22);
+    }
+
+    #[test]
+    fn legacy_site_file_without_routes_loads_as_auto() {
+        let legacy = r#"
+[[sites]]
+id = "abc"
+name = "example"
+protocol = "sftp"
+host = "example.com"
+port = 22
+user = "root"
+"#;
+        let file: SitesFile = toml::from_str(legacy).unwrap();
+        assert_eq!(file.sites.len(), 1);
+        let e = SiteEntry::from(file.sites.into_iter().next().unwrap());
+        assert!(e.routes.is_empty());
+        assert_eq!(e.route_policy, RoutePolicy::Auto);
+        assert!(e.route_pin.is_none());
+    }
+
+    #[test]
+    fn route_storage_normalizes_empty_and_defaults() {
+        let file = RouteFileEntry {
+            label: "  LAN  ".to_string(),
+            host: " 192.168.1.50 ".to_string(),
+            proxy_type: 1,
+            proxy_port: 0, // -> socks5 default 1080
+            jump_port: 0,  // -> 22
+            user: "  ".to_string(),
+            ..RouteFileEntry::default()
+        };
+        let route = route_from_file(file);
+        assert_eq!(route.label, "LAN");
+        assert_eq!(route.host, "192.168.1.50");
+        assert_eq!(route.proxy_type, ProxyType::Socks5);
+        assert_eq!(route.proxy_port, 1080);
+        assert_eq!(route.jump_port, 22);
+        assert!(route.username.is_none());
+    }
+
+    #[test]
     fn smb_site_gets_default_port_and_keeps_domain() {
         let file = SiteFileEntry {
             name: "nas".to_string(),
@@ -1983,6 +2897,7 @@ mod tests {
             protocol: protocol.into(),
             host: host.into(),
             username: username.into(),
+            route_summary: "—".into(),
         }
     }
 
@@ -2064,7 +2979,7 @@ mod tests {
         assert!(!dialog.get_editor_mode_is_add());
         assert_eq!(dialog.get_editing_site_id(), "roundtrip-id");
         // Round-trip through editor_options() must keep the advanced fields.
-        let opt = editor_options(&dialog);
+        let opt = editor_options(&dialog, &[]);
         assert_eq!(opt.known_hosts_path.as_deref(), Some("/custom/known_hosts"));
         assert_eq!(opt.jump_username.as_deref(), Some("jumpuser"));
         assert_eq!(
@@ -2088,10 +3003,162 @@ mod tests {
         dialog.set_editor_known_hosts_path("".into());
         assert!(dialog.get_editor_mode_is_add());
         assert_eq!(dialog.get_editing_site_id(), "");
-        let opt = editor_options(&dialog);
+        let opt = editor_options(&dialog, &[]);
         assert_eq!(opt.jump_username, None);
         assert_eq!(opt.jump_private_key_path, None);
         assert_eq!(opt.known_hosts_path, None);
+    }
+
+    #[test]
+    fn route_summary_column_text() {
+        fn entry(routes: usize, policy: RoutePolicy, pin: Option<&str>) -> SiteEntry {
+            SiteEntry {
+                routes: (0..routes)
+                    .map(|i| SessionRoute {
+                        label: format!("R{i}"),
+                        ..SessionRoute::default()
+                    })
+                    .collect(),
+                route_policy: policy,
+                route_pin: pin.map(str::to_string),
+                ..SiteEntry::default()
+            }
+        }
+        assert_eq!(route_summary(&entry(0, RoutePolicy::Auto, None)), "—");
+        assert_eq!(
+            route_summary(&entry(1, RoutePolicy::Auto, None)),
+            "auto · 1 route"
+        );
+        assert_eq!(
+            route_summary(&entry(2, RoutePolicy::Auto, None)),
+            "auto · 2 routes"
+        );
+        assert_eq!(
+            route_summary(&entry(2, RoutePolicy::Manual, Some("LAN"))),
+            "manual · LAN (+2 routes)"
+        );
+        // No pin set: manual falls back to the primary endpoint.
+        assert_eq!(
+            route_summary(&entry(1, RoutePolicy::Manual, None)),
+            "manual · primary (+1 route)"
+        );
+    }
+
+    #[test]
+    fn route_widgets_sync_list_pinned_model_and_probes() {
+        test_backend();
+        let dialog = crate::ui::site_manager::SiteManagerDialog::new()
+            .expect("Failed to create SiteManagerDialog");
+        let routes = vec![
+            SessionRoute {
+                label: "LAN".into(),
+                host: "192.168.1.10".into(),
+                port: 22,
+                ..SessionRoute::default()
+            },
+            SessionRoute {
+                label: "Tunnel".into(),
+                host: "".into(),
+                port: 0,
+                proxy_type: ProxyType::Socks5,
+                proxy_host: "127.0.0.1".into(),
+                proxy_port: 1080,
+                ..SessionRoute::default()
+            },
+            SessionRoute {
+                label: "Bastion".into(),
+                host: "example.com".into(),
+                jump_host: Some("bastion.example.com".into()),
+                ..SessionRoute::default()
+            },
+        ];
+        let mut probes = ProbeSummaries::new();
+        probes.insert("LAN".into(), "3 ms".into());
+        sync_route_widgets_with_probes(&dialog, &routes, &probes);
+        let model = dialog.get_editor_routes();
+        assert_eq!(model.iter().count(), 3);
+        let lan = model.row_data(0).unwrap();
+        assert_eq!(lan.label, "LAN");
+        assert_eq!(lan.endpoint, "192.168.1.10:22");
+        assert_eq!(lan.transport, "direct");
+        assert_eq!(lan.probe, "3 ms");
+        let tunnel = model.row_data(1).unwrap();
+        assert_eq!(tunnel.endpoint, "(inherit)");
+        assert_eq!(tunnel.transport, "SOCKS5 127.0.0.1");
+        assert_eq!(tunnel.probe, "—");
+        let bastion = model.row_data(2).unwrap();
+        assert_eq!(bastion.transport, "jump bastion.example.com");
+        // Pinned model gains one entry per route, after Primary.
+        let pinned: Vec<String> = dialog
+            .get_pinned_route_model()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(pinned, vec!["Primary", "LAN", "Tunnel", "Bastion"]);
+        // A pin pointing at a removed route is cleared on the next sync.
+        dialog.set_editor_pinned_label("Bastion".into());
+        sync_route_widgets_with_probes(&dialog, &routes[..2], &probes);
+        assert_eq!(dialog.get_editor_pinned_label(), "");
+        assert_eq!(dialog.get_editor_routes().iter().count(), 2);
+    }
+
+    #[test]
+    fn route_editor_round_trip_and_label_validation() {
+        test_backend();
+        let dialog = crate::ui::site_manager::SiteManagerDialog::new()
+            .expect("Failed to create SiteManagerDialog");
+        dialog.set_route_editor_type(3);
+        dialog.set_route_editor_label("CF".into());
+        dialog.set_route_editor_host("".into());
+        dialog.set_route_editor_port(0);
+        dialog.set_route_editor_jump_host("cf-tunnel".into());
+        dialog.set_route_editor_jump_port(0);
+        let route = route_from_sub_editor(&dialog);
+        assert_eq!(route.label, "CF");
+        assert_eq!(route.host, "");
+        assert_eq!(route.jump_host.as_deref(), Some("cf-tunnel"));
+        assert_eq!(route.jump_port, 22, "port 0 normalizes to 22");
+        populate_route_sub_editor(&dialog, &route);
+        assert_eq!(route_from_sub_editor(&dialog), route);
+
+        let routes = vec![route];
+        assert!(validate_route_label(&routes, "", 1).is_err());
+        assert!(validate_route_label(&routes, "lan", 0).is_ok());
+        // Case-insensitive clash against another row is rejected (adding a
+        // duplicate, and editing a *different* row into an existing label).
+        assert!(validate_route_label(&routes, "cf", usize::MAX).is_err());
+        assert!(validate_route_label(&routes, "cf", 0).is_ok());
+        // Pinned label maps: Primary/empty -> None, others kept verbatim.
+        assert_eq!(pinned_label_to_pin("Primary"), None);
+        assert_eq!(pinned_label_to_pin(""), None);
+        assert_eq!(pinned_label_to_pin("LAN").as_deref(), Some("LAN"));
+    }
+
+    #[test]
+    fn route_from_site_entry_carries_endpoint_and_transport() {
+        let source = SiteEntry {
+            name: "home-remote".into(),
+            host: "home.example.com".into(),
+            port: 2222,
+            username: "nemo".into(),
+            private_key_path: Some("/Users/nemo/.ssh/home_ed25519".into()),
+            proxy_type: ProxyType::HttpConnect,
+            proxy_host: "proxy.corp".into(),
+            proxy_port: 3128,
+            ..SiteEntry::default()
+        };
+        let route = route_from_site_entry(&source);
+        assert_eq!(route.label, "home-remote");
+        assert_eq!(route.host, "home.example.com");
+        assert_eq!(route.port, 2222);
+        assert_eq!(route.username.as_deref(), Some("nemo"));
+        assert_eq!(
+            route.private_key_path.as_deref(),
+            Some("/Users/nemo/.ssh/home_ed25519")
+        );
+        assert_eq!(route.proxy_type, ProxyType::HttpConnect);
+        assert_eq!(route.proxy_host, "proxy.corp");
+        assert_eq!(route.proxy_port, 3128);
     }
 
     #[test]
@@ -2114,7 +3181,7 @@ mod tests {
         dialog.set_editor_ftps_ca_cert("/ca.pem".into());
         dialog.set_editor_webdav_scheme("http".into());
         dialog.set_editor_smb_domain("WORKGROUP".into());
-        let opt = editor_options(&dialog);
+        let opt = editor_options(&dialog, &[]);
         assert_eq!(opt.proxy_type, ProxyType::None);
         assert!(opt.proxy_host.is_empty());
         assert_eq!(opt.proxy_port, 0);
@@ -2132,7 +3199,7 @@ mod tests {
 
         // Disabling the jump host restores the configured proxy.
         dialog.set_editor_jump_enabled(false);
-        let opt = editor_options(&dialog);
+        let opt = editor_options(&dialog, &[]);
         assert_eq!(opt.proxy_type, ProxyType::Socks5);
         assert_eq!(opt.proxy_host, "proxy.example.com");
         assert_eq!(opt.proxy_port, 1080);
@@ -2143,7 +3210,7 @@ mod tests {
         // (C++ treats an empty jump host as "no jump").
         dialog.set_editor_jump_enabled(true);
         dialog.set_editor_jump_host("".into());
-        let opt = editor_options(&dialog);
+        let opt = editor_options(&dialog, &[]);
         assert_eq!(opt.jump_host, None);
         assert_eq!(opt.proxy_type, ProxyType::Socks5);
     }
@@ -2157,13 +3224,13 @@ mod tests {
         dialog.set_editor_host("nas.example.com".into());
         dialog.set_editor_port(0);
         dialog.set_editor_smb_domain("  WORKGROUP  ".into());
-        let opt = editor_options(&dialog);
+        let opt = editor_options(&dialog, &[]);
         assert_eq!(opt.protocol, Protocol::Smb);
         assert_eq!(opt.port, 445);
         assert_eq!(opt.smb_domain.as_deref(), Some("WORKGROUP"));
         // Empty/whitespace domain maps to None.
         dialog.set_editor_smb_domain("   ".into());
-        assert_eq!(editor_options(&dialog).smb_domain, None);
+        assert_eq!(editor_options(&dialog, &[]).smb_domain, None);
     }
 
     #[test]

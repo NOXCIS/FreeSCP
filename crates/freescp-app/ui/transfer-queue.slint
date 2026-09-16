@@ -150,6 +150,7 @@ export component TransferQueueDialog inherits Window {
         header := Rectangle {
             height: 24px;
             background: #313136;
+            visible: root.rows.length > 0;
             Text { text: "Name"; x: 0px; width: root.col-name-w; height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
             Text { text: "Status"; x: root.status-x(); width: root.col-status-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
             Text { text: "Progress"; x: root.progress-x(); width: root.col-progress-w; height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
@@ -163,12 +164,30 @@ export component TransferQueueDialog inherits Window {
             Text { text: "Error"; x: root.error-x(parent.width); width: root.col-error-w; height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
         }
 
-        ListView {
+        if root.rows.length == 0 : Rectangle {
+            vertical-stretch: 1;
+            Text {
+                text: root.filter == 0
+                    ? "No transfers yet.\nCopy, upload, or download a file to fill this queue."
+                    : "No transfers match this filter.";
+                color: #6f6f77;
+                font-size: 13px;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: parent.width - 48px;
+                x: 24px;
+                y: 0px;
+                height: parent.height;
+            }
+        }
+
+        if root.rows.length > 0 : ListView {
             vertical-stretch: 1;
             for row[i] in root.rows : Rectangle {
                 width: 100%;
                 height: 38px;
-                background: row.selected ? #3a4a5f
+                background: row.selected ? #33506e
                     : (mod(i, 2) == 0 ? #2c2c31 : #2d2d32);
 
                 row-area := TouchArea {
@@ -416,7 +435,7 @@ export component TransferQueueDialog inherits Window {
                 }
 
                 Button {
-                    text: "✕";
+                    text: "x";
                     // No per-row cancel in the C++ dialog; terminal rows have
                     // nothing to cancel, so the button stays hidden there.
                     visible: row.state != "Completed" && row.state != "Error" && row.state != "Canceled";
@@ -429,7 +448,7 @@ export component TransferQueueDialog inherits Window {
             }
         }
 
-        // Footer controls: status line + actions (C++ row 4).
+        // Footer controls: status + primary actions; secondary live in More.
         HorizontalLayout {
             spacing: 4px;
             Text {
@@ -440,13 +459,56 @@ export component TransferQueueDialog inherits Window {
             }
             Button { text: "Pause"; enabled: root.can-pause-all; clicked => { root.pause-all(); } }
             Button { text: "Resume"; enabled: root.can-resume-all; clicked => { root.resume-all(); } }
-            Button { text: "Pause selected"; enabled: root.can-pause-selected; clicked => { root.pause-selected(); } }
-            Button { text: "Resume selected"; enabled: root.can-resume-selected; clicked => { root.resume-selected(); } }
             Button { text: "Cancel all"; enabled: root.can-cancel-all; clicked => { root.cancel-all(); } }
-            Button { text: "Cancel selected"; enabled: root.can-cancel-selected; clicked => { root.cancel-selected(); } }
             Button { text: "Retry"; enabled: root.can-retry; clicked => { root.retry-all(); } }
-            Button { text: "Clear completed"; enabled: root.can-clear-completed; clicked => { root.clear-completed(); } }
-            Button { text: "Clear failed/canceled"; enabled: root.can-clear-failed-cancelled; clicked => { root.clear-failed-cancelled(); } }
+            more-btn := Button {
+                text: "More...";
+                clicked => { more-popup.show(); }
+            }
+            more-popup := PopupWindow {
+                close-policy: close-on-click-outside;
+                x: more-btn.x;
+                y: more-btn.y - more-layout.preferred-height - 4px;
+                width: 220px;
+                height: more-layout.preferred-height;
+                MenuPopupFrame {
+                    width: 100%;
+                    height: 100%;
+                    more-layout := VerticalLayout {
+                        padding: 4px;
+                        MenuRow {
+                            text: "Pause selected";
+                            enabled: root.can-pause-selected;
+                            compact: true;
+                            clicked => { more-popup.close(); root.pause-selected(); }
+                        }
+                        MenuRow {
+                            text: "Resume selected";
+                            enabled: root.can-resume-selected;
+                            compact: true;
+                            clicked => { more-popup.close(); root.resume-selected(); }
+                        }
+                        MenuRow {
+                            text: "Cancel selected";
+                            enabled: root.can-cancel-selected;
+                            compact: true;
+                            clicked => { more-popup.close(); root.cancel-selected(); }
+                        }
+                        MenuRow {
+                            text: "Clear completed";
+                            enabled: root.can-clear-completed;
+                            compact: true;
+                            clicked => { more-popup.close(); root.clear-completed(); }
+                        }
+                        MenuRow {
+                            text: "Clear failed/canceled";
+                            enabled: root.can-clear-failed-cancelled;
+                            compact: true;
+                            clicked => { more-popup.close(); root.clear-failed-cancelled(); }
+                        }
+                    }
+                }
+            }
             Button { text: "Close"; clicked => { root.close-requested(); } }
         }
 
@@ -459,13 +521,14 @@ export component TransferQueueDialog inherits Window {
                 maximum: 1000000;
                 value <=> root.speed-value;
             }
-            Text { text: "KB/s (0 = no limit)"; vertical-alignment: center; color: #9a9aa2; font-size: 11px; }
+            Text { text: "KiB/s (0 = no limit)"; vertical-alignment: center; color: #9a9aa2; font-size: 11px; }
             Button {
                 text: "Apply limit";
                 clicked => { root.apply-speed-limit(root.speed-value); }
             }
             Button {
                 text: "Limit selected";
+                enabled: root.can-limit-selected;
                 clicked => { root.limit-selected(); }
             }
             Rectangle { width: 16px; } // spacer

@@ -401,15 +401,25 @@ pub struct FileInfo {
 // Callback aliases
 // ---------------------------------------------------------------------------
 
+/// Decision returned by [`HostKeyConfirmCb`] for TOFU / AcceptNew.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostKeyDecision {
+    /// Reject the connection.
+    Reject,
+    /// Accept for this session only; do not write known_hosts.
+    AcceptOnce,
+    /// Accept and persist to known_hosts when a path is available.
+    AcceptAndSave,
+}
+
 /// Host key confirmation (TOFU) callback invoked when known_hosts lacks an
 /// entry.
 ///
 /// Arguments: `host`, `port`, `algorithm`, `fingerprint`, `can_save`.
-/// Return `true` to accept (and save when `can_save`) the key, `false` to
-/// reject the connection. `can_save` being `false` means the client cannot
-/// persist the key and the user must explicitly allow a one-time connection
-/// without saving.
-pub type HostKeyConfirmCb = Arc<dyn Fn(&str, u16, &str, &str, bool) -> bool + Send + Sync>;
+/// `can_save` being `false` means the client cannot persist the key; the UI
+/// should only offer a one-time connection (or Cancel).
+pub type HostKeyConfirmCb =
+    Arc<dyn Fn(&str, u16, &str, &str, bool) -> HostKeyDecision + Send + Sync>;
 
 /// Backend status message callback (e.g., persist errors/reasons).
 pub type HostKeyStatusCb = Arc<dyn Fn(&str) + Send + Sync>;
@@ -490,6 +500,17 @@ pub struct SessionOptions {
     pub jump_username: Option<String>,
     pub jump_private_key_path: Option<String>,
 
+    /// Alternate endpoints for the same logical server (Rust-only feature).
+    /// Empty (the default) keeps today's single-endpoint behavior; see
+    /// [`crate::route`].
+    pub routes: Vec<crate::route::SessionRoute>,
+    /// How `routes` are chosen: probed/failover ([`Auto`]) or pinned
+    /// ([`Manual`], via `route_pin`).
+    pub route_policy: crate::route::RoutePolicy,
+    /// Label of the pinned route while `route_policy` is
+    /// [`RoutePolicy::Manual`].
+    pub route_pin: Option<String>,
+
     /// Host key confirmation (TOFU) when known_hosts lacks an entry.
     pub hostkey_confirm_cb: Option<HostKeyConfirmCb>,
     /// Backend status messages (e.g., persist errors/reasons).
@@ -534,6 +555,9 @@ impl Default for SessionOptions {
             jump_port: 22,
             jump_username: None,
             jump_private_key_path: None,
+            routes: Vec::new(),
+            route_policy: crate::route::RoutePolicy::Auto,
+            route_pin: None,
             hostkey_confirm_cb: None,
             hostkey_status_cb: None,
             keyboard_interactive_cb: None,
@@ -579,6 +603,9 @@ impl std::fmt::Debug for SessionOptions {
             .field("jump_port", &self.jump_port)
             .field("jump_username", &self.jump_username)
             .field("jump_private_key_path", &self.jump_private_key_path)
+            .field("routes", &self.routes)
+            .field("route_policy", &self.route_policy)
+            .field("route_pin", &self.route_pin)
             .field(
                 "hostkey_confirm_cb",
                 &self
@@ -790,7 +817,11 @@ mod tests {
         let opts = SessionOptions {
             hostkey_confirm_cb: Some(Arc::new(
                 |host: &str, port: u16, _algo: &str, _fp: &str, can_save: bool| {
-                    host == "example.com" && port == 22 && can_save
+                    if host == "example.com" && port == 22 && can_save {
+                        HostKeyDecision::AcceptAndSave
+                    } else {
+                        HostKeyDecision::Reject
+                    }
                 },
             )),
             keyboard_interactive_cb: Some(Arc::new(
@@ -806,8 +837,14 @@ mod tests {
             ..SessionOptions::default()
         };
         let confirm = opts.hostkey_confirm_cb.as_ref().unwrap();
-        assert!(confirm("example.com", 22, "ssh-ed25519", "fp", true));
-        assert!(!confirm("other", 22, "ssh-ed25519", "fp", false));
+        assert_eq!(
+            confirm("example.com", 22, "ssh-ed25519", "fp", true),
+            HostKeyDecision::AcceptAndSave
+        );
+        assert_eq!(
+            confirm("other", 22, "ssh-ed25519", "fp", false),
+            HostKeyDecision::Reject
+        );
         let kbd = opts.keyboard_interactive_cb.as_ref().unwrap();
         let mut responses = Vec::new();
         assert_eq!(

@@ -13,6 +13,7 @@
 // sites.
 
 import { Button, LineEdit } from "std-widgets.slint";
+import { DialogFooter } from "widgets.slint";
 
 // Host-key TOFU confirmation. Shown by connect.rs from the (blocking)
 // host-key callback running on a tokio worker thread; the button handlers
@@ -46,9 +47,15 @@ export component HostKeyDialog inherits Window {
             wrap: word-wrap;
         }
         Rectangle { } // spacer
-        HorizontalLayout {
-            spacing: 8px;
-            Rectangle { } // spacer: right-align the buttons
+        DialogFooter {
+            Button {
+                text: "Cancel";
+                clicked => { root.reject(); }
+            }
+            if root.can-save : Button {
+                text: "Accept once";
+                clicked => { root.accept-once(); }
+            }
             if root.can-save : Button {
                 text: "Accept and Save";
                 primary: true;
@@ -58,10 +65,6 @@ export component HostKeyDialog inherits Window {
                 text: "Accept once";
                 primary: true;
                 clicked => { root.accept-once(); }
-            }
-            Button {
-                text: "Cancel";
-                clicked => { root.reject(); }
             }
         }
     }
@@ -96,11 +99,9 @@ export component KbdIntPromptDialog inherits Window {
         Text { text: root.prompt; wrap: word-wrap; }
         LineEdit { text <=> root.answer; input-type: root.mask-input ? InputType.password : InputType.text; }
         Rectangle { } // spacer
-        HorizontalLayout {
-            spacing: 8px;
-            Rectangle { } // spacer: right-align the buttons
-            Button { text: "OK"; primary: true; clicked => { root.accepted(); } }
+        DialogFooter {
             Button { text: "Cancel"; clicked => { root.rejected(); } }
+            Button { text: "OK"; primary: true; clicked => { root.accepted(); } }
         }
     }
 }
@@ -131,16 +132,14 @@ export component ConfirmTextDialog inherits Window {
             placeholder-text: "Type " + root.confirm-token;
         }
         Rectangle { } // spacer
-        HorizontalLayout {
-            spacing: 8px;
-            Rectangle { } // spacer: right-align the buttons
+        DialogFooter {
+            Button { text: "Cancel"; clicked => { root.rejected(); } }
             Button {
                 text: "Continue";
                 primary: true;
                 enabled: root.entered-text == root.confirm-token;
                 clicked => { root.confirmed(); }
             }
-            Button { text: "Cancel"; clicked => { root.rejected(); } }
         }
     }
 }
@@ -170,18 +169,15 @@ export component AlertDialog inherits Window {
 
         Text { text: root.message; wrap: word-wrap; }
         Rectangle { } // spacer
-        HorizontalLayout {
-            spacing: 8px;
-            Rectangle { } // spacer: right-align the buttons
+        DialogFooter {
+            if root.confirm-mode : Button {
+                text: root.no-text;
+                clicked => { root.cancel(); }
+            }
             Button {
                 text: root.confirm-mode ? root.yes-text : "OK";
                 primary: true;
                 clicked => { root.ok(); }
-            }
-            Button {
-                text: root.no-text;
-                visible: root.confirm-mode;
-                clicked => { root.cancel(); }
             }
         }
     }

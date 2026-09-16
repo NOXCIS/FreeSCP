@@ -1,9 +1,12 @@
-//! UI-side controller for the embedded Telnet terminal console.
+//! UI-side controller for the embedded terminal console.
 //!
-//! `ConsoleState` owns a [`vt100::Parser`] that turns the bytes coming from
-//! `freescp_core::telnet::TelnetSession` into a Slint model of styled rows
-//! (see `ui/console.slint` for the view), and encodes keyboard/paste input
-//! back into terminal bytes. main.rs owns the wiring:
+//! `ConsoleState` owns a [`vt100::Parser`] that turns the bytes coming from a
+//! console transport — the Telnet protocol's
+//! `freescp_core::telnet::TelnetSession` or an SSH PTY shell
+//! (`freescp_core::shell::ShellSession`, the terminal workspace) — into a
+//! Slint model of styled rows (see `ui/console.slint` for the view), and
+//! encodes keyboard/paste input back into terminal bytes. main.rs owns the
+//! wiring:
 //!
 //! * `UiEvent::ConsoleSession` -> [`insert`], `UiEvent::ConsoleData` ->
 //!   [`ConsoleState::feed`] + [`ConsoleState::render`].
@@ -23,7 +26,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
-use freescp_core::telnet::TelnetSession;
+use freescp_core::shell::{ShellEvent, ShellSession};
+use freescp_core::telnet::{TelnetEvent, TelnetSession};
 use freescp_core::SessionOptions;
 use slint::{Color, ModelRc, VecModel};
 
@@ -279,6 +283,102 @@ pub struct ConsoleSession {
     pub console: ConsoleState,
 }
 
+/// Transport backing a console tab.
+///
+/// Both variants expose the same `send`/`resize`/`close` surface, so
+/// [`ConsoleState`] is transport-agnostic; only the events differ and those
+/// are unified by [`ConsoleEventStream`].
+#[derive(Debug)]
+pub enum ConsoleTransport {
+    /// Telnet protocol session (RFC 854, optional TLS/auto-login).
+    Telnet(TelnetSession),
+    /// SSH shell session (the embedded terminal workspace).
+    Shell(ShellSession),
+}
+
+impl ConsoleTransport {
+    /// Queues user input for the transport.
+    pub fn send(&self, data: &[u8]) {
+        match self {
+            Self::Telnet(session) => session.send(data),
+            Self::Shell(session) => session.send(data),
+        }
+    }
+
+    /// Resizes the terminal window on the remote side.
+    pub fn resize(&self, cols: u16, rows: u16) {
+        match self {
+            Self::Telnet(session) => session.resize(cols, rows),
+            Self::Shell(session) => session.resize(cols, rows),
+        }
+    }
+
+    /// Closes the session. Equivalent to dropping every handle.
+    pub fn close(&self) {
+        match self {
+            Self::Telnet(session) => session.close(),
+            Self::Shell(session) => session.close(),
+        }
+    }
+
+    /// True for the SSH shell transport, which runs as a full-window
+    /// terminal workspace rather than a Telnet console over the right pane.
+    pub fn is_terminal_workspace(&self) -> bool {
+        matches!(self, Self::Shell(_))
+    }
+}
+
+/// Transport-agnostic console event.
+#[derive(Debug)]
+pub enum ConsoleTransportEvent {
+    /// Data destined for the terminal emulator.
+    Data(Vec<u8>),
+    /// The remote side closed the session cleanly.
+    Closed,
+    /// The connection failed mid-session (user-facing message).
+    Error(String),
+}
+
+impl From<TelnetEvent> for ConsoleTransportEvent {
+    fn from(event: TelnetEvent) -> Self {
+        match event {
+            TelnetEvent::Data(bytes) => Self::Data(bytes),
+            TelnetEvent::Closed => Self::Closed,
+            TelnetEvent::Error(message) => Self::Error(message),
+        }
+    }
+}
+
+impl From<ShellEvent> for ConsoleTransportEvent {
+    fn from(event: ShellEvent) -> Self {
+        match event {
+            ShellEvent::Data(bytes) => Self::Data(bytes),
+            ShellEvent::Closed => Self::Closed,
+            ShellEvent::Error(message) => Self::Error(message),
+        }
+    }
+}
+
+/// Receiver half of a console session, whichever transport produced it.
+///
+/// The app's connect plumbing hands this to the forwarding task, so the
+/// Telnet and shell paths share one `UiEvent` bridge.
+pub enum ConsoleEventStream {
+    Telnet(tokio::sync::mpsc::UnboundedReceiver<TelnetEvent>),
+    Shell(tokio::sync::mpsc::UnboundedReceiver<ShellEvent>),
+}
+
+impl ConsoleEventStream {
+    /// Awaits the next event, mapped into the transport-agnostic shape.
+    /// `None` once the transport's senders are gone.
+    pub async fn recv(&mut self) -> Option<ConsoleTransportEvent> {
+        match self {
+            Self::Telnet(rx) => rx.recv().await.map(ConsoleTransportEvent::from),
+            Self::Shell(rx) => rx.recv().await.map(ConsoleTransportEvent::from),
+        }
+    }
+}
+
 thread_local! {
     /// Live consoles, keyed by `TabState::id`. Thread-local on purpose: the
     /// vt100 parser, the Slint models and the session handle are all `Rc`-based
@@ -309,11 +409,15 @@ pub fn remove(tab_id: u64) -> Option<ConsoleSession> {
     Some(session)
 }
 
-/// Terminal state + Slint models for one Telnet session.
+/// Terminal state + Slint models for one console session.
 pub struct ConsoleState {
     parser: vt100::Parser<ConsoleCallbacks>,
     events: Rc<RefCell<ConsoleEvents>>,
-    session: Option<TelnetSession>,
+    session: Option<ConsoleTransport>,
+    /// Set when the session is an SSH shell (terminal workspace): the view
+    /// then owns the whole workspace instead of the right pane. Survives
+    /// [`Self::set_closed`] so a dead terminal still renders full-window.
+    terminal_workspace: bool,
     rows_model: Rc<VecModel<ConsoleRow>>,
     row_models: Vec<Rc<VecModel<ConsoleRun>>>,
     /// Last published runs per row, so `render` only touches changed rows.
@@ -354,6 +458,7 @@ impl ConsoleState {
             parser,
             events,
             session: None,
+            terminal_workspace: false,
             rows_model: Rc::new(VecModel::default()),
             row_models: Vec::new(),
             row_cache: Vec::new(),
@@ -381,15 +486,16 @@ impl ConsoleState {
     }
 
     /// Installs a freshly connected session and tells it our grid size.
-    pub fn attach(&mut self, session: TelnetSession) {
+    pub fn attach(&mut self, session: ConsoleTransport) {
         session.resize(self.cols, self.rows);
         self.pending.clear();
+        self.terminal_workspace = session.is_terminal_workspace();
         self.session = Some(session);
         self.connected = true;
     }
 
     /// Removes the session (disconnect); the last screen stays visible.
-    pub fn take_session(&mut self) -> Option<TelnetSession> {
+    pub fn take_session(&mut self) -> Option<ConsoleTransport> {
         self.connected = false;
         self.session.take()
     }
@@ -398,7 +504,12 @@ impl ConsoleState {
         self.connected
     }
 
-    /// Marks the session as gone after `TelnetEvent::Closed`/`Error`.
+    /// True when this console is an SSH shell terminal workspace.
+    pub fn is_terminal_workspace(&self) -> bool {
+        self.terminal_workspace
+    }
+
+    /// Marks the session as gone after a `Closed`/`Error` event.
     pub fn set_closed(&mut self) {
         self.connected = false;
         self.session = None;
@@ -804,13 +915,23 @@ fn color_of(rgb: (u8, u8, u8)) -> Color {
     Color::from_rgb_u8(rgb.0, rgb.1, rgb.2)
 }
 
+/// Floors pure black so dim/ANSI-black text stays readable on the dark
+/// console background (true `#000` disappears against `#1a1a1e`).
+fn floor_readable(rgb: (u8, u8, u8)) -> (u8, u8, u8) {
+    if rgb == (0, 0, 0) {
+        (0x3a, 0x3a, 0x3a)
+    } else {
+        rgb
+    }
+}
+
 /// Maps a vt100 color through the xterm-256 palette; `default` is the color
 /// for SGR 39/49.
 fn map_color(color: vt100::Color, default: Color) -> Color {
     match color {
         vt100::Color::Default => default,
-        vt100::Color::Idx(index) => color_of(ansi_256(index)),
-        vt100::Color::Rgb(r, g, b) => Color::from_rgb_u8(r, g, b),
+        vt100::Color::Idx(index) => color_of(floor_readable(ansi_256(index))),
+        vt100::Color::Rgb(r, g, b) => color_of(floor_readable((r, g, b))),
     }
 }
 
@@ -1157,5 +1278,47 @@ mod tests {
         assert_eq!(ansi_256(231), (255, 255, 255));
         assert_eq!(ansi_256(232), (8, 8, 8));
         assert_eq!(ansi_256(255), (238, 238, 238));
+    }
+
+    /// Both transports must land in the same event shape: the connect
+    /// plumbing forwards them through one `UiEvent` bridge.
+    #[test]
+    fn transport_events_map_onto_one_shape() {
+        let data = ConsoleTransportEvent::from(freescp_core::shell::ShellEvent::Data(vec![1, 2]));
+        assert!(matches!(data, ConsoleTransportEvent::Data(bytes) if bytes == vec![1, 2]));
+        let closed = ConsoleTransportEvent::from(freescp_core::shell::ShellEvent::Closed);
+        assert!(matches!(closed, ConsoleTransportEvent::Closed));
+        let error =
+            ConsoleTransportEvent::from(freescp_core::shell::ShellEvent::Error("boom".into()));
+        assert!(matches!(error, ConsoleTransportEvent::Error(message) if message == "boom"));
+
+        let telnet_data =
+            ConsoleTransportEvent::from(freescp_core::telnet::TelnetEvent::Data(vec![3, 4]));
+        assert!(matches!(telnet_data, ConsoleTransportEvent::Data(bytes) if bytes == vec![3, 4]));
+        let telnet_closed = ConsoleTransportEvent::from(freescp_core::telnet::TelnetEvent::Closed);
+        assert!(matches!(telnet_closed, ConsoleTransportEvent::Closed));
+        let telnet_error =
+            ConsoleTransportEvent::from(freescp_core::telnet::TelnetEvent::Error("nope".into()));
+        assert!(matches!(telnet_error, ConsoleTransportEvent::Error(message) if message == "nope"));
+    }
+
+    /// `ConsoleEventStream::recv` is the single bridge the forwarding task
+    /// reads: it must surface data and signal end-of-stream for both
+    /// transports.
+    #[test]
+    fn event_stream_recv_maps_data_and_end_of_stream() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut stream = ConsoleEventStream::Shell(rx);
+        tx.send(freescp_core::shell::ShellEvent::Data(vec![7]))
+            .unwrap();
+        // A current-thread runtime runs the `!Send` stream (the terminal state
+        // behind it is `Rc`-based).
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("current-thread runtime");
+        let event = runtime.block_on(stream.recv());
+        assert!(matches!(event, Some(ConsoleTransportEvent::Data(bytes)) if bytes == vec![7]));
+        drop(tx);
+        assert!(runtime.block_on(stream.recv()).is_none());
     }
 }

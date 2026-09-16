@@ -18,8 +18,9 @@ desktop UI. It runs on Windows, macOS and Linux.
   scrollback, copy/paste, NAWS window resizing, and optional auto-login
 - File manager with transfer queue, integrity verification, drag &
   drop, permissions editor, and remote search
-- Site manager with SSH config import, connection history, and keychain-backed
-  secret storage
+- Site manager with SSH config import, connection history, keychain-backed
+  secret storage, and automatic route selection (alternate routes per site
+  probed for the fastest path — LAN preferred — with transparent failover)
 - Localizations: English, Spanish, French, Portuguese
 
 ## Building

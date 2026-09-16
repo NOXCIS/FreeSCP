@@ -3,59 +3,138 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FreeSCP – Free, SFTP/SCP/FTP/FTPS/WebDAV/SMB Client for Windows, macOS and Linux</title>
-<meta name="description" content="Free, open-source SFTP/SCP/FTP/FTPS/WebDAV/SMB client for Windows, macOS and Linux. Telnet console, SSH jump hosts, cloudflared tunnel support, pure-Rust core, MIT license.">
+<title>FreeSCP – Free Open-Source SFTP/SCP/FTP/FTPS/WebDAV/SMB Client &amp; CLI | WinSCP Alternative for Windows, macOS, Linux</title>
+<meta name="description" content="FreeSCP is a free, open-source (MIT) SFTP/SCP/FTP/FTPS/WebDAV/SMB client with an embedded Telnet console and a scriptable CLI with JSON output for Windows, macOS and Linux — a free, cross-platform alternative to WinSCP and FileZilla.">
+<meta name="keywords" content="free scp client, free sftp client, open source sftp client, winscp alternative, filezilla alternative, free winscp, sftp client windows macos linux, sftp client with cli, cloudflared ssh client, telnet client">
 <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
 <meta name="generator" content="hand-crafted HTML">
 <link rel="canonical" href="https://freescp.org/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="FreeSCP">
-<meta property="og:title" content="FreeSCP – Free, SFTP/SCP/FTP/FTPS/WebDAV/SMB Client for Windows, macOS and Linux">
-<meta property="og:description" content="Free, open-source SFTP/SCP/FTP/FTPS/WebDAV/SMB client for Windows, macOS and Linux. Telnet console, SSH jump hosts, cloudflared tunnel support, pure-Rust core, MIT license.">
+<meta property="og:title" content="FreeSCP – Free Open-Source SFTP/SCP/FTP/FTPS/WebDAV/SMB Client &amp; CLI | WinSCP Alternative">
+<meta property="og:description" content="Free, open-source (MIT) SFTP/SCP/FTP/FTPS/WebDAV/SMB client with Telnet console and scriptable CLI for Windows, macOS and Linux — a free, cross-platform alternative to WinSCP and FileZilla.">
 <meta property="og:url" content="https://freescp.org/">
-<meta property="og:image" content="https://freescp.org/logo.svg">
-<meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="FreeSCP – Free, SFTP/SCP/FTP/FTPS/WebDAV/SMB Client for Windows, macOS and Linux">
-<meta name="twitter:description" content="Free, open-source SFTP/SCP/FTP/FTPS/WebDAV/SMB client for Windows, macOS and Linux. Telnet console, SSH jump hosts, cloudflared tunnel support, pure-Rust core, MIT license.">
-<meta name="twitter:image" content="https://freescp.org/logo.svg">
+<meta property="og:image" content="https://freescp.org/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="FreeSCP – free, open-source SFTP/SCP/FTP/FTPS/WebDAV/SMB client">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="FreeSCP – Free Open-Source SFTP/SCP/FTP/FTPS/WebDAV/SMB Client &amp; CLI | WinSCP Alternative">
+<meta name="twitter:description" content="Free, open-source (MIT) SFTP/SCP/FTP/FTPS/WebDAV/SMB client with Telnet console and scriptable CLI for Windows, macOS and Linux — a free, cross-platform alternative to WinSCP and FileZilla.">
+<meta name="twitter:image" content="https://freescp.org/og.png">
 <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" sizes="any">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "FreeSCP",
-  "url": "https://freescp.org/",
-  "image": "https://freescp.org/logo.svg",
-  "description": "Free, open-source SFTP/SCP/FTP/FTPS/WebDAV/SMB client for Windows, macOS and Linux with an embedded Telnet console, SSH jump hosts, Cloudflare Tunnel (cloudflared) access and a pure-Rust core.",
-  "operatingSystem": "Windows, macOS, Linux",
-  "applicationCategory": "UtilitiesApplication",
-  "softwareVersion": "0.9.0",
-  "license": "https://github.com/NOXCIS/FreeSCP/blob/main/LICENSE",
-  "author": {
-    "@type": "Organization",
-    "name": "NOXCIS",
-    "url": "https://github.com/NOXCIS"
-  },
-  "offers": {
-    "@type": "Offer",
-    "price": "0",
-    "priceCurrency": "USD"
-  },
-  "featureList": [
-    "SFTP",
-    "SCP",
-    "FTP",
-    "FTPS",
-    "WebDAV",
-    "SMB/CIFS (SMB2/SMB3)",
-    "Telnet console (TCP and TLS)",
-    "File manager",
-    "SSH jump hosts",
-    "Cloudflare Tunnel (cloudflared) access via ProxyCommand",
-    "SOCKS5 and HTTP-CONNECT proxies",
-    "Site manager with SSH config import",
-    "Keychain-backed secret storage",
-    "Transfer queue with integrity verification"
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "FreeSCP",
+      "alternateName": "Free SCP client",
+      "url": "https://freescp.org/",
+      "image": "https://freescp.org/og.png",
+      "slogan": "Free, open-source file-transfer client focused on simplicity and security",
+      "description": "Free, open-source (MIT) SFTP/SCP/FTP/FTPS/WebDAV/SMB client for Windows, macOS and Linux with an embedded Telnet console, SSH jump hosts, Cloudflare Tunnel (cloudflared) access, a scriptable command-line interface with JSON output and a pure-Rust core. A free, cross-platform alternative to WinSCP and FileZilla.",
+      "operatingSystem": "Windows, macOS, Linux",
+      "applicationCategory": "UtilitiesApplication",
+      "softwareVersion": "0.9.0",
+      "license": "https://github.com/NOXCIS/FreeSCP/blob/main/LICENSE",
+      "downloadUrl": "https://github.com/NOXCIS/FreeSCP/releases",
+      "discussionUrl": "https://github.com/NOXCIS/FreeSCP/issues",
+      "sameAs": [
+        "https://github.com/NOXCIS/FreeSCP",
+        "https://gitlab.com/Noxcis/FreeSCP"
+      ],
+      "author": {
+        "@type": "Organization",
+        "name": "NOXCIS",
+        "url": "https://github.com/NOXCIS",
+        "sameAs": ["https://gitlab.com/Noxcis"]
+      },
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "featureList": [
+        "SFTP",
+        "SCP",
+        "FTP",
+        "FTPS",
+        "WebDAV",
+        "SMB/CIFS (SMB2/SMB3)",
+        "Telnet console (TCP and TLS)",
+        "Command-line client (freescp CLI) with --json output",
+        "SFTP-style interactive shell",
+        "Non-interactive scripting (FREESCP_PASSWORD, --accept-new)",
+        "File manager",
+        "SSH jump hosts",
+        "Cloudflare Tunnel (cloudflared) access via ProxyCommand",
+        "SOCKS5 and HTTP-CONNECT proxies",
+        "Site manager with SSH config import",
+        "Automatic route selection (fastest path, LAN preferred, failover)",
+        "Keychain-backed secret storage",
+        "Transfer queue with integrity verification"
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is FreeSCP really free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. FreeSCP is completely free and open source under the MIT license. There is no paid tier, no feature lock, no ads and no donation prompt."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is FreeSCP an alternative to WinSCP?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. FreeSCP is a free, open-source alternative to WinSCP that also runs on macOS and Linux. It supports SFTP, SCP, FTP, FTPS, WebDAV and SMB, SSH jump hosts, Cloudflare Tunnel (cloudflared) access via ProxyCommand, an embedded Telnet console and a scriptable CLI with JSON output, all under the MIT license."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does FreeSCP have a command-line interface?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Every release ships a freescp CLI built on the same core, supporting ls, get, put, mkdir, mv, rm, stat (--json), chmod, chown, exists, an interactive SFTP-style shell and a Telnet console. Non-interactive runs are supported with the FREESCP_PASSWORD environment variable and --accept-new, which makes it easy to script or to drive from an AI agent."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is FreeSCP safe to use?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "FreeSCP is open source under the MIT license with a pure-Rust core. SSH host keys are verified against ~/.ssh/known_hosts (unknown hosts fail closed in non-interactive runs unless --accept-new is given) and passwords can be stored in the operating system keychain instead of plain config files."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which platforms does FreeSCP support?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Windows (x86_64 and arm64), macOS (x86_64 and arm64) and Linux (x86_64 and arm64). Prebuilt binaries are published on the GitHub Releases page; Linux AppImages require glibc 2.35 or newer."
+          }
+        }
+      ]
+    },
+    {
+      "@type": "Organization",
+      "@id": "https://freescp.org/#nocis",
+      "name": "NOXCIS",
+      "url": "https://github.com/NOXCIS",
+      "sameAs": ["https://gitlab.com/Noxcis"]
+    },
+    {
+      "@type": "WebSite",
+      "name": "FreeSCP",
+      "url": "https://freescp.org/",
+      "publisher": { "@id": "https://freescp.org/#nocis" }
+    }
   ]
 }
 </script>
@@ -146,8 +225,11 @@
 <div class="nav">
   <a href="#about">About</a> &#183;
   <a href="#features">Features</a> &#183;
+  <a href="#cli">Command Line</a> &#183;
+  <a href="#compare">Compare</a> &#183;
   <a href="#download">Download</a> &#183;
   <a href="#source">Source Code</a> &#183;
+  <a href="#faq">FAQ</a> &#183;
   <a href="#license">License</a> &#183;
   <a href="#issues">Report an Issue</a>
 </div>
@@ -157,7 +239,12 @@
 SFTP/SCP/FTP/FTPS/WebDAV/SMB client for Windows, macOS and Linux, with a
 pure-Rust core (russh, russh-sftp, suppaftp, reqwest, smb2) and a
 Slint-based desktop UI. It also includes an embedded Telnet console
-(plain TCP and TLS).</p>
+(plain TCP and TLS) and a scriptable
+<a href="#cli">command-line client</a> for automation and AI agents.</p>
+<p>Use FreeSCP as a <strong>free, cross-platform alternative to WinSCP,
+FileZilla and Cyberduck</strong>: it is MIT-licensed open source with no
+paid tier, runs on all three desktop platforms, and speaks SMB and WebDAV
+in addition to SFTP, SCP, FTP and FTPS.</p>
 
 <h2 id="features">Features</h2>
 <ul>
@@ -200,6 +287,9 @@ Slint-based desktop UI. It also includes an embedded Telnet console
       <li>SSH config import</li>
       <li>Connection history</li>
       <li>Keychain-backed secret storage</li>
+      <li>Automatic route selection: save LAN and remote (e.g. Cloudflare
+        Tunnel) routes on one site; FreeSCP probes them, picks the fastest
+        path (LAN preferred), and fails over automatically</li>
     </ul>
   </li>
   <li>Localizations: English, Spanish, French, Portuguese</li>
@@ -213,10 +303,52 @@ the host's entry in <code>~/.ssh/config</code> and import it from the site
 manager: FreeSCP honors the proxy command when opening SFTP/SCP connections
 and terminal sessions, with no extra setup inside the app.</p>
 
+<h2 id="cli">Command line</h2>
+<p>Every release also ships a <code>freescp</code> CLI built on the same core, so
+file-transfer workflows can be scripted or driven by an AI agent. It supports
+the same protocols (<code>-p sftp|scp|ftp|ftps|webdav|smb</code>), honors
+<code>~/.ssh/config</code> (host aliases, ports, identity files,
+<code>ProxyJump</code>, <code>ProxyCommand</code>) and verifies SSH host keys
+against <code>~/.ssh/known_hosts</code>.</p>
+<pre>freescp ls    user@example.com:2222 /var/log
+freescp get   user@example.com:2222 /var/log/syslog ./syslog
+freescp put   user@example.com:2222 ./syslog /tmp/syslog
+freescp stat  user@example.com:2222 --json /etc/hosts
+freescp exists user@example.com:2222 /tmp/backup   # exit 0 when present
+freescp shell user@example.com:2222                # interactive SFTP-style shell
+freescp console switch.example.com --telnet-tls</pre>
+<p>Non-interactive use is first-class: passwords come from <code>--password</code>
+or the <code>FREESCP_PASSWORD</code> environment variable, <code>--accept-new</code>
+enables trust-on-first-use for unknown hosts, and commands such as
+<code>stat</code> and <code>exists</code> are designed for scripts and agents.
+Shell completions are generated with <code>freescp completions zsh</code>.</p>
+
+<h2 id="compare">Why FreeSCP instead of WinSCP, FileZilla or Cyberduck?</h2>
+<p>FreeSCP is a free, open-source alternative to the common free SCP/SFTP
+clients. The differences that matter:</p>
+<table class="plain">
+  <tr><th></th><th>FreeSCP</th><th>WinSCP</th><th>FileZilla</th><th>Cyberduck</th></tr>
+  <tr><td>License</td><td>MIT (open source)</td><td>Proprietary freeware</td><td>BSD (open source)</td><td>BSD (open source)</td></tr>
+  <tr><td>Windows / macOS / Linux</td><td>Yes / Yes / Yes</td><td>Yes / No / No</td><td>Yes / Yes / Yes</td><td>Yes / Yes / Yes</td></tr>
+  <tr><td>SMB/CIFS</td><td>Yes (SMB2/SMB3)</td><td>No</td><td>No</td><td>Yes</td></tr>
+  <tr><td>WebDAV</td><td>Yes</td><td>Yes</td><td>No</td><td>Yes</td></tr>
+  <tr><td>FTP / FTPS</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+  <tr><td>Telnet console</td><td>Yes (TCP and TLS)</td><td>No</td><td>No</td><td>No</td></tr>
+  <tr><td>Command line</td><td>Yes, with <code>--json</code> output</td><td>Yes (Windows only)</td><td>No</td><td>Yes (<code>duck</code>)</td></tr>
+  <tr><td>SSH jump hosts</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+  <tr><td>Paid tier or upsells</td><td>None</td><td>Optional WinSCP Pro; upsell dialog in the free version</td><td>Donation prompt</td><td>Paid cloud-storage add-ons</td></tr>
+</table>
+<p>In short: of the common free SCP clients, FreeSCP is the only one that is
+MIT-licensed, runs on Windows, macOS and Linux, speaks SMB and WebDAV in
+addition to SFTP/SCP/FTP/FTPS, embeds a Telnet console, and ships a CLI with
+JSON output — with no paid tier.</p>
+
 <h2 id="download">Download</h2>
-<p>Prebuilt binaries are available from the
+<p>Prebuilt binaries — the desktop app <em>and</em> the <code>freescp</code> CLI —
+are available from the
 <a href="https://github.com/NOXCIS/FreeSCP/releases" rel="noopener noreferrer">GitHub Releases</a>
-page.</p>
+page for Windows (x86_64, arm64), macOS (x86_64, arm64) and Linux
+(x86_64, arm64).</p>
 <p>...or build from source:</p>
 <pre>git clone https://github.com/NOXCIS/FreeSCP.git
 cd FreeSCP
@@ -242,6 +374,42 @@ cargo run -p freescp-app</pre>
   <li>GitLab: <a href="https://gitlab.com/Noxcis/FreeSCP" rel="noopener noreferrer">gitlab.com/Noxcis/FreeSCP</a></li>
 </ul>
 
+<h2 id="faq">Frequently asked questions</h2>
+
+<h3>Is FreeSCP really free?</h3>
+<p>Yes. FreeSCP is completely free and open source under the
+<a href="https://github.com/NOXCIS/FreeSCP/blob/main/LICENSE" rel="noopener noreferrer">MIT license</a>.
+There is no paid tier, no feature lock, no ads and no donation prompt.</p>
+
+<h3>Is FreeSCP an alternative to WinSCP?</h3>
+<p>Yes. FreeSCP is a free, open-source alternative to WinSCP that also runs on
+macOS and Linux. It supports the same everyday workflow — SFTP and SCP with
+SSH jump hosts and <code>~/.ssh/config</code> import — plus WebDAV, SMB, an
+embedded Telnet console and a scriptable CLI, all under the MIT license.</p>
+
+<h3>Does FreeSCP have a command-line interface?</h3>
+<p>Yes. The <code>freescp</code> CLI ships with every release and supports
+<code>ls</code>, <code>get</code>, <code>put</code>, <code>mkdir</code>,
+<code>mv</code>, <code>rm</code>, <code>stat</code> (with
+<code>--json</code>), <code>chmod</code>, <code>chown</code>,
+<code>exists</code>, an interactive SFTP-style shell and a Telnet console.
+Non-interactive runs are supported with <code>FREESCP_PASSWORD</code> and
+<code>--accept-new</code>, which makes it easy to script or to drive from an
+AI agent.</p>
+
+<h3>Is FreeSCP safe to use?</h3>
+<p>FreeSCP is open source (auditable code under the MIT license) with a
+pure-Rust core. SSH host keys are verified against
+<code>~/.ssh/known_hosts</code> — unknown hosts fail closed in non-interactive
+runs unless <code>--accept-new</code> is given — and passwords can be stored in
+the operating system keychain instead of plain config files.</p>
+
+<h3>Which platforms does FreeSCP support?</h3>
+<p>Windows (x86_64 and arm64), macOS (x86_64 and arm64) and Linux
+(x86_64 and arm64). Prebuilt binaries are published on the
+<a href="https://github.com/NOXCIS/FreeSCP/releases" rel="noopener noreferrer">GitHub Releases</a>
+page; Linux AppImages require glibc 2.35 or newer.</p>
+
 <h2 id="license">License</h2>
 <p>FreeSCP is Free Software released under the
 <a href="https://github.com/NOXCIS/FreeSCP/blob/main/LICENSE" rel="noopener noreferrer">MIT License</a>.
@@ -255,7 +423,7 @@ Third-party credits are listed in the repository's <code>docs/credits/</code> di
   <hr>
   <p>
     FreeSCP &#183; MIT License &#183; version 0.9.0<br>
-    Last updated: September 13, 2026 &#183;
+    Last updated: September 14, 2026 &#183;
     maintained by <a href="https://github.com/NOXCIS" rel="noopener noreferrer">NOXCIS</a>
   </p>
   <p>Best viewed with any browser.</p>

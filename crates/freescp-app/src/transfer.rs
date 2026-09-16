@@ -171,9 +171,9 @@ pub enum ConflictChoice {
     OverwriteAll,
     /// Skip every later conflict too (Qt "No to All").
     SkipAll,
-    /// Resume an interrupted download/upload; the resume flow is not wired
-    /// into the conflict prompt yet (it currently offers Skip/Overwrite).
-    #[allow(dead_code)]
+    /// Abort the rest of the transfer batch (distinct from Skip this file).
+    Cancel,
+    /// Resume an interrupted download/upload when the protocol supports it.
     Resume,
 }
 
@@ -204,6 +204,8 @@ pub struct ConflictInfo {
     pub source_info: String,
     pub dest_info: String,
     pub direction: TransferDirection,
+    /// When true, the overwrite dialog may offer Resume for this conflict.
+    pub supports_resume: bool,
 }
 
 /// Events pushed from the manager to subscribers (the queue dialog).
@@ -1464,6 +1466,7 @@ async fn run_one(
                                 source_info: src_info,
                                 dest_info: dst_info,
                                 direction,
+                                supports_resume: caps.supports_resume,
                             },
                         );
                         if should_cancel() {
@@ -1472,6 +1475,9 @@ async fn run_one(
                         match choice {
                             ConflictChoice::Skip | ConflictChoice::SkipAll => {
                                 return end_run(worker, base, Outcome::Done).await;
+                            }
+                            ConflictChoice::Cancel => {
+                                return end_run(worker, base, Outcome::Stopped).await;
                             }
                             ConflictChoice::Resume if caps.supports_resume => resume = true,
                             _ => {}
@@ -1509,6 +1515,7 @@ async fn run_one(
                         source_info: src_info,
                         dest_info: dst_info,
                         direction,
+                        supports_resume: caps.supports_resume,
                     },
                 );
                 if should_cancel() {
@@ -1517,6 +1524,9 @@ async fn run_one(
                 match choice {
                     ConflictChoice::Skip | ConflictChoice::SkipAll => {
                         return end_run(worker, base, Outcome::Done).await;
+                    }
+                    ConflictChoice::Cancel => {
+                        return end_run(worker, base, Outcome::Stopped).await;
                     }
                     ConflictChoice::Resume if caps.supports_resume => resume = true,
                     _ => {}
@@ -1766,7 +1776,23 @@ async fn run_remote_to_remote(run: RemoteToRemoteRun<'_>) -> (Outcome, ReturnedC
     // ---- Destination precheck (exists + overwrite policy, like an upload) --
     let dst_caps = dst_worker.capabilities();
     let skip_destination =
-        staged_conflict_choice(&mut *dst_worker, &dst_caps, source, dest, &conflict_hook).await;
+        match staged_conflict_choice(&mut *dst_worker, &dst_caps, source, dest, &conflict_hook)
+            .await
+        {
+            Ok(skip) => skip,
+            Err(()) => {
+                return finish(
+                    Outcome::Stopped,
+                    src_worker,
+                    src_base,
+                    dst_worker,
+                    dst_base,
+                    staged_path,
+                    staging_dir,
+                )
+                .await;
+            }
+        };
     if should_cancel() {
         return finish(
             Outcome::Stopped,
@@ -1888,9 +1914,9 @@ async fn staged_conflict_choice(
     source: &str,
     dest: &str,
     conflict_hook: &Option<Arc<dyn Fn(ConflictInfo) -> ConflictChoice + Send + Sync>>,
-) -> bool {
+) -> Result<bool, ()> {
     if !caps.supports_metadata {
-        return false;
+        return Ok(false);
     }
     match dst.exists(dest).await {
         Ok(Some(_)) => {
@@ -1907,14 +1933,19 @@ async fn staged_conflict_choice(
                     source_info: src_info,
                     dest_info: dst_info,
                     direction: TransferDirection::RemoteToRemote,
+                    supports_resume: caps.supports_resume,
                 },
             );
-            matches!(choice, ConflictChoice::Skip | ConflictChoice::SkipAll)
+            match choice {
+                ConflictChoice::Skip | ConflictChoice::SkipAll => Ok(true),
+                ConflictChoice::Cancel => Err(()),
+                _ => Ok(false),
+            }
         }
-        Ok(None) => false,
+        Ok(None) => Ok(false),
         Err(err) => {
             tracing::debug!("remote-to-remote destination precheck failed: {err}");
-            false
+            Ok(false)
         }
     }
 }
@@ -2731,13 +2762,19 @@ fn clamp_i32(v: u64) -> i32 {
     v.min(i32::MAX as u64) as i32
 }
 
-/// Port of the C++ queue `formatBytes` (its own units/precision, distinct
-/// from the file-pane formatting in `local_fs`).
+/// Port of the C++ queue `formatBytes`, using IEC labels to match the panes
+/// (1024-based). Precision: one decimal when value < 10 and unit is not bytes.
 fn format_bytes(v: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut value = v as f64;
     let mut unit = 0usize;
     while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    let precision = if value < 10.0 && unit > 0 { 1 } else { 0 };
+    let factor = 10f64.powi(precision);
+    while unit < UNITS.len() - 1 && (value * factor).round() / factor >= 1024.0 {
         value /= 1024.0;
         unit += 1;
     }
@@ -2854,7 +2891,7 @@ fn prompt_limit_selected(mgr: Arc<TransferManager>) {
         return;
     };
     dlg.set_title_text(crate::connect::translate_alert_text("Limit for task(s)").into());
-    dlg.set_prompt(crate::connect::translate_alert_text("KB/s (0 = no limit)").into());
+    dlg.set_prompt(crate::connect::translate_alert_text("KiB/s (0 = no limit)").into());
     dlg.set_answer("0".into());
     dlg.set_mask_input(false); // numeric input, like QInputDialog::getInt
     let weak = dlg.as_weak();
@@ -3039,7 +3076,7 @@ fn build_status_line(tasks: &[TransferTask], paused: bool, global_kbps: i64) -> 
         format!("Canceled: {cancelled}"),
     ];
     parts.push(if global_kbps > 0 {
-        format!("Global limit: {global_kbps} KB/s")
+        format!("Global limit: {global_kbps} KiB/s")
     } else {
         "Global limit: off".to_string()
     });
@@ -3142,7 +3179,7 @@ mod tests {
     fn speed_and_eta_formatting_matches_cpp() {
         assert_eq!(format_speed(0.0), "—");
         assert_eq!(format_speed(-1.0), "—");
-        assert_eq!(format_speed(2048.0), "2.0 KB/s");
+        assert_eq!(format_speed(2048.0), "2.0 KiB/s");
         assert_eq!(format_eta(0.0, false), "—");
         assert_eq!(format_eta(0.0, true), "0s");
         assert_eq!(format_eta(42.0, false), "42s");

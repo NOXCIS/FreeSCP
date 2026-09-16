@@ -11,6 +11,26 @@
 
 import { Button, LineEdit } from "std-widgets.slint";
 
+// Shared dark-chrome tokens. Importing files can reference `Theme.*` instead
+// of copying hex literals; migrate hotspots first (selection, chrome, text).
+export global Theme {
+    out property <color> bg-chrome: #26262a;
+    out property <color> bg-panel: #2d2d32;
+    out property <color> bg-header: #313136;
+    out property <color> bg-stripe: #2c2c31;
+    out property <color> bg-input: #202024;
+    out property <color> border: #3c3c42;
+    out property <color> text: #e6e6e9;
+    out property <color> text-dim: #9a9aa2;
+    out property <color> text-faint: #6f6f77;
+    out property <color> accent: #4a90d9;
+    out property <color> selection: #33506e;
+    out property <color> danger: #e05858;
+    out property <color> success: #5cb85c;
+    out property <color> warning: #e0a858;
+    out property <color> hover: #3a3a44;
+}
+
 // Icon-only toolbar button (26px wide; stretches vertically inside toolbars).
 export component ToolIcon inherits TouchArea {
     in property <image> source;
@@ -29,24 +49,28 @@ export component ToolIcon inherits TouchArea {
         height: 15px;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        opacity: root.enabled ? 1.0 : 0.35;
+        // Keep shape readable when disabled — very low opacity turns light
+        // filled glyphs into solid grey rectangles on dark chrome.
+        opacity: root.enabled ? 1.0 : 0.6;
     }
     Tooltip { text: @markdown("\{root.tooltip}"); }
 }
 
 // Toolbar button with icon and text. Width sizes to the label; min-width
 // keeps the layout from squeezing labels when the toolbar is crowded.
+// Optional `badge` (>0) draws a count pill for active transfers etc.
 export component ToolTextButton inherits TouchArea {
     in property <image> source;
     in property <string> text;
     in property <string> tooltip: "";
+    in property <int> badge: 0;
     mouse-cursor: MouseCursor.pointer;
-    property <length> content-w: 7px + 15px + 5px + label.preferred-width + 10px;
+    property <length> content-w: 7px + 15px + 5px + label.preferred-width + 10px + (root.badge > 0 ? 18px : 0px);
     width: root.content-w;
     Rectangle {
         width: parent.width;
         height: parent.height;
-        background: root.has-hover ? (root.enabled ? #3a3a44 : #00000000) : #00000000;
+        background: root.has-hover ? (root.enabled ? Theme.hover : #00000000) : #00000000;
         border-radius: 4px;
     }
     Image {
@@ -55,7 +79,7 @@ export component ToolTextButton inherits TouchArea {
         height: 15px;
         x: 7px;
         y: (parent.height - self.height) / 2;
-        opacity: root.enabled ? 1.0 : 0.35;
+        opacity: root.enabled ? 1.0 : 0.6;
     }
     label := Text {
         text: root.text;
@@ -63,8 +87,26 @@ export component ToolTextButton inherits TouchArea {
         y: 0px;
         height: parent.height;
         vertical-alignment: center;
-        color: root.enabled ? #e6e6e9 : #6f6f77;
+        color: root.enabled ? Theme.text : Theme.text-faint;
         font-size: 12px;
+    }
+    if root.badge > 0 : Rectangle {
+        x: parent.width - 16px;
+        y: 2px;
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        background: Theme.accent;
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.badge > 9 ? "9+" : root.badge;
+            color: Theme.text;
+            font-size: 9px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
     Tooltip { text: @markdown("\{root.tooltip}"); }
 }
@@ -206,7 +248,8 @@ export component ColumnHandle inherits TouchArea {
         x: (parent.width - self.width) / 2;
         width: root.pressed || root.has-hover ? 2px : 1px;
         height: parent.height;
-        background: root.pressed ? #4a90d9 : (root.has-hover ? #9a9aa2 : #00000000);
+        // Always visible (dim) so column boundaries are obvious without hover.
+        background: root.pressed ? #4a90d9 : (root.has-hover ? #d0d0d6 : #9a9aa2);
     }
     pointer-event(event) => {
         if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
@@ -215,7 +258,7 @@ export component ColumnHandle inherits TouchArea {
     }
     moved => {
         if (self.pressed) {
-            root.width-value = clamp(root.width-value - (self.mouse-x - root.anchor-x), 32px, root.width-max);
+            root.width-value = clamp(root.width-value - (self.mouse-x - root.anchor-x), 48px, root.width-max);
         }
     }
 }

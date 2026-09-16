@@ -76,6 +76,9 @@ export component ConsoleView inherits Rectangle {
     in-out property <int> sel-end-row: -1;
     in-out property <int> sel-end-col: -1;
 
+    // Font size (Ctrl+= / Ctrl+- while focused); clamps stay readable.
+    in-out property <length> font-size: 13px;
+
     callback key-text(string, bool, bool, bool);
     callback special-key(int);
     callback paste-requested();
@@ -85,6 +88,13 @@ export component ConsoleView inherits Rectangle {
     // Fired on a timer while connected so a window resize reaches the grid
     // polling in main.rs without waiting for the next byte or keystroke.
     callback grid-changed();
+    // Raised when the user clicks the grid so the main window can mark the
+    // console pane as focused (and stop routing file-pane KeyBindings).
+    callback focus-requested();
+
+    // True while this console owns keyboard focus (file-pane shortcuts should
+    // stay gated while this is set in console mode).
+    out property <bool> has-focus: console-scope.has-focus;
 
     // Must match DEFAULT_FG/DEFAULT_BG in src/console.rs: console.rs drops
     // blank runs only when their effective background equals this value.
@@ -126,7 +136,7 @@ export component ConsoleView inherits Rectangle {
         y: 0px;
         text: "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
         font-family: "monospace";
-        font-size: 13px;
+        font-size: root.font-size;
         visible: false;
     }
 
@@ -190,14 +200,31 @@ export component ConsoleView inherits Rectangle {
         height: parent.height;
 
         key-pressed(event) => {
-            // Copy/paste first: they must win over Ctrl+C/V reaching the server.
+            // Copy first (works while disconnected for reading the buffer).
             if ((event.modifiers.control || event.modifiers.meta) && event.modifiers.shift && (event.text == "c" || event.text == "C")) {
                 root.copy-requested();
                 return accept;
             }
-            if (((event.modifiers.control || event.modifiers.meta) && event.modifiers.shift && (event.text == "v" || event.text == "V"))
-                || (event.modifiers.meta && !event.modifiers.control && !event.modifiers.shift && (event.text == "v" || event.text == "V"))) {
+            // Paste only while connected — matches the toolbar Paste gate.
+            if (root.connected && (((event.modifiers.control || event.modifiers.meta) && event.modifiers.shift && (event.text == "v" || event.text == "V"))
+                || (event.modifiers.meta && !event.modifiers.control && !event.modifiers.shift && (event.text == "v" || event.text == "V")))) {
                 root.paste-requested();
+                return accept;
+            }
+            // Font zoom (local only; does not go to the server).
+            if ((event.modifiers.control || event.modifiers.meta) && !event.modifiers.alt
+                && (event.text == "=" || event.text == "+")) {
+                root.font-size = min(24px, root.font-size + 1px);
+                return accept;
+            }
+            if ((event.modifiers.control || event.modifiers.meta) && !event.modifiers.alt
+                && (event.text == "-")) {
+                root.font-size = max(10px, root.font-size - 1px);
+                return accept;
+            }
+            if ((event.modifiers.control || event.modifiers.meta) && !event.modifiers.alt
+                && (event.text == "0")) {
+                root.font-size = 13px;
                 return accept;
             }
             // Nothing else goes to a server we are no longer talking to.
@@ -244,10 +271,20 @@ export component ConsoleView inherits Rectangle {
                 return accept;
             }
             if (event.text == Key.PageUp) {
+                // Shift+PageUp scrolls local scrollback; bare PageUp goes to
+                // the server (CSI).
+                if (event.modifiers.shift) {
+                    root.scroll-lines(-root.grid-rows);
+                    return accept;
+                }
                 root.special-key(9);
                 return accept;
             }
             if (event.text == Key.PageDown) {
+                if (event.modifiers.shift) {
+                    root.scroll-lines(root.grid-rows);
+                    return accept;
+                }
                 root.special-key(10);
                 return accept;
             }
@@ -358,10 +395,10 @@ export component ConsoleView inherits Rectangle {
                         text: run.text;
                         color: run.inverse ? run.bg : run.fg;
                         font-family: "monospace";
-                        font-size: 13px;
+                        font-size: root.font-size;
                         font-weight: run.bold ? 700 : 400;
                         font-italic: run.italic;
-                        opacity: run.dim ? 0.72 : 1.0;
+                        opacity: run.dim ? 0.85 : 1.0;
                         vertical-alignment: center;
                     }
                 }
@@ -388,6 +425,7 @@ export component ConsoleView inherits Rectangle {
                         if (event.button != PointerEventButton.left) {
                             return;
                         }
+                        root.focus-requested();
                         root.focus-console();
                         root.dragging = true;
                         root.drag-anchor-row = root.cell-row(self.mouse-y);

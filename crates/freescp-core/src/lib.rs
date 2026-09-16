@@ -8,6 +8,9 @@
 //! - integrity.rs      : transfer integrity hashing (Agent: sftp-helper)
 //! - proxy.rs          : SOCKS5 / HTTP-CONNECT tunnels (Agent: proxy-jumphost)
 //! - jumphost.rs       : SSH bastion direct-tcpip tunnel (Agent: proxy-jumphost)
+//! - route.rs          : alternate-route model + first-hop probing (Agent: core-api)
+//! - ssh_transport.rs  : shared SSH transport + auth (sftp/scp backends, shell)
+//! - shell.rs          : SSH PTY shell sessions (embedded terminal workspace)
 //! - telnet/           : interactive console transport (codec + session + TLS)
 //! - backends/         : mock, sftp, scp, ftp, webdav, smb implementations
 
@@ -17,7 +20,10 @@ pub mod integrity;
 pub mod jumphost;
 pub mod known_hosts;
 pub mod proxy;
+pub mod route;
+pub mod shell;
 pub mod ssh_config;
+pub mod ssh_transport;
 pub mod telnet;
 pub mod types;
 
@@ -31,4 +37,5 @@ pub mod backends {
 }
 
 pub use client::{ClientError, SftpClient};
+pub use route::*;
 pub use types::*;

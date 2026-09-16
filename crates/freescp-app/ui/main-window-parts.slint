@@ -27,6 +27,10 @@ export struct FileEntry {
     name: string,
     is-dir: bool,
     size: int,
+    // Preformatted size for the Size column (Rust `u64` → IEC text). Prefer
+    // this over `format-size(size)` so files ≥2 GiB are not clamped by Slint
+    // `i32` before display.
+    size-text: string,
     // `true` when the size is known (remote listings may omit it; local
     // entries always have one). C++ shows "—" for unknown remote sizes.
     has-size: bool,
@@ -45,6 +49,8 @@ export component MainMenuBar inherits Rectangle {
     in property <bool> is-macos: false;
     in property <bool> remote-connected: false;
     in property <bool> connect-in-progress: false;
+    in property <string> queue-shortcut: "F12";
+    in property <string> history-shortcut: "Ctrl+Shift+H";
 
     callback connect-requested();
     callback disconnect-requested();
@@ -57,6 +63,9 @@ export component MainMenuBar inherits Rectangle {
     callback choose-right-dir();
     callback quit-requested();
     callback report-bug-requested();
+    callback show-start-page();
+    callback new-terminal-session();
+    callback show-shortcuts();
 
     height: 27px;
     background: #26262a;
@@ -139,12 +148,21 @@ export component MainMenuBar inherits Rectangle {
                             clicked => { file-menu-popup.close(); show-sites(); }
                         }
                         MenuRow {
-                            text: @tr("Transfers");
+                            text: @tr("Transfers") + "  (" + root.queue-shortcut + ")";
                             clicked => { file-menu-popup.close(); show-queue(); }
                         }
                         MenuRow {
-                            text: @tr("History");
+                            text: @tr("History") + "  (" + root.history-shortcut + ")";
                             clicked => { file-menu-popup.close(); show-history(); }
+                        }
+                        Rectangle { height: 1px; background: #3c3c42; }
+                        MenuRow {
+                            text: @tr("Start Page…");
+                            clicked => { file-menu-popup.close(); show-start-page(); }
+                        }
+                        MenuRow {
+                            text: @tr("New terminal session…");
+                            clicked => { file-menu-popup.close(); new-terminal-session(); }
                         }
                         if !root.is-macos : Rectangle { height: 1px; background: #3c3c42; }
                         if !root.is-macos : MenuRow {
@@ -176,6 +194,10 @@ export component MainMenuBar inherits Rectangle {
                     help-menu-layout := VerticalLayout {
                         padding: 4px;
                         MenuRow {
+                            text: @tr("Keyboard shortcuts");
+                            clicked => { help-menu-popup.close(); show-shortcuts(); }
+                        }
+                        MenuRow {
                             text: @tr("About FreeSCP");
                             clicked => { help-menu-popup.close(); show-about(); }
                         }
@@ -197,19 +219,28 @@ export component MainMenuBar inherits Rectangle {
 export component MainToolbar inherits Rectangle {
     in property <bool> remote-connected: false;
     in property <bool> connect-in-progress: false;
+    // Which pane owns keyboard focus (0 = left, 1 = right). Copy/Move
+    // dispatch to the other panel from the focused side, matching F5/F6.
+    in property <int> focused-pane: 0;
+    in property <string> queue-shortcut: "F12";
+    in property <int> active-transfers: 0;
+    in property <string> history-shortcut: "Ctrl+Shift+H";
 
     callback connect-requested();
     callback disconnect-requested();
     callback upload-requested();
     callback download-requested();
     callback copy-left-to-right();
+    callback copy-right-to-left();
     callback move-left-to-right();
+    callback move-right-to-left();
     callback show-sites();
     callback show-history();
     callback open-terminal-right();
     callback show-queue();
     callback show-settings();
     callback show-about();
+    callback show-start-page();
 
     height: 38px;
     background: #313136;
@@ -234,10 +265,17 @@ export component MainToolbar inherits Rectangle {
             source: @image-url("../../../assets/icons/action-disconnect.svg");
             clicked => { disconnect-requested(); }
         }
+        ToolTextButton {
+            text: @tr("Start Page");
+            tooltip: @tr("Choose a workspace and open a site or connection");
+            source: @image-url("../../../assets/icons/action-new-tab.svg");
+            clicked => { show-start-page(); }
+        }
         Rectangle { width: 1px; background: #3c3c42; }
         ToolTextButton {
             text: @tr("Upload");
             tooltip: @tr("Upload (F8)");
+            enabled: root.remote-connected;
             source: @image-url("../../../assets/icons/action-upload.svg");
             clicked => { upload-requested(); }
         }
@@ -250,15 +288,21 @@ export component MainToolbar inherits Rectangle {
         }
         ToolTextButton {
             text: @tr("Copy F5");
-            tooltip: @tr("Copy to the other panel (F5)");
+            tooltip: @tr("Copy selection to the other panel (F5)");
             source: @image-url("../../../assets/icons/action-copy.svg");
-            clicked => { copy-left-to-right(); }
+            clicked => {
+                if (root.focused-pane == 0) { copy-left-to-right(); }
+                else { copy-right-to-left(); }
+            }
         }
         ToolTextButton {
             text: @tr("Move F6");
-            tooltip: @tr("Move to the other panel (F6)");
+            tooltip: @tr("Move selection to the other panel (F6)");
             source: @image-url("../../../assets/icons/action-move-to-right.svg");
-            clicked => { move-left-to-right(); }
+            clicked => {
+                if (root.focused-pane == 0) { move-left-to-right(); }
+                else { move-right-to-left(); }
+            }
         }
         Rectangle { width: 1px; background: #3c3c42; }
         ToolTextButton {
@@ -269,7 +313,7 @@ export component MainToolbar inherits Rectangle {
         }
         ToolTextButton {
             text: @tr("History");
-            tooltip: @tr("Connection history");
+            tooltip: @tr("Connection history ({})", root.history-shortcut);
             source: @image-url("../../../assets/icons/action-open-history.svg");
             clicked => { show-history(); }
         }
@@ -281,7 +325,8 @@ export component MainToolbar inherits Rectangle {
         }
         ToolTextButton {
             text: @tr("Transfers");
-            tooltip: @tr("Transfer queue (F12)");
+            tooltip: @tr("Transfer queue ({})", root.queue-shortcut);
+            badge: root.active-transfers;
             source: @image-url("../../../assets/icons/action-open-transfer-queue.svg");
             clicked => { show-queue(); }
         }
@@ -349,10 +394,10 @@ export component PathBar inherits HorizontalLayout {
         height: 26px;
         horizontal-stretch: 1;
         background: #202024;
-        border-color: #3c3c42;
+        border-color: path-input.has-focus ? #4a90d9 : #3c3c42;
         border-width: 1px;
         border-radius: 4px;
-        TextInput {
+        path-input := TextInput {
             x: 8px;
             y: 0px;
             width: parent.width - 16px - 40px;
@@ -365,39 +410,41 @@ export component PathBar inherits HorizontalLayout {
             accepted => { root.path-entered(self.text); }
         }
         // Qt `setClearButtonEnabled(true)` on the path edit.
-        Text {
+        // Use an SVG — the ✕ glyph often tofu-boxes with Slint's default font.
+        if root.path != "" : clear-btn := TouchArea {
             x: parent.width - 40px;
             y: 0px;
-            width: 18px;
+            width: 22px;
             height: parent.height;
-            text: "✕";
-            visible: root.path != "";
-            vertical-alignment: center;
-            horizontal-alignment: center;
-            color: clear-hover.has-hover ? #e6e6e9 : #9a9aa2;
-            font-size: 11px;
-            clear-hover := TouchArea {
-                mouse-cursor: MouseCursor.pointer;
-                clicked => { root.path = ""; }
+            mouse-cursor: MouseCursor.pointer;
+            Image {
+                width: 10px;
+                height: 10px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                source: @image-url("../../../assets/icons/action-clear.svg");
+                opacity: clear-btn.has-hover ? 1.0 : 0.7;
             }
+            clicked => { root.path = ""; }
         }
         // Recent-path dropdown (recent-path history).
-        Text {
+        recent-btn := TouchArea {
             x: parent.width - 22px;
             y: 0px;
-            width: 18px;
+            width: 22px;
             height: parent.height;
-            text: "▾";
-            vertical-alignment: center;
-            horizontal-alignment: center;
-            color: recent-hover.has-hover ? #e6e6e9 : #9a9aa2;
-            font-size: 11px;
-            recent-hover := TouchArea {
-                mouse-cursor: MouseCursor.pointer;
-                clicked => {
-                    root.recent-paths-requested();
-                    recent-popup.show();
-                }
+            mouse-cursor: MouseCursor.pointer;
+            Image {
+                width: 10px;
+                height: 10px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                source: @image-url("../../../assets/icons/action-chevron-down.svg");
+                opacity: recent-btn.has-hover ? 1.0 : 0.7;
+            }
+            clicked => {
+                root.recent-paths-requested();
+                recent-popup.show();
             }
         }
         recent-popup := PopupWindow {
@@ -411,6 +458,10 @@ export component PathBar inherits HorizontalLayout {
                 height: 100%;
                 recent-layout := VerticalLayout {
                     padding: 4px;
+                    if root.recent-paths.length == 0 : MenuRow {
+                        text: @tr("(no recent paths)");
+                        enabled: false;
+                    }
                     for path in root.recent-paths : MenuRow {
                         text: path;
                         clicked => {
@@ -428,6 +479,12 @@ export component PathBar inherits HorizontalLayout {
         source: @image-url("../../../assets/icons/action-open-folder.svg");
         clicked => { root.choose-dir-requested(); }
     }
+}
+
+// Horizontal inset inside each info-column cell (in addition to the
+// pane-level `col-gap` between columns).
+global FileColumns {
+    in-out property <length> pad: 6px;
 }
 
 // One sortable pane-header cell: label + direction glyph, click to sort,
@@ -459,12 +516,15 @@ export component PaneColumnHeader inherits TouchArea {
     }
     Text {
         text: root.sort-active ? root.label + (root.sort-ascending ? " ▲" : " ▼") : root.label;
-        x: 0px;
+        // Inset both edges so adjacent headers keep a visible gutter even
+        // when one is right-aligned and the next is left-aligned.
+        x: FileColumns.pad;
         y: 0px;
-        width: parent.width;
+        width: max(0px, parent.width - 2 * FileColumns.pad);
         height: parent.height;
         vertical-alignment: center;
         horizontal-alignment: root.label-right ? right : left;
+        overflow: elide;
         color: #9a9aa2;
         font-weight: 600;
         font-size: 12px;
@@ -510,8 +570,8 @@ export component FileRow inherits DragArea {
     callback row-activated(int);
     // Left press: (row, ctrl/cmd or shift held, ctrl/cmd held, shift held).
     callback row-pressed(int, bool, bool, bool);
-    // Right press: (row, row was already selected).
-    callback row-context-requested(int, bool);
+    // Right press: (row, row was already selected, mouse-x, mouse-y in the row).
+    callback row-context-requested(int, bool, length, length);
     callback drag-ended();
     callback row-dropped(int, bool);
 
@@ -533,7 +593,8 @@ export component FileRow inherits DragArea {
         Rectangle {
             width: parent.width;
             height: parent.height;
-            background: parent.is-selected ? #33506e : (root.stripe-even ? #2c2c31 : #2d2d32);
+            background: parent.is-selected ? #33506e
+                : (parent.has-hover ? #34343b : (root.stripe-even ? #2c2c31 : #2d2d32));
         }
         clicked => {
             root.pane-focus-requested(root.pane);
@@ -550,7 +611,7 @@ export component FileRow inherits DragArea {
                 // Qt right-click keeps an already selected row selected (so
                 // the context menu acts on the whole selection); otherwise it
                 // selects it.
-                root.row-context-requested(root.row-index, self.is-selected);
+                root.row-context-requested(root.row-index, self.is-selected, self.mouse-x, self.mouse-y);
             } else if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
                 // TouchArea.clicked carries no modifiers; capture them on press.
                 root.row-pressed(
@@ -562,19 +623,22 @@ export component FileRow inherits DragArea {
             }
         }
     }
-    Rectangle {
-        x: 9px;
+    Image {
+        x: 7px;
         y: (parent.height - self.height) / 2;
-        width: 12px;
-        height: 12px;
-        border-radius: 3px;
-        background: root.entry.is-dir ? #4a90d9 : #6b6b73;
+        width: 16px;
+        height: 16px;
+        source: root.entry.is-dir
+            ? @image-url("../../../assets/icons/action-open-folder.svg")
+            : @image-url("../../../assets/icons/mime-file.svg");
     }
     Text {
         text: root.entry.name;
         x: 27px;
         y: 0px;
-        width: root.name-w;
+        // Leave the same gutter before Size that info cells use between
+        // themselves, so a long name never runs into a right-aligned size.
+        width: max(0px, root.name-w - FileColumns.pad);
         height: parent.height;
         vertical-alignment: center;
         overflow: elide;
@@ -583,20 +647,21 @@ export component FileRow inherits DragArea {
     }
     if root.size-visible : Text {
         text: root.size-text;
-        x: root.size-x;
+        x: root.size-x + FileColumns.pad;
         y: 0px;
-        width: root.size-width;
+        width: max(0px, root.size-width - 2 * FileColumns.pad);
         height: parent.height;
         vertical-alignment: center;
         horizontal-alignment: right;
+        overflow: elide;
         color: #9a9aa2;
         font-size: 12px;
     }
     if root.type-visible : Text {
         text: root.type-text;
-        x: root.type-x;
+        x: root.type-x + FileColumns.pad;
         y: 0px;
-        width: root.type-width;
+        width: max(0px, root.type-width - 2 * FileColumns.pad);
         height: parent.height;
         vertical-alignment: center;
         overflow: elide;
@@ -605,9 +670,9 @@ export component FileRow inherits DragArea {
     }
     if root.mtime-visible : Text {
         text: root.mtime-text;
-        x: root.mtime-x;
+        x: root.mtime-x + FileColumns.pad;
         y: 0px;
-        width: root.mtime-width;
+        width: max(0px, root.mtime-width - 2 * FileColumns.pad);
         height: parent.height;
         vertical-alignment: center;
         overflow: elide;

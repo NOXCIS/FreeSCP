@@ -8,10 +8,13 @@
 //!
 //! * connection        -> `russh::client::connect_stream` over a plain TCP
 //!   stream, a `crate::proxy` tunnel, or a `crate::jumphost` bastion tunnel
-//! * host key check    -> [`handler::SftpHandler`] (`Handler::check_server_key`),
-//!   known_hosts parsing/saving delegated to `crate::known_hosts`
+//! * host key check    -> [`crate::ssh_transport::SshHandler`]
+//!   (`Handler::check_server_key`), known_hosts parsing/saving delegated to
+//!   `crate::known_hosts`
 //! * auth              -> `Handle::{authenticate_keyboard_interactive_*,
 //!   authenticate_password, authenticate_publickey, authenticate_publickey_with}`
+//!   (transport and auth live in [`crate::ssh_transport`], shared with the
+//!   terminal workspace)
 //! * SFTP              -> `russh_sftp::client::SftpSession` created from the
 //!   `sftp` subsystem channel stream
 //! * transfers         -> [`transfer`] (`get`/`put`), integrity via
@@ -39,36 +42,26 @@
 //! * `rename(overwrite=true)` deletes the destination first (file or empty
 //!   directory), then renames, as the C++ client did.
 
-mod handler;
 mod transfer;
 
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use async_trait::async_trait;
-use russh::client::{self, AuthResult, Handle, KeyboardInteractiveAuthResponse};
-use russh::keys::agent::client::AgentClient;
-use russh::keys::{load_secret_key, Algorithm, HashAlg, PrivateKeyWithHashAlg};
+use russh::client::Handle;
 use russh_sftp::client::SftpSession;
 use tracing::{debug, info};
 
 use crate::client::{CancelCb, ClientError, ProgressCb, SftpClient};
-use crate::jumphost::{JumpError, JumpTunnelOptions};
-use crate::types::{
-    FileInfo, KbdIntPromptResult, KnownHostsPolicy, ProxyType, SessionOptions,
-    TransferIntegrityPolicy,
-};
-
-use handler::SftpHandler;
+use crate::ssh_transport::SshHandler;
+use crate::types::{FileInfo, SessionOptions, TransferIntegrityPolicy};
 
 /// Live connection state: the SSH session handle and the multiplexed SFTP
 /// session. Both are plain data; the mutex in [`RusshSftpClient`] guards
 /// access, and operations temporarily move the whole struct out so no
 /// guard is held across `.await` points.
 struct SftpConnection {
-    handle: Handle<SftpHandler>,
+    handle: Handle<SshHandler>,
     sftp: SftpSession,
 }
 
@@ -121,53 +114,7 @@ impl RusshSftpClient {
 
     /// Build the SSH transport, authenticate, and start the SFTP session.
     async fn connect_inner(opt: &SessionOptions) -> Result<SftpConnection, ClientError> {
-        // C++: "Proxy and SSH jump host cannot be used together."
-        if opt.proxy_type != ProxyType::None && opt.jump_host.is_some() {
-            return Err(ClientError::Unsupported(
-                "Proxy and SSH jump host cannot be used together.".into(),
-            ));
-        }
-
-        let handler = SftpHandler::new(opt.clone());
-
-        let config = Arc::new(client::Config {
-            keepalive_interval: Some(Duration::from_secs(30)),
-            keepalive_max: 6,
-            ..Default::default()
-        });
-
-        let mut handle = match opt.jump_host.as_deref().filter(|h| !h.is_empty()) {
-            Some(jump_host) => {
-                let tunnel = crate::jumphost::open_jump_tunnel_with_options(
-                    jump_host,
-                    opt.jump_port,
-                    &opt.host,
-                    opt.port,
-                    &JumpTunnelOptions {
-                        username: opt.jump_username.as_deref(),
-                        private_key_path: opt.jump_private_key_path.as_deref().map(Path::new),
-                        private_key_passphrase: opt.private_key_passphrase.as_deref(),
-                        known_hosts_path: resolved_known_hosts_path(opt),
-                        accept_unknown_host_key: opt.known_hosts_policy != KnownHostsPolicy::Strict,
-                        ..JumpTunnelOptions::default()
-                    },
-                )
-                .await
-                .map_err(map_jump_error)?;
-                info!(jump_host, target = %opt.host, "connecting through SSH jump tunnel (ssh -W)");
-                client::connect_stream(config, tunnel, handler)
-                    .await
-                    .map_err(map_handler_error)?
-            }
-            None => {
-                let stream = open_tcp_stream(opt).await?;
-                client::connect_stream(config, stream, handler)
-                    .await
-                    .map_err(map_handler_error)?
-            }
-        };
-
-        authenticate(&mut handle, opt).await?;
+        let handle = crate::ssh_transport::connect_and_auth(opt).await?;
 
         let channel = handle
             .channel_open_session()
@@ -184,271 +131,6 @@ impl RusshSftpClient {
 
         Ok(SftpConnection { handle, sftp })
     }
-}
-
-/// TCP stream for the SSH transport: proxy tunnel or plain connect.
-async fn open_tcp_stream(opt: &SessionOptions) -> Result<tokio::net::TcpStream, ClientError> {
-    if opt.proxy_type != ProxyType::None {
-        if opt.proxy_host.is_empty() {
-            return Err(ClientError::Other("proxy host is required".into()));
-        }
-        debug!(?opt.proxy_type, proxy_host = %opt.proxy_host, proxy_port = opt.proxy_port,
-            target = %opt.host, target_port = opt.port, "connecting via proxy");
-        crate::proxy::connect_via_proxy(
-            opt.proxy_type,
-            &opt.proxy_host,
-            opt.proxy_port,
-            opt.proxy_username.as_deref(),
-            opt.proxy_password.as_deref(),
-            &opt.host,
-            opt.port,
-        )
-        .await
-        .map_err(ClientError::Io)
-    } else {
-        tokio::net::TcpStream::connect((opt.host.as_str(), opt.port))
-            .await
-            .map_err(ClientError::Io)
-    }
-}
-
-/// known_hosts path resolution shared with the handler (explicit path, else
-/// `~/.ssh/known_hosts`).
-fn resolved_known_hosts_path(opt: &SessionOptions) -> Option<std::path::PathBuf> {
-    match opt.known_hosts_path.as_deref() {
-        Some(p) if !p.is_empty() => Some(std::path::PathBuf::from(p)),
-        _ => crate::known_hosts::default_known_hosts_path(),
-    }
-}
-
-fn map_handler_error(e: handler::SftpHandlerError) -> ClientError {
-    match e {
-        handler::SftpHandlerError::HostKeyRejected(msg) => ClientError::HostKeyRejected(msg),
-        handler::SftpHandlerError::Russh(r) => ClientError::Other(r.to_string()),
-    }
-}
-
-fn map_jump_error(e: JumpError) -> ClientError {
-    match e {
-        JumpError::AuthFailed(msg) => ClientError::AuthFailed(msg),
-        JumpError::Io(io) => ClientError::Io(io),
-        JumpError::Other(msg) => {
-            let lower = msg.to_lowercase();
-            if lower.contains("host key") || lower.contains("hostkey") {
-                ClientError::HostKeyRejected(msg)
-            } else {
-                ClientError::Other(msg)
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Authentication (ports `authenticateSession` from the C++ client)
-// ---------------------------------------------------------------------------
-
-/// Try methods in the C++ order: keyboard-interactive, password, key file,
-/// then ssh-agent identities.
-async fn authenticate(
-    handle: &mut Handle<SftpHandler>,
-    opt: &SessionOptions,
-) -> Result<(), ClientError> {
-    let mut tried: Vec<&'static str> = Vec::new();
-
-    // 1. Keyboard-interactive (attempted when a callback exists, or when a
-    //    password is available for the heuristic fallback).
-    let can_kbd = opt.keyboard_interactive_cb.is_some() || opt.password.is_some();
-    if can_kbd {
-        match try_keyboard_interactive(handle, opt).await {
-            Ok(true) => {
-                info!(user = %opt.username, "authenticated via keyboard-interactive");
-                return Ok(());
-            }
-            Ok(false) => tried.push("keyboard-interactive"),
-            Err(e) => return Err(e), // Cancelled or transport failure
-        }
-    }
-
-    // 2. Password.
-    if let Some(password) = opt.password.as_deref() {
-        match handle
-            .authenticate_password(opt.username.clone(), password)
-            .await
-        {
-            Ok(AuthResult::Success) => {
-                info!(user = %opt.username, "authenticated via password");
-                return Ok(());
-            }
-            Ok(AuthResult::Failure { .. }) => tried.push("password"),
-            Err(e) => {
-                debug!(error = %e, "password auth transport error");
-                tried.push("password");
-            }
-        }
-    }
-
-    // 3. Explicit private key file.
-    if let Some(key_path) = opt.private_key_path.as_deref() {
-        match try_private_key(handle, opt, key_path).await {
-            Ok(true) => return Ok(()),
-            Ok(false) => tried.push("publickey"),
-            Err(e) => return Err(e), // unusable key file
-        }
-    }
-
-    // 4. ssh-agent identities (always consulted as a last resort; the C++
-    //    client did the same when agent support was compiled in).
-    match try_agent(handle, &opt.username).await {
-        Ok(true) => {
-            info!(user = %opt.username, "authenticated via ssh-agent");
-            return Ok(());
-        }
-        Ok(false) => tried.push("ssh-agent"),
-        Err(e) => {
-            debug!(error = %e, "ssh-agent auth failed");
-            tried.push("ssh-agent");
-        }
-    }
-
-    Err(ClientError::AuthFailed(format!(
-        "all authentication methods failed (tried: {})",
-        tried.join(", ")
-    )))
-}
-
-/// Keyboard-interactive loop. On `Unhandled` (or no callback) the C++
-/// heuristic fallback answers every prompt with the password; `Cancelled`
-/// aborts the whole connection attempt.
-async fn try_keyboard_interactive(
-    handle: &mut Handle<SftpHandler>,
-    opt: &SessionOptions,
-) -> Result<bool, ClientError> {
-    let mut state = handle
-        .authenticate_keyboard_interactive_start(opt.username.clone(), None::<String>)
-        .await
-        .map_err(|e| ClientError::Other(format!("keyboard-interactive failed: {e}")))?;
-
-    loop {
-        match state {
-            KeyboardInteractiveAuthResponse::Success => return Ok(true),
-            KeyboardInteractiveAuthResponse::Failure { .. } => return Ok(false),
-            KeyboardInteractiveAuthResponse::InfoRequest {
-                name,
-                instructions,
-                prompts,
-            } => {
-                let prompt_texts: Vec<String> = prompts.iter().map(|p| p.prompt.clone()).collect();
-                let mut responses: Vec<String> = Vec::new();
-                let result = match &opt.keyboard_interactive_cb {
-                    Some(cb) => cb(&name, &instructions, &prompt_texts, &mut responses),
-                    None => KbdIntPromptResult::Unhandled,
-                };
-                match result {
-                    KbdIntPromptResult::Cancelled => {
-                        return Err(ClientError::AuthFailed(
-                            "keyboard-interactive cancelled by user".into(),
-                        ));
-                    }
-                    KbdIntPromptResult::Unhandled => {
-                        let Some(password) = opt.password.clone() else {
-                            return Err(ClientError::AuthFailed(
-                                "keyboard-interactive prompts unhandled and no password for fallback"
-                                    .into(),
-                            ));
-                        };
-                        responses = prompt_texts.iter().map(|_| password.clone()).collect();
-                    }
-                    KbdIntPromptResult::Handled => {
-                        // Pad short answers with empty strings (the C++
-                        // client did the same for LIBSSH2_KBDINT_RESPONSE).
-                        responses.resize(prompts.len(), String::new());
-                    }
-                }
-                state = handle
-                    .authenticate_keyboard_interactive_respond(responses)
-                    .await
-                    .map_err(|e| ClientError::Other(format!("keyboard-interactive failed: {e}")))?;
-            }
-        }
-    }
-}
-
-/// Load `key_path` and attempt public-key authentication with it.
-async fn try_private_key(
-    handle: &mut Handle<SftpHandler>,
-    opt: &SessionOptions,
-    key_path: &str,
-) -> Result<bool, ClientError> {
-    let key = load_secret_key(key_path, opt.private_key_passphrase.as_deref()).map_err(|e| {
-        ClientError::AuthFailed(format!("failed to load private key {key_path}: {e}"))
-    })?;
-    // OpenSSH servers commonly reject SHA-1 `ssh-rsa` signatures; negotiate
-    // rsa-sha2 when the server advertises its signature algorithms (same
-    // fallback policy as crate::jumphost).
-    let hash_alg = if matches!(key.public_key().algorithm(), Algorithm::Rsa { .. }) {
-        let negotiated = handle.best_supported_rsa_hash().await.unwrap_or(None);
-        Some(negotiated.flatten().unwrap_or(HashAlg::Sha256))
-    } else {
-        None
-    };
-    let pair = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
-    match handle
-        .authenticate_publickey(opt.username.clone(), pair)
-        .await
-    {
-        Ok(AuthResult::Success) => {
-            info!(user = %opt.username, key = key_path, "authenticated via private key");
-            Ok(true)
-        }
-        Ok(AuthResult::Failure { .. }) => Ok(false),
-        Err(e) => {
-            debug!(error = %e, "publickey auth transport error");
-            Ok(false)
-        }
-    }
-}
-
-/// Try every identity offered by the ssh-agent.
-async fn try_agent(handle: &mut Handle<SftpHandler>, username: &str) -> Result<bool, ClientError> {
-    #[cfg(unix)]
-    let mut agent = match AgentClient::connect_env().await {
-        Ok(a) => a,
-        Err(e) => {
-            debug!("ssh-agent unavailable: {e}");
-            return Ok(false);
-        }
-    };
-    #[cfg(windows)]
-    let mut agent = match AgentClient::connect_pageant().await {
-        Ok(a) => a,
-        Err(e) => {
-            debug!("ssh-agent (Pageant) unavailable: {e}");
-            return Ok(false);
-        }
-    };
-
-    let identities = match agent.request_identities().await {
-        Ok(v) => v,
-        Err(e) => {
-            debug!("ssh-agent request_identities failed: {e}");
-            return Ok(false);
-        }
-    };
-    for identity in identities {
-        let key = identity.public_key().into_owned();
-        match handle
-            .authenticate_publickey_with(username.to_string(), key, None, &mut agent)
-            .await
-        {
-            Ok(AuthResult::Success) => return Ok(true),
-            Ok(AuthResult::Failure { .. }) => continue,
-            Err(e) => {
-                debug!(error = %e, "ssh-agent identity rejected");
-                continue;
-            }
-        }
-    }
-    Ok(false)
 }
 
 // ---------------------------------------------------------------------------

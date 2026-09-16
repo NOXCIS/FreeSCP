@@ -133,24 +133,7 @@ export component ConnectionDialog inherits Window {
                     width: parent.width;
                     padding: 2px;
 
-                    Text { text: "Site name:"; vertical-alignment: center; visible: root.save-site; }
-                    LineEdit {
-                        text <=> root.site-name;
-                        placeholder-text: "My server";
-                        width: 340px;
-                        visible: root.save-site;
-                    }
-                    Text { text: ""; }
-                    CheckBox {
-                        text: "Save to saved sites";
-                        checked <=> root.save-site;
-                    }
-                    Text { text: ""; }
-                    CheckBox {
-                        text: "Save passwords/passphrases";
-                        checked <=> root.save-credentials;
-                        enabled: root.save-site;
-                    }
+                    // Lead with connection identity; Save options sit below auth.
                     Text { text: "Protocol:"; vertical-alignment: center; }
                     ComboBox {
                         model: ["SFTP", "SCP", "FTP", "FTPS", "WebDAV", "SMB", "Telnet"];
@@ -220,6 +203,24 @@ export component ConnectionDialog inherits Window {
                         current-index <=> root.scp-mode;
                         width: 340px;
                         visible: root.protocol == 1;
+                    }
+                    Text { text: ""; }
+                    CheckBox {
+                        text: "Save to saved sites";
+                        checked <=> root.save-site;
+                    }
+                    Text { text: "Site name:"; vertical-alignment: center; visible: root.save-site; }
+                    LineEdit {
+                        text <=> root.site-name;
+                        placeholder-text: "My server";
+                        width: 340px;
+                        visible: root.save-site;
+                    }
+                    Text { text: ""; }
+                    CheckBox {
+                        text: "Save passwords/passphrases";
+                        checked <=> root.save-credentials;
+                        enabled: root.save-site;
                     }
                 }
 

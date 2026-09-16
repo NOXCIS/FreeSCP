@@ -10,7 +10,7 @@ use dialoguer::{Confirm, Input, Password};
 
 use freescp_core::{
     capabilities_for_protocol, default_port_for_protocol, default_port_for_proxy_type,
-    default_port_for_telnet, protocol_display_name, ssh_config, HostKeyConfirmCb,
+    default_port_for_telnet, protocol_display_name, ssh_config, HostKeyConfirmCb, HostKeyDecision,
     KbdIntPromptResult, KbdIntPromptsCb, KnownHostsPolicy, Protocol, ProxyType, SessionOptions,
 };
 
@@ -237,7 +237,7 @@ fn attach_callbacks(options: &mut SessionOptions, conn: &ConnectionArgs) {
 
 fn hostkey_confirm_callback(auto_accept: bool) -> HostKeyConfirmCb {
     Arc::new(
-        move |host: &str, port: u16, algorithm: &str, fingerprint: &str, can_save: bool| -> bool {
+        move |host: &str, port: u16, algorithm: &str, fingerprint: &str, can_save: bool| {
             if auto_accept {
                 let note = if can_save {
                     "saved to known_hosts"
@@ -248,7 +248,11 @@ fn hostkey_confirm_callback(auto_accept: bool) -> HostKeyConfirmCb {
                     "freescp: trust on first use: accepting host key for {host}:{port} \
                      ({algorithm} {fingerprint}); {note}"
                 );
-                return true;
+                return if can_save {
+                    HostKeyDecision::AcceptAndSave
+                } else {
+                    HostKeyDecision::AcceptOnce
+                };
             }
             let save_note = if can_save {
                 String::new()
@@ -260,11 +264,20 @@ fn hostkey_confirm_callback(auto_accept: bool) -> HostKeyConfirmCb {
                  {algorithm} key fingerprint is {fingerprint}.\n\
                  {save_note}Continue connecting?"
             );
-            Confirm::with_theme(&ColorfulTheme::default())
+            if Confirm::with_theme(&ColorfulTheme::default())
                 .with_prompt(prompt)
                 .default(false)
                 .interact()
                 .unwrap_or(false)
+            {
+                if can_save {
+                    HostKeyDecision::AcceptAndSave
+                } else {
+                    HostKeyDecision::AcceptOnce
+                }
+            } else {
+                HostKeyDecision::Reject
+            }
         },
     )
 }

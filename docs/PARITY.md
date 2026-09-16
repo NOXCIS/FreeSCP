@@ -39,7 +39,7 @@ workstreams land modules incrementally, so rows are updated as they land):
 | Transfer resume (upload + download) | `Libssh2SftpClient.cpp` resume paths | `client.rs` trait (resume params) + sftp backend (`sftp/transfer.rs`) | done |
 | Transfer manager + queue dialog (parallel workers, pause/cancel/retry, progress, filters) | `ui/TransferManager.cpp`, `ui/TransferQueueDialog.cpp` | `crates/freescp-app/src/transfer.rs`, `ui/transfer-queue.slint` | done |
 | Drag-and-drop copy/move between panes | `ui/DragAwareTreeView.cpp`, `ui/DnDTypes.hpp` | `ui/main-window.slint` (`DragArea`/`DropArea`) + `src/main.rs` (`handle_pane_drop`) | done |
-| Two-pane main window, breadcrumbs, toolbar, local panel | `ui/MainWindow.cpp`, `ui/MainWindowLocalOps.cpp` | `ui/main-window.slint`, `src/local_fs.rs` | done |
+| Two-pane main window, path bar, toolbar, local panel | `ui/MainWindow.cpp`, `ui/MainWindowLocalOps.cpp` | `ui/main-window.slint`, `src/local_fs.rs` | done |
 | Remote panel ops (navigate, refresh, new/rename/delete, permissions) | `ui/MainWindowRemoteOps.cpp`, `ui/RemoteModel.cpp`, `ui/PermissionsDialog.cpp` | `src/remote.rs`, `ui/permissions.slint` | done |
 | Connection dialog (all protocols, auth fields, proxy/jump/FTPS controls) | `ui/ConnectionDialog.cpp` | `ui/connection-dialog.slint`, `src/connect.rs` | done |
 | Site manager + stable UUID sites + duplicate blocking | `ui/SiteManagerDialog.cpp` | `ui/site-manager.slint`, `src/site_manager.rs` | done |
@@ -87,8 +87,10 @@ workstreams land modules incrementally, so rows are updated as they land):
   the matching sections):
   - Telnet through a SOCKS5/HTTP proxy or an SSH jump host;
   - client certificates for Telnet TLS;
-  - LINEMODE/special-device modes, mouse forwarding and OSC 52 clipboard;
-  - reusing the transport for an SSH shell console.
+  - LINEMODE/special-device modes, mouse forwarding and OSC 52 clipboard.
+  The console transport is transport-agnostic (see the Start Page entry below):
+  an SSH site opened in a terminal workspace runs a PTY shell over its own
+  `russh` session, while the Telnet console stays on its Telnet transport.
 
 - **SMB/CIFS backend** (`crates/freescp-core/src/backends/smb.rs`): SMB2/SMB3
   file transfer over the pure-Rust `smb2` crate, with a persistent session and
@@ -100,6 +102,41 @@ workstreams land modules incrementally, so rows are updated as they land):
   connect dialog hides the matching sections): SMB1, proxies and jump hosts,
   permissions/ownership and set-times. The C++ app had no SMB support
   (libssh2/curl only).
+
+- **Automatic route selection** (`crates/freescp-core/src/route.rs`,
+  `crates/freescp-app/src/routing.rs`, Site Manager routes editor): a saved
+  site can carry *alternate routes* — full endpoint overrides (host, port,
+  user, key) plus a transport (direct, SOCKS5/HTTP-CONNECT proxy, or SSH jump
+  host), each labeled (e.g. `LAN`, `Cloudflare`). With the policy set to
+  *Automatic* (default), connecting probes every candidate's first hop with
+  concurrent TCP connects under a configurable budget (Settings → Network,
+  default 900 ms), ranks reachable routes by latency with a LAN tie-break
+  (private/link-local IPs) and stickiness to the last good route to avoid
+  flapping, and fails over to the next route on transport-level errors (never
+  on auth/host-key/cancel). Results are cached in `route-cache.toml`
+  (configurable TTL, 60 s failure backoff); `cloudflared`/`ProxyCommand`
+  aliases that cannot resolve in DNS are ranked last instead of probed.
+  *Manual* policy pins one route. The Site Manager shows a Routes column, a
+  route list with per-route probe results and a "Probe" button, a
+  "From saved site…" merge flow (copies another saved site's endpoint as a
+  route, optionally deleting the duplicate site), and selecting a multi-route
+  site's row refreshes its probe cache in the background. The C++ app required
+  saving the same host twice and picking the right entry by hand.
+
+- **Start Page + SSH terminal workspace** (`crates/freescp-app/ui/start-page.slint`,
+  `crates/freescp-core/src/shell.rs`, `crates/freescp-app/src/console.rs`): the
+  app no longer always starts in the blank two-panel window. `UI/startupMode`
+  (Settings → General → *On startup*) picks the Start Page (default: choose a
+  workspace and optionally a saved/recent site on every launch), a plain
+  two-panel window, a terminal workspace, or the legacy two-panel + Site
+  Manager. The Start Page's *SSH terminal* card opens a real login shell over
+  the site's SSH parameters (proxy, jump host, known-hosts policy and auth
+  chain all reused through the shared `ssh_transport` helper; Telnet sites keep
+  their Telnet console) in a full-window terminal tab, with PTY window-change
+  on resize. Workspace mode is deliberately orthogonal to `Protocol`: an
+  SFTP/SCP site opened as a terminal needs no separate site entry, and closing
+  the last tab returns to the Start Page. The C++ app had neither a start
+  selector nor an embedded SSH shell (it launched external terminals).
 
 ## UI parity sweep (Slint 1.9 → 1.17.1)
 
@@ -113,8 +150,8 @@ shortcuts, and better drag-and-drop support).
   move, F7 download, F8 upload, F9 new folder, F10 new file, Delete,
   Ctrl/Cmd+F search, F12 transfer queue, Ctrl+Shift+H history, Cmd/Ctrl+,
   settings, Ctrl/Cmd+Q quit, fullscreen toggle), with the F12/history
-  shortcuts honoring the strings stored in Settings; clickable breadcrumb
-  strips above each path input; tooltips on toolbar buttons and status-bar
+  shortcuts honoring the strings stored in Settings; editable path bars with
+  recent-path dropdowns; tooltips on toolbar buttons and status-bar
   labels; "Warning: unencrypted secrets storage active" status label driven
   from Rust; dynamic window title (`FreeSCP — local/remote (SFTP)` etc.);
   fullscreen mode.

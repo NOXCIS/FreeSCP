@@ -27,6 +27,7 @@ mod console;
 mod history;
 mod local_fs;
 mod remote;
+mod routing;
 mod secrets;
 mod settings;
 mod site_manager;
@@ -197,6 +198,7 @@ fn parent_entry() -> crate::ui::main_window::FileEntry {
         name: "..".into(),
         is_dir: true,
         size: 0,
+        size_text: "--".into(),
         has_size: false,
         mtime: 0,
         mode: 0,
@@ -210,6 +212,11 @@ fn local_to_file_entry(entry: &local_fs::LocalEntry) -> crate::ui::main_window::
         name: entry.name.clone().into(),
         is_dir: entry.is_dir,
         size: clamp_u64(entry.size),
+        size_text: if entry.is_dir {
+            "--".into()
+        } else {
+            local_fs_format_size(entry.size).into()
+        },
         has_size: true,
         mtime: clamp_u64(entry.mtime),
         mode: clamp_u64(u64::from(entry.mode)),
@@ -223,6 +230,13 @@ fn remote_to_file_entry(info: &freescp_core::FileInfo) -> crate::ui::main_window
         name: info.name.clone().into(),
         is_dir: info.is_dir,
         size: clamp_u64(info.size),
+        size_text: if info.is_dir {
+            "".into()
+        } else if info.has_size {
+            crate::local_fs::format_size_remote(info.size).into()
+        } else {
+            "—".into()
+        },
         has_size: info.has_size,
         mtime: clamp_u64(info.mtime),
         mode: clamp_u64(u64::from(info.mode)),
@@ -364,6 +378,7 @@ fn persist_pane_sort(
 
 /// Caps a crumb list for display: when it grows beyond 8 segments, keep the
 /// first, an ellipsis marker, and the last 6 (port of the C++ crumb elision).
+#[allow(dead_code)] // Kept for breadcrumb unit tests / possible path-segment UI.
 fn cap_breadcrumbs(mut parts: Vec<SharedString>) -> Vec<SharedString> {
     if parts.len() > 8 {
         let tail = parts.split_off(parts.len() - 6);
@@ -376,6 +391,7 @@ fn cap_breadcrumbs(mut parts: Vec<SharedString>) -> Vec<SharedString> {
 /// Breadcrumb labels for a local path (`/`, then each directory name) paired
 /// with the absolute path each label navigates to (the C++ crumbs store the
 /// accumulated path per item, `MainWindow::rebuildLocalBreadcrumbs`).
+#[allow(dead_code)] // Exercised by breadcrumb_tests; path chrome is PathBar-only.
 fn local_breadcrumb_pairs(path: &str) -> (Vec<SharedString>, Vec<String>) {
     let mut labels: Vec<SharedString> = Vec::new();
     let mut targets: Vec<String> = Vec::new();
@@ -413,6 +429,7 @@ fn local_breadcrumb_pairs(path: &str) -> (Vec<SharedString>, Vec<String>) {
 }
 
 /// Breadcrumb segments for a remote path (`/`, then each directory name).
+#[allow(dead_code)]
 fn remote_breadcrumbs(path: &str) -> Vec<SharedString> {
     let mut parts: Vec<SharedString> = Vec::new();
     for seg in path.split('/') {
@@ -428,38 +445,13 @@ fn remote_breadcrumbs(path: &str) -> Vec<SharedString> {
     cap_breadcrumbs(parts)
 }
 
-thread_local! {
-    /// Absolute paths for the local breadcrumbs currently on screen; the Slint
-    /// model only carries the labels (Slint has no pair model here).
-    static LEFT_CRUMB_TARGETS: std::cell::RefCell<Vec<String>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+fn update_left_breadcrumbs(_ui: &crate::ui::main_window::MainWindow, _path: &str) {
+    // Path chrome is PathBar-only; crumb UI was removed in the pass-2 audit.
 }
 
-fn update_left_breadcrumbs(ui: &crate::ui::main_window::MainWindow, path: &str) {
-    let (labels, targets) = local_breadcrumb_pairs(path);
-    LEFT_CRUMB_TARGETS.with(|cell| *cell.borrow_mut() = targets);
-    ui.set_left_breadcrumbs(Rc::new(VecModel::from(labels)).into());
-}
+fn update_right_breadcrumbs(_ui: &crate::ui::main_window::MainWindow, _path: &str) {}
 
-fn update_right_breadcrumbs(ui: &crate::ui::main_window::MainWindow, path: &str) {
-    ui.set_right_breadcrumbs(Rc::new(VecModel::from(remote_breadcrumbs(path))).into());
-}
-
-thread_local! {
-    /// Absolute paths for the local breadcrumbs shown in the right pane while
-    /// it is in local mode (the right-pane counterpart of
-    /// `LEFT_CRUMB_TARGETS`).
-    static RIGHT_CRUMB_TARGETS: std::cell::RefCell<Vec<String>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Local-mode counterpart of [`update_right_breadcrumbs`]: the C++
-/// `setRightRoot` rebuilds the same local crumb strip as the left pane.
-fn update_right_local_breadcrumbs(ui: &crate::ui::main_window::MainWindow, path: &str) {
-    let (labels, targets) = local_breadcrumb_pairs(path);
-    RIGHT_CRUMB_TARGETS.with(|cell| *cell.borrow_mut() = targets);
-    ui.set_right_breadcrumbs(Rc::new(VecModel::from(labels)).into());
-}
+fn update_right_local_breadcrumbs(_ui: &crate::ui::main_window::MainWindow, _path: &str) {}
 
 /// True while the right pane browses local folders (the C++
 /// `rightIsRemote_ == false` state): before the first connect and after
@@ -469,7 +461,9 @@ fn right_pane_is_local(ui: &crate::ui::main_window::MainWindow) -> bool {
 }
 
 /// Rebuilds a remote path from breadcrumb segments `0..=index` (`None` when
-/// the click lands on the ellipsis marker).
+/// the click lands on the ellipsis marker). Kept for unit tests / future
+/// path-segment UI.
+#[allow(dead_code)]
 fn remote_path_from_crumbs(crumbs: &[SharedString], index: usize) -> Option<String> {
     if crumbs.get(index)?.as_str() == "…" {
         return None;
@@ -729,6 +723,8 @@ fn request_remote_reload(ui: &crate::ui::main_window::MainWindow, state: &Rc<Ref
         tracing::debug!(session_id, "remote refresh skipped: session busy");
         return;
     };
+    ui.set_right_listing_busy(true);
+    ui.set_right_listing_error("".into());
     let handle = state.borrow().runtime_handle();
     let ui_weak = ui.as_weak();
     let state = state.clone();
@@ -766,6 +762,10 @@ fn request_remote_reload(ui: &crate::ui::main_window::MainWindow, state: &Rc<Ref
             Ok(v) => v,
             Err(join_error) => {
                 tracing::error!("remote refresh task panicked: {join_error}");
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_right_listing_busy(false);
+                    ui.set_right_listing_error("Remote refresh failed.".into());
+                }
                 return;
             }
         };
@@ -783,9 +783,13 @@ fn request_remote_reload(ui: &crate::ui::main_window::MainWindow, state: &Rc<Ref
         let Some(ui) = ui_weak.upgrade() else {
             return;
         };
+        ui.set_right_listing_busy(false);
         if let Some(message) = status_err {
+            ui.set_right_listing_error(message.clone().into());
             ui.set_status_text(message.into());
+            return;
         }
+        ui.set_right_listing_error("".into());
         if !still_active {
             // A background session finished while another tab is active: the
             // owning tab reloads on its next activation.
@@ -826,14 +830,14 @@ fn restore_window_geometry(ui: &crate::ui::main_window::MainWindow, state: &Rc<R
         ui.set_left_pane_width(split as f32);
     }
     if let Some([size_w, type_w, mtime_w]) = ws.left_col_widths {
-        ui.set_left_size_width(size_w.max(32) as f32);
-        ui.set_left_type_width(type_w.max(32) as f32);
-        ui.set_left_mtime_width(mtime_w.max(32) as f32);
+        ui.set_left_size_width(size_w.max(48) as f32);
+        ui.set_left_type_width(type_w.max(48) as f32);
+        ui.set_left_mtime_width(mtime_w.max(48) as f32);
     }
     if let Some([size_w, mtime_w, perm_w]) = ws.right_col_widths {
-        ui.set_right_size_width(size_w.max(32) as f32);
-        ui.set_right_mtime_width(mtime_w.max(32) as f32);
-        ui.set_right_perm_width(perm_w.max(32) as f32);
+        ui.set_right_size_width(size_w.max(48) as f32);
+        ui.set_right_mtime_width(mtime_w.max(48) as f32);
+        ui.set_right_perm_width(perm_w.max(48) as f32);
     }
     if let Some([size_v, type_v, mtime_v]) = ws.left_col_visible {
         ui.set_left_col_size_visible(size_v);
@@ -871,14 +875,14 @@ fn capture_window_geometry(ui: &crate::ui::main_window::MainWindow, state: &Rc<R
     st.window_state.height = Some(size.height.max(0.0) as u32);
     st.window_state.split_x = Some(ui.get_left_pane_width().max(0.0) as i32);
     st.window_state.left_col_widths = Some([
-        ui.get_left_size_width().round().max(32.0) as i32,
-        ui.get_left_type_width().round().max(32.0) as i32,
-        ui.get_left_mtime_width().round().max(32.0) as i32,
+        ui.get_left_size_width().round().max(48.0) as i32,
+        ui.get_left_type_width().round().max(48.0) as i32,
+        ui.get_left_mtime_width().round().max(48.0) as i32,
     ]);
     st.window_state.right_col_widths = Some([
-        ui.get_right_size_width().round().max(32.0) as i32,
-        ui.get_right_mtime_width().round().max(32.0) as i32,
-        ui.get_right_perm_width().round().max(32.0) as i32,
+        ui.get_right_size_width().round().max(48.0) as i32,
+        ui.get_right_mtime_width().round().max(48.0) as i32,
+        ui.get_right_perm_width().round().max(48.0) as i32,
     ]);
     st.window_state.left_col_visible = Some([
         ui.get_left_col_size_visible(),
@@ -1246,6 +1250,14 @@ fn open_search_dialog(
             cancel.store(true, Ordering::SeqCst);
         });
     }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        dialog.on_result_activated(move |path: SharedString| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            reveal_search_result(&ui, &state, pane, path.as_str());
+        });
+    }
 
     let _ = dialog.show();
 }
@@ -1260,33 +1272,47 @@ fn open_search_dialog(
 // `remote::change_permissions[_recursive]`. The stored flag records whether
 // the target is a directory: C++ only recurses when `st.is_dir`.
 thread_local! {
-    /// Open permissions dialogs: the flow, its target path, the dialog's
-    /// "recursive" applicability (target is a directory), and the id of the
-    /// session whose client will apply the change.
-    static PERMISSION_FLOWS: RefCell<Vec<(remote::PermissionsFlow, String, bool, u64)>> =
+    /// Open permissions dialogs: the flow, its target paths, whether any
+    /// target is a directory (gates recursive apply), and the session id.
+    static PERMISSION_FLOWS: RefCell<Vec<(remote::PermissionsFlow, Vec<String>, bool, u64)>> =
         const { RefCell::new(Vec::new()) };
 }
 
 /// Polls the parked permission dialogs; confirmed flows are removed and
-/// handed to `apply_permissions` with their target path.
+/// handed to `apply_permissions` with their target paths.
 fn poll_permission_flows(
     ui_weak: &slint::Weak<crate::ui::main_window::MainWindow>,
     state: &Rc<RefCell<AppState>>,
 ) {
-    let mut confirmed: Vec<(String, u32, bool, bool, u64)> = Vec::new();
+    let mut confirmed: Vec<(Vec<String>, u32, bool, bool, u64)> = Vec::new();
     PERMISSION_FLOWS.with(|flows| {
         let mut flows = flows.borrow_mut();
-        flows.retain(|(flow, target, is_dir, session_id)| match flow.poll() {
+        flows.retain(|(flow, targets, is_dir, session_id)| match flow.poll() {
             None => true,
             Some(Some(mode)) => {
-                confirmed.push((target.clone(), mode, flow.recursive(), *is_dir, *session_id));
+                confirmed.push((
+                    targets.clone(),
+                    mode,
+                    flow.recursive(),
+                    *is_dir,
+                    *session_id,
+                ));
                 false
             }
             Some(None) => false,
         });
     });
-    for (path, mode, recursive, is_dir, session_id) in confirmed {
-        apply_permissions(ui_weak, state, session_id, path, mode, recursive && is_dir);
+    for (paths, mode, recursive, is_dir, session_id) in confirmed {
+        for path in paths {
+            apply_permissions(
+                ui_weak,
+                state,
+                session_id,
+                path,
+                mode,
+                recursive && is_dir,
+            );
+        }
     }
 }
 
@@ -1746,6 +1772,102 @@ fn select_single_row(ui: &crate::ui::main_window::MainWindow, pane: usize, row: 
     apply_pane_selection(ui, pane, &selection);
 }
 
+/// Selects the row whose `name` matches `name` in the given pane, if present.
+fn select_entry_named(ui: &crate::ui::main_window::MainWindow, pane: usize, name: &str) -> bool {
+    let model = if pane == 0 {
+        ui.get_left_entries()
+    } else {
+        ui.get_right_entries()
+    };
+    for i in 0..model.row_count() {
+        let Some(entry) = model.row_data(i) else {
+            continue;
+        };
+        if entry.name.as_str() == name {
+            select_single_row(ui, pane, i as i32);
+            return true;
+        }
+    }
+    false
+}
+
+/// Navigates a pane to the parent of `path` (or the current folder for a bare
+/// basename) and selects the matching entry. Used by SearchDialog result
+/// activation.
+fn reveal_search_result(
+    ui: &crate::ui::main_window::MainWindow,
+    state: &Rc<RefCell<AppState>>,
+    pane: usize,
+    path: &str,
+) {
+    let path = path.trim();
+    if path.is_empty() {
+        return;
+    }
+    let looks_like_path = path.contains('/') || path.contains('\\');
+    let (parent, name) = if looks_like_path {
+        let p = Path::new(path);
+        let name = p
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string());
+        let parent = p
+            .parent()
+            .map(|s| s.to_string_lossy().into_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                if pane == 0 {
+                    ui.get_left_path().to_string()
+                } else {
+                    ui.get_right_path().to_string()
+                }
+            });
+        (parent, name)
+    } else {
+        let parent = if pane == 0 {
+            ui.get_left_path().to_string()
+        } else {
+            ui.get_right_path().to_string()
+        };
+        (parent, path.to_string())
+    };
+
+    if pane == 0 {
+        if looks_like_path {
+            reload_local(ui, state, &parent);
+        }
+        let _ = select_entry_named(ui, pane, &name);
+        ui.invoke_focus_file_panes();
+        ui.set_focused_pane(0);
+        return;
+    }
+
+    if right_pane_is_local(ui) {
+        if looks_like_path {
+            reload_right_local(ui, state, &parent);
+        }
+        let _ = select_entry_named(ui, pane, &name);
+        ui.invoke_focus_file_panes();
+        ui.set_focused_pane(1);
+        return;
+    }
+
+    if looks_like_path {
+        let normalized = normalize_remote_path(&parent);
+        ui.set_right_path(normalized.clone().into());
+        state.borrow_mut().push_recent_remote_path(normalized);
+        // Async reload; select after the listing arrives when possible by
+        // matching in the current model first, then requesting a refresh.
+        request_remote_reload(ui, state);
+        // Best-effort select if the listing is already the target folder.
+        let _ = select_entry_named(ui, pane, &name);
+    } else {
+        let _ = select_entry_named(ui, pane, &name);
+    }
+    ui.invoke_focus_file_panes();
+    ui.set_focused_pane(1);
+}
+
 // ---------------------------------------------------------------------------
 // Transfers (toolbar + pane activation).
 // ---------------------------------------------------------------------------
@@ -2063,7 +2185,12 @@ fn handle_pane_drop(
 /// Serialized overwrite prompt with "apply to all" support. Transfer workers
 /// call this from tokio threads; it blocks (like the C++ transfer manager's
 /// condition-variable wait) while the Slint `OverwriteDialog` is shown.
-fn prompt_overwrite_choice(question: &str) -> transfer::ConflictChoice {
+fn prompt_overwrite_choice(
+    question: &str,
+    source_info: &str,
+    dest_info: &str,
+    can_resume: bool,
+) -> transfer::ConflictChoice {
     // Workers run concurrently (max_concurrent > 1); serialize so two tasks
     // never stack two dialogs. The second worker re-checks the sticky policy
     // after the first prompt resolves.
@@ -2080,16 +2207,21 @@ fn prompt_overwrite_choice(question: &str) -> transfer::ConflictChoice {
     type DialogWeak = slint::Weak<crate::ui::overwrite_dialog::OverwriteDialog>;
     let pending: Arc<std::sync::Mutex<Option<DialogWeak>>> = Arc::new(std::sync::Mutex::new(None));
     let question = question.to_string();
+    let source_info = source_info.to_string();
+    let dest_info = dest_info.to_string();
 
     let posted = slint::invoke_from_event_loop({
         let pending = Arc::clone(&pending);
         let answer_tx = answer_tx.clone();
         move || {
             let Ok(dialog) = crate::ui::overwrite_dialog::OverwriteDialog::new() else {
-                let _ = answer_tx.send(transfer::ConflictChoice::Skip);
+                let _ = answer_tx.send(transfer::ConflictChoice::Cancel);
                 return;
             };
             dialog.set_message(question.into());
+            dialog.set_source_info(source_info.into());
+            dialog.set_dest_info(dest_info.into());
+            dialog.set_can_resume(can_resume);
             if let Ok(mut slot) = pending.lock() {
                 *slot = Some(dialog.as_weak());
             }
@@ -2129,16 +2261,30 @@ fn prompt_overwrite_choice(question: &str) -> transfer::ConflictChoice {
             dialog.on_skip(answer(transfer::ConflictChoice::Skip));
             dialog.on_overwrite_all(answer_all(transfer::ConflictChoice::OverwriteAll));
             dialog.on_skip_all(answer_all(transfer::ConflictChoice::SkipAll));
+            dialog.on_resume(answer(transfer::ConflictChoice::Resume));
+            dialog.on_cancel(answer(transfer::ConflictChoice::Cancel));
+            dialog.window().on_close_requested({
+                let answer_tx = answer_tx.clone();
+                let pending = Arc::clone(&pending);
+                move || {
+                    if let Ok(mut slot) = pending.lock() {
+                        *slot = None;
+                    }
+                    let _ = answer_tx.send(transfer::ConflictChoice::Cancel);
+                    slint::CloseRequestResponse::HideWindow
+                }
+            });
             let _ = dialog.show();
         }
     });
     if posted.is_err() {
-        return transfer::ConflictChoice::Skip;
+        return transfer::ConflictChoice::Cancel;
     }
     match answer_rx.recv_timeout(Duration::from_secs(120)) {
         Ok(choice) => choice,
         Err(_) => {
-            // The user never answered; hide the orphaned dialog (best effort).
+            // The user never answered; hide the orphaned dialog (best effort)
+            // and abort the remaining batch instead of silently skipping.
             let pending_cleanup = Arc::clone(&pending);
             let _ = slint::invoke_from_event_loop(move || {
                 let orphan = pending_cleanup
@@ -2150,7 +2296,7 @@ fn prompt_overwrite_choice(question: &str) -> transfer::ConflictChoice {
                     let _ = d.hide();
                 }
             });
-            transfer::ConflictChoice::Skip
+            transfer::ConflictChoice::Cancel
         }
     }
 }
@@ -3108,6 +3254,11 @@ const LOCAL_TAB_TITLE: &str = "Local";
 /// Tab-bar title: `user@host` once connected, "Connecting…" during a dialog
 /// connect, "Local" otherwise.
 fn tab_title(tab: &crate::state::TabState, st: &AppState) -> String {
+    if tab.console {
+        if let Some(labels) = console_tab_labels(tab) {
+            return labels.label;
+        }
+    }
     let Some(record) = tab.session_id.and_then(|id| st.session(id)) else {
         return if tab.connecting {
             "Connecting…".to_string()
@@ -3122,8 +3273,49 @@ fn tab_title(tab: &crate::state::TabState, st: &AppState) -> String {
     }
 }
 
+/// Labels for a console tab (Telnet console or SSH terminal workspace).
+struct ConsoleTabLabels {
+    /// Tab-bar label: the remote application's OSC 0/2 title when it set one,
+    /// else `user@host`.
+    label: String,
+    /// OSC 0/2 title set by the remote application.
+    app_title: Option<String>,
+    /// "SSH terminal" for the shell transport, the protocol name otherwise.
+    kind: String,
+}
+
+/// Reads a console tab's labels from its live session. `None` when the tab has
+/// no console (the thread-local store is empty off the UI thread).
+fn console_tab_labels(tab: &crate::state::TabState) -> Option<ConsoleTabLabels> {
+    crate::console::with_session(tab.id, |session| {
+        let kind = if session.console.is_terminal_workspace() {
+            "SSH terminal".to_string()
+        } else {
+            protocol_display_name(session.options.protocol).to_string()
+        };
+        let app_title = session.console.title().map(str::to_string);
+        let peer = if session.options.username.is_empty() {
+            session.options.host.clone()
+        } else {
+            format!("{}@{}", session.options.username, session.options.host)
+        };
+        ConsoleTabLabels {
+            label: app_title.clone().unwrap_or(peer),
+            app_title,
+            kind,
+        }
+    })
+}
+
 /// Tab-bar subtitle (protocol name; empty while the tab is local-only).
 fn tab_subtitle(tab: &crate::state::TabState, st: &AppState) -> String {
+    if tab.console {
+        // Terminal tabs have no `SessionRecord`; the console carries both the
+        // connection and its workspace kind.
+        return console_tab_labels(tab)
+            .map(|labels| labels.kind)
+            .unwrap_or_default();
+    }
     tab.session_id
         .and_then(|id| st.session(id))
         .map(|record| protocol_display_name(record.options.protocol).to_string())
@@ -3146,6 +3338,7 @@ fn sync_tab_bar(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppS
                 .session_id
                 .and_then(|id| st.session(id))
                 .is_some_and(|record| record.busy),
+            terminal: tab.console,
         })
         .collect();
     ui.set_tabs(Rc::new(VecModel::from(rows)).into());
@@ -3263,14 +3456,28 @@ fn console_grid(ui: &crate::ui::main_window::MainWindow) -> Option<(u16, u16)> {
 fn load_tab_console(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
     let Some(tab_id) = active_console_tab(state) else {
         ui.set_console_mode(false);
+        // A terminal workspace is a console-only tab: without a console there
+        // is nothing to give the window to.
+        ui.set_console_full_window(false);
         // Stops the terminal's grid poll on tabs that have no console at all.
         ui.set_console_connected(false);
         return;
     };
     ui.set_console_mode(true);
-    let model = crate::console::with_session(tab_id, |session| session.console.rows_model());
-    if let Some(model) = model {
-        ui.set_console_rows(model);
+    let view = crate::console::with_session(tab_id, |session| {
+        (
+            session.console.rows_model(),
+            session.console.is_terminal_workspace(),
+        )
+    });
+    match view {
+        Some((model, full_window)) => {
+            // Terminal-workspace sessions (SSH shells) own the whole
+            // workspace; a Telnet console keeps overlaying the right pane.
+            ui.set_console_full_window(full_window);
+            ui.set_console_rows(model);
+        }
+        None => ui.set_console_full_window(false),
     }
     console_sync(ui, state);
     ui.invoke_focus_console();
@@ -3327,11 +3534,12 @@ fn refresh_window_title(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefC
 
 /// Opens a console session and drains its event channel into [`UiEvent`]s.
 /// The task ends when the transport closes (or when Disconnect drops the
-/// session, which closes the channel).
+/// session, which closes the channel). Handles both transports: the Telnet
+/// console and the SSH shell terminal workspace.
 fn spawn_console_forwarder(
     state: &Rc<RefCell<AppState>>,
     tab: u64,
-    mut events: tokio::sync::mpsc::UnboundedReceiver<freescp_core::telnet::TelnetEvent>,
+    mut events: crate::console::ConsoleEventStream,
 ) {
     let Some(tx) = state.borrow().ui_event_tx() else {
         return;
@@ -3339,14 +3547,14 @@ fn spawn_console_forwarder(
     state.borrow().runtime_handle().spawn(async move {
         while let Some(event) = events.recv().await {
             let ui_event = match event {
-                freescp_core::telnet::TelnetEvent::Data(bytes) => {
+                crate::console::ConsoleTransportEvent::Data(bytes) => {
                     UiEvent::ConsoleData { tab, bytes }
                 }
-                freescp_core::telnet::TelnetEvent::Closed => {
+                crate::console::ConsoleTransportEvent::Closed => {
                     let _ = tx.send(UiEvent::ConsoleClosed { tab, message: None });
                     break;
                 }
-                freescp_core::telnet::TelnetEvent::Error(message) => {
+                crate::console::ConsoleTransportEvent::Error(message) => {
                     let _ = tx.send(UiEvent::ConsoleClosed {
                         tab,
                         message: Some(message),
@@ -3359,6 +3567,298 @@ fn spawn_console_forwarder(
             }
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Start Page (startup workspace selector; Rust-only feature)
+// ---------------------------------------------------------------------------
+
+/// One row of the Start Page's site list. The Slint model is rebuilt on every
+/// refresh, so each row carries what Rust needs to resolve a click: `kind` 0
+/// holds a saved site name, `kind` 1 the recent-server index.
+type StartSiteRow = crate::ui::main_window::StartSiteRow;
+
+/// Deployment identity of a stored connection: protocol, host, port and user.
+/// Recent servers carrying the same tuple as a saved site are dropped from the
+/// Start Page so a connection never shows up twice.
+fn start_page_site_identity(opt: &SessionOptions) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        freescp_core::protocol_storage_name(opt.protocol),
+        opt.host.trim().to_lowercase(),
+        opt.port,
+        opt.username.trim()
+    )
+}
+
+/// Builds the Start Page site list: saved sites first (in their stored order),
+/// then recent servers (most recent first) minus the saved sites.
+fn start_page_rows() -> Vec<StartSiteRow> {
+    start_page_rows_from(
+        &site_manager::load_sites(),
+        &history::recent_servers_with_labels(),
+    )
+}
+
+/// Merge rule of [`start_page_rows`], split out so it can be exercised without
+/// touching the site store: saved sites keep their stored order and win over a
+/// recent server pointing at the same deployment, while recents keep their
+/// recency order and carry their list index as the row id.
+fn start_page_rows_from(
+    sites: &[site_manager::SiteEntry],
+    recents: &[(SessionOptions, String)],
+) -> Vec<StartSiteRow> {
+    let mut rows: Vec<StartSiteRow> = Vec::with_capacity(sites.len() + recents.len());
+    let mut saved: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for site in sites {
+        let opt = site.to_session_options();
+        saved.insert(start_page_site_identity(&opt));
+        rows.push(StartSiteRow {
+            kind: 0,
+            id: site.name.clone().into(),
+            name: site.name.clone().into(),
+            subtitle: format!(
+                "{}@{}:{} · {}",
+                opt.username,
+                opt.host,
+                opt.port,
+                protocol_display_name(opt.protocol)
+            )
+            .into(),
+        });
+    }
+    for (index, (opt, label)) in recents.iter().enumerate() {
+        if saved.contains(&start_page_site_identity(opt)) {
+            continue;
+        }
+        rows.push(StartSiteRow {
+            kind: 1,
+            id: index.to_string().into(),
+            name: label.clone().into(),
+            subtitle: format!(
+                "Recent · {}@{}:{} · {}",
+                opt.username,
+                opt.host,
+                opt.port,
+                protocol_display_name(opt.protocol)
+            )
+            .into(),
+        });
+    }
+    rows
+}
+
+/// Rebuilds the visible Start Page list when it no longer matches the site
+/// store (a site saved in the modeless Site Manager, or a new recent server).
+/// Only touches the model when something actually changed, so the list keeps
+/// its scroll position and selection while the user is looking at it.
+fn refresh_start_page_if_stale(ui: &crate::ui::main_window::MainWindow) {
+    if !ui.get_start_page_visible() {
+        return;
+    }
+    let rows = start_page_rows();
+    let current = ui.get_start_page_sites();
+    let unchanged = current.row_count() == rows.len()
+        && rows.iter().enumerate().all(|(index, row)| {
+            current
+                .row_data(index)
+                .is_some_and(|shown| shown.id == row.id && shown.subtitle == row.subtitle)
+        });
+    if unchanged {
+        return;
+    }
+    let selected = ui.get_start_page_selected();
+    ui.set_start_page_sites(Rc::new(VecModel::from(rows.clone())).into());
+    if selected >= rows.len() as i32 {
+        ui.set_start_page_selected(if rows.is_empty() { -1 } else { 0 });
+    }
+    update_start_page_hint(ui);
+}
+
+/// The connection the Start Page selection points at.
+enum StartPagePick {
+    /// "No site": a local two-panel window, or the Quick Connect dialog.
+    None,
+    /// A saved site, by name.
+    SavedSite(String),
+    /// A recent-server entry, with its stored connection options.
+    Recent(Box<SessionOptions>),
+}
+
+/// Resolves the selected row against a fresh row list (the model holds
+/// rendered rows, not connection data).
+fn start_page_pick(row: i32) -> StartPagePick {
+    start_page_pick_from(
+        row,
+        &start_page_rows(),
+        &history::recent_servers_with_labels(),
+    )
+}
+
+/// Resolution rule of [`start_page_pick`], split out so it can be exercised
+/// without touching the site store.
+fn start_page_pick_from(
+    row: i32,
+    rows: &[StartSiteRow],
+    recents: &[(SessionOptions, String)],
+) -> StartPagePick {
+    let Ok(row) = usize::try_from(row) else {
+        return StartPagePick::None;
+    };
+    let Some(entry) = rows.get(row) else {
+        return StartPagePick::None;
+    };
+    if entry.kind == 0 {
+        return StartPagePick::SavedSite(entry.id.to_string());
+    }
+    // Recent rows carry their index into the recency list, which is not the
+    // row index: saved sites occupy the front of the list.
+    match entry
+        .id
+        .parse::<usize>()
+        .ok()
+        .and_then(|index| recents.get(index))
+    {
+        Some((opt, _label)) => StartPagePick::Recent(Box::new(opt.clone())),
+        None => StartPagePick::None,
+    }
+}
+
+/// (Re)builds the Start Page site list and shows the page, replacing the tab
+/// bar, toolbar and panes. `mode` preselects a workspace card when the caller
+/// has one in mind (startup), and keeps the current choice otherwise.
+fn show_start_page(ui: &crate::ui::main_window::MainWindow, state: &AppState, mode: Option<i32>) {
+    let rows = start_page_rows();
+    let selected = if rows.is_empty() { -1 } else { 0 };
+    ui.set_start_page_sites(Rc::new(VecModel::from(rows)).into());
+    ui.set_start_page_selected(selected);
+    if let Some(mode) = mode {
+        ui.set_start_page_mode(mode);
+    }
+    ui.set_start_page_visible(true);
+    update_start_page_hint(ui);
+    state.set_status("Start Page: pick a workspace and a site");
+}
+
+/// Hides the Start Page and brings the active tab's panes back (creating the
+/// blank local/local tab when the last one was closed while the page was up).
+fn hide_start_page(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
+    if !ui.get_start_page_visible() {
+        return;
+    }
+    ui.set_start_page_visible(false);
+    ensure_blank_tab(state);
+    load_tab_panes(ui, state);
+    // Blank tabs store an empty listing; populate both local panes from disk
+    // so the user is not left staring at an empty Local column until Refresh.
+    let (left_path, right_path, right_local) = {
+        let st = state.borrow();
+        let Some(tab) = st.active_tab() else {
+            apply_tab_chrome(ui, state);
+            sync_tab_bar(ui, state);
+            return;
+        };
+        (
+            tab.left.path.clone(),
+            tab.right.path.clone(),
+            !tab.is_connected(),
+        )
+    };
+    reload_local(ui, state, &left_path);
+    if right_local {
+        reload_right_local(ui, state, &right_path);
+    }
+    apply_tab_chrome(ui, state);
+    sync_tab_bar(ui, state);
+}
+
+/// Guarantees an active tab exists (the Start Page is reachable with an empty
+/// tab strip after the last tab is closed).
+fn ensure_blank_tab(state: &Rc<RefCell<AppState>>) {
+    let mut st = state.borrow_mut();
+    if st.active_tab().is_none() {
+        let index = st.push_blank_tab(&home_dir_string());
+        st.active_tab = index;
+    }
+}
+
+/// Refreshes the one-line explanation of what "Open" will do. Runs on every
+/// mode/selection/remember change; the wording mirrors the Start Page's
+/// semantics rather than naming the selected site (Slint holds the rows).
+fn update_start_page_hint(ui: &crate::ui::main_window::MainWindow) {
+    let terminal = ui.get_start_page_mode() == 1;
+    let has_site = ui.get_start_page_selected() >= 0;
+    let hint = match (terminal, has_site) {
+        (false, true) => "Open the selected site in a two-panel window",
+        (false, false) => "Open a local two-panel window",
+        (true, true) => "Open a login shell (SSH) on the selected site",
+        (true, false) => "Ask for a connection, then open a login shell (SSH)",
+    };
+    let hint = if ui.get_start_page_remember() {
+        format!("{hint} · choice remembered")
+    } else {
+        hint.to_string()
+    };
+    if ui.get_start_page_hint().as_str() != hint {
+        ui.set_start_page_hint(hint.into());
+    }
+}
+
+/// Starts the workspace picked on the Start Page and hides the page. A site
+/// pick reuses the site's stored connection (terminal mode forces a shell for
+/// SSH-capable protocols and keeps the Telnet console for Telnet sites).
+fn open_start_page_selection(
+    ui: &crate::ui::main_window::MainWindow,
+    state: &Rc<RefCell<AppState>>,
+) {
+    let terminal = ui.get_start_page_mode() == 1;
+    if ui.get_start_page_remember() {
+        // "Always ask" is the default; the box turns it into the picked mode.
+        let mode = if terminal {
+            settings::StartupMode::Terminal
+        } else {
+            settings::StartupMode::DualPanel
+        };
+        if let Err(err) = settings::set_startup_mode(mode) {
+            tracing::warn!("Could not remember the startup choice: {err}");
+        }
+    }
+    match start_page_pick(ui.get_start_page_selected()) {
+        StartPagePick::SavedSite(name) => {
+            hide_start_page(ui, state);
+            let intent = if terminal {
+                let (cols, rows) = console_grid(ui).unwrap_or((80, 24));
+                crate::connect::ConnectIntent::Terminal { cols, rows }
+            } else {
+                crate::connect::ConnectIntent::Filesystem
+            };
+            site_manager::start_site_connect_intent(&state.borrow(), &name, intent);
+        }
+        StartPagePick::Recent(opt) => {
+            hide_start_page(ui, state);
+            let opt = (*opt).clone();
+            let opt = match crate::connect::prepare_preset_connect(&state.borrow(), opt) {
+                Some(opt) => opt,
+                None => return,
+            };
+            if terminal {
+                let (cols, rows) = console_grid(ui).unwrap_or((80, 24));
+                crate::connect::start_terminal_connect(&state.borrow(), None, opt, cols, rows);
+            } else {
+                crate::connect::start_connect(&state.borrow(), None, opt);
+            }
+        }
+        StartPagePick::None => {
+            if terminal {
+                // The page stays up behind the Quick Connect dialog, so a
+                // dismissed dialog drops the user back on their choice.
+                crate::connect::open_terminal(ui, &state.borrow(), None);
+            } else {
+                hide_start_page(ui, state);
+                state.borrow().set_status("Two-panel window ready");
+            }
+        }
+    }
 }
 
 /// True when the terminal owns the right pane, in which case file-pane actions
@@ -3436,19 +3936,15 @@ fn disconnect_console_tab(
 /// Window title for the active tab (`connect::tr` keeps the ported wording).
 fn tab_window_title(tab: &crate::state::TabState, st: &AppState) -> String {
     if tab.console {
-        // A terminal tab: the protocol name, plus whatever OSC 0/2 title the
+        // A terminal tab: the workspace kind, plus whatever OSC 0/2 title the
         // application set on the session.
-        let console = crate::console::with_session(tab.id, |session| {
-            (
-                protocol_display_name(session.options.protocol).to_string(),
-                session.console.title().map(str::to_string),
-            )
-        });
-        let (protocol, app_title) = console.unwrap_or_else(|| ("Telnet".to_string(), None));
-        let base = crate::connect::tr(
-            "FreeSCP — local/terminal (%1)",
-            std::slice::from_ref(&protocol),
-        );
+        let labels = console_tab_labels(tab);
+        let kind = labels
+            .as_ref()
+            .map(|labels| labels.kind.clone())
+            .unwrap_or_else(|| "Terminal".to_string());
+        let app_title = labels.and_then(|labels| labels.app_title);
+        let base = crate::connect::tr("FreeSCP — local/terminal (%1)", std::slice::from_ref(&kind));
         return match app_title {
             Some(app_title) => format!("{base} — {app_title}"),
             None => base,
@@ -3478,8 +3974,9 @@ fn apply_tab_chrome(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<
     ui.set_right_supports_permissions(tab.supports_permissions);
     let type_text = match session {
         Some(record) => format!(
-            "Type: {}",
-            freescp_core::protocol_display_name(record.options.protocol)
+            "Type: {}{}",
+            freescp_core::protocol_display_name(record.options.protocol),
+            record.route.status_suffix()
         ),
         None => "Type: None".to_string(),
     };
@@ -3589,7 +4086,7 @@ fn close_tab(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppStat
             return;
         }
     }
-    let (was_active, disconnected, local_root) = {
+    let (was_active, disconnected, local_root, was_last) = {
         let mut st = state.borrow_mut();
         let home = home_dir_string();
         if st.tabs.len() <= 1 {
@@ -3607,7 +4104,7 @@ fn close_tab(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppStat
                     flow.dismiss();
                 }
             });
-            (true, session, home)
+            (true, session, home, true)
         } else {
             let was_active = st.active_tab == index;
             let Some((tab, session)) = st.remove_tab(index) else {
@@ -3615,7 +4112,7 @@ fn close_tab(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppStat
             };
             // A terminal tab takes its console down with it.
             crate::console::remove(tab.id);
-            (was_active, session, tab.right.path.clone())
+            (was_active, session, tab.right.path.clone(), false)
         }
     };
     if let Some(record) = disconnected {
@@ -3655,6 +4152,11 @@ fn close_tab(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppStat
         watch_local_dir(0, ui.get_left_path().as_ref(), state);
     }
     sync_tab_bar(ui, state);
+    // Closing the last tab returns to the Start Page: with no session and no
+    // files open there is nothing to show in the panes (Rust-only flow).
+    if was_last {
+        show_start_page(ui, &state.borrow(), None);
+    }
 }
 
 /// Opens the destination picker for the remote pane's "Copy to session…"
@@ -3981,19 +4483,24 @@ fn main() -> Result<(), slint::PlatformError> {
         mgr.set_conflict_hook(Some(Arc::new(|info: transfer::ConflictInfo| {
             let question = match info.direction {
                 transfer::TransferDirection::Upload => format!(
-                    "File \"{}\" already exists on the server.\n\nLocal: {}\nRemote: {}\n\nOverwrite?",
-                    info.name, info.source_info, info.dest_info
+                    "File \"{}\" already exists on the server.\n\nOverwrite?",
+                    info.name
                 ),
                 transfer::TransferDirection::Download => format!(
-                    "File \"{}\" already exists locally.\n\nRemote: {}\nLocal: {}\n\nOverwrite?",
-                    info.name, info.source_info, info.dest_info
+                    "File \"{}\" already exists locally.\n\nOverwrite?",
+                    info.name
                 ),
                 transfer::TransferDirection::RemoteToRemote => format!(
-                    "File \"{}\" already exists on the destination server.\n\nSource: {}\nDestination: {}\n\nOverwrite?",
-                    info.name, info.source_info, info.dest_info
+                    "File \"{}\" already exists on the destination server.\n\nOverwrite?",
+                    info.name
                 ),
             };
-            prompt_overwrite_choice(&question)
+            prompt_overwrite_choice(
+                &question,
+                &info.source_info,
+                &info.dest_info,
+                info.supports_resume,
+            )
         })));
     }
 
@@ -4008,7 +4515,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     break;
                 };
                 match event {
-                    UiEvent::Session { tab, opt, client } => {
+                    UiEvent::Session {
+                        tab,
+                        opt,
+                        client,
+                        route,
+                    } => {
                         let opt = *opt;
                         let scp_only = opt.protocol == Protocol::Scp
                             && opt.scp_transfer_mode == ScpTransferMode::ScpOnly;
@@ -4048,12 +4560,18 @@ fn main() -> Result<(), slint::PlatformError> {
                                     busy: false,
                                     started_at: std::time::Instant::now(),
                                     no_host_verification: no_verify,
+                                    route: route.clone(),
                                 },
                             );
                             let status = format!(
-                                "Connected ({}) to {}",
+                                "Connected ({}) to {}{}",
                                 protocol_display_name(opt.protocol),
-                                opt.host
+                                if route.host.is_empty() {
+                                    opt.host.as_str()
+                                } else {
+                                    route.host.as_str()
+                                },
+                                route.status_suffix()
                             );
                             if let Some(tab_state) = st.tabs.get_mut(index) {
                                 tab_state.session_id = Some(session_id);
@@ -4095,14 +4613,24 @@ fn main() -> Result<(), slint::PlatformError> {
                                 )
                                 .into(),
                             );
+                            // Start Page / connect can leave the left listing
+                            // empty or stale; refresh so local folders appear
+                            // as soon as the remote session is up.
+                            let left_path = ui.get_left_path().to_string();
+                            reload_local(&ui, &state, &left_path);
                             request_remote_reload(&ui, &state);
                         }
                         set_tab_status(
                             &state,
                             &format!(
-                                "Connected ({}) to {}",
+                                "Connected ({}) to {}{}",
                                 protocol_display_name(opt.protocol),
-                                opt.host
+                                if route.host.is_empty() {
+                                    opt.host.as_str()
+                                } else {
+                                    route.host.as_str()
+                                },
+                                route.status_suffix()
                             ),
                         );
                         tracing::debug!(session_id, tab_active, "session installed");
@@ -4170,8 +4698,16 @@ fn main() -> Result<(), slint::PlatformError> {
                         opt,
                         session,
                         events,
+                        route,
                     } => {
                         let opt = *opt;
+                        // The shell transport reports itself as a terminal, not
+                        // as the site's file protocol.
+                        let protocol_label = if session.is_terminal_workspace() {
+                            "SSH terminal".to_string()
+                        } else {
+                            protocol_display_name(opt.protocol).to_string()
+                        };
                         // Link the terminal to its tab like an SCP session does:
                         // the requested tab when it is free, else the active tab,
                         // else a fresh tab (a tab hosts one session).
@@ -4194,9 +4730,14 @@ fn main() -> Result<(), slint::PlatformError> {
                             st.active_tab = index;
                             let tab_id = st.tabs[index].id;
                             let status = format!(
-                                "Connected ({}) to {}",
-                                protocol_display_name(opt.protocol),
-                                opt.host
+                                "Connected ({}) to {}{}",
+                                protocol_label,
+                                if route.host.is_empty() {
+                                    opt.host.as_str()
+                                } else {
+                                    route.host.as_str()
+                                },
+                                route.status_suffix()
                             );
                             let (cols, rows) = console_grid(&ui).unwrap_or((80, 24));
                             let mut console = crate::console::ConsoleState::new(cols, rows);
@@ -4240,15 +4781,20 @@ fn main() -> Result<(), slint::PlatformError> {
                             set_tab_status(
                                 &state,
                                 &format!(
-                                    "Connected ({}) to {}",
-                                    protocol_display_name(opt.protocol),
-                                    opt.host
+                                    "Connected ({}) to {}{}",
+                                    protocol_label,
+                                    if route.host.is_empty() {
+                                        opt.host.as_str()
+                                    } else {
+                                        route.host.as_str()
+                                    },
+                                    route.status_suffix()
                                 ),
                             );
                         }
                         apply_tab_chrome(&ui, &state);
                         sync_tab_bar(&ui, &state);
-                        tracing::debug!(tab_id, "telnet console installed");
+                        tracing::debug!(tab_id, "console session installed");
                     }
                     UiEvent::ConsoleData { tab, bytes } => {
                         let active = state
@@ -4341,17 +4887,10 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         ui.on_new_tab_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            let home = home_dir_string();
-            let (index, id) = {
-                let mut st = state.borrow_mut();
-                let index = st.push_blank_tab(&home);
-                st.active_tab = index;
-                (index, st.tabs[index].id)
-            };
-            let _ = id;
-            activate_tab(&ui, &state, index);
-            set_tab_status(&state, "New tab (local/local)");
-            sync_tab_bar(&ui, &state);
+            // New session: Start Page is where the user picks workspace mode
+            // (two-panel vs terminal) and a site / quick connect — not a blank
+            // local/local tab.
+            show_start_page(&ui, &state.borrow(), None);
         });
     }
     {
@@ -4705,6 +5244,112 @@ fn main() -> Result<(), slint::PlatformError> {
             site_manager::open(&ui, &state.borrow());
         });
     }
+    // ---- Start Page (startup workspace selector) ----------------------------
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_start_page_open_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            open_start_page_selection(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_start_page_row_selected(move |_row| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            update_start_page_hint(&ui);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_start_page_mode_selected(move |_mode| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            update_start_page_hint(&ui);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_start_page_remember_toggled(move |_remember| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            update_start_page_hint(&ui);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_start_page_quick_connect_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            // The page's mode picks the workspace the connection opens in.
+            let terminal = ui.get_start_page_mode() == 1;
+            if connect::connect_in_progress() {
+                if terminal {
+                    connect::open_terminal(&ui, &state.borrow(), None);
+                } else {
+                    connect::open(&ui, &state.borrow(), None);
+                }
+                return;
+            }
+            let tab = reserve_connect_tab(&ui, &state);
+            if terminal {
+                connect::open_terminal(&ui, &state.borrow(), Some(tab));
+            } else {
+                connect::open(&ui, &state.borrow(), Some(tab));
+            }
+            sync_tab_bar(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_start_page_site_manager_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            site_manager::open(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_start_page_settings_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            settings::open(&ui, &state);
+            apply_shortcut_prefs(&ui, &settings::Preferences::load());
+            ui.set_secrets_warning_visible(secrets::insecure_fallback_active());
+        });
+    }
+    {
+        // Session menu: "Start Page" / "New terminal session…".
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_start_page_show_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            show_start_page(&ui, &state.borrow(), None);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_start_page_dismiss_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            hide_start_page(&ui, &state);
+            state.borrow().set_status("Back to session");
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_new_terminal_session_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            if connect::connect_in_progress() {
+                connect::open_terminal(&ui, &state.borrow(), None);
+                return;
+            }
+            // Reserve the tab like Connect does: the tab bar shows
+            // "Connecting…" until the shell installs.
+            let tab = reserve_connect_tab(&ui, &state);
+            connect::open_terminal(&ui, &state.borrow(), Some(tab));
+            sync_tab_bar(&ui, &state);
+        });
+    }
     {
         // Keep strong references so the modeless dialog stays alive.
         let open_dialogs: Rc<RefCell<Vec<crate::ui::main_window::HistoryDialog>>> =
@@ -4899,6 +5544,33 @@ fn main() -> Result<(), slint::PlatformError> {
             open_dialogs.borrow_mut().push(Rc::new(dialog));
         });
     }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_show_shortcuts(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let queue = ui.get_queue_shortcut().to_string();
+            let history = ui.get_history_shortcut().to_string();
+            let mod_key = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" };
+            let body = format!(
+                "Keyboard shortcuts\n\n\
+                 {queue} — Transfer queue\n\
+                 {history} — History\n\
+                 F2 — Rename\n\
+                 F5 — Copy to other pane\n\
+                 F6 — Move to other pane\n\
+                 F7 — Download\n\
+                 F8 — Upload\n\
+                 F9 — New folder\n\
+                 F10 — New file\n\
+                 Delete — Delete selection\n\
+                 Tab — Focus other pane\n\
+                 {mod_key}+Tab — Next session tab\n\
+                 {mod_key}+L / {mod_key}+R — Focus left / right pane\n\
+                 {mod_key}+Shift+C / V — Console copy / paste"
+            );
+            crate::connect::show_alert("Keyboard shortcuts", &body);
+        });
+    }
 
     // ---- left pane (local) --------------------------------------------------
 
@@ -5023,20 +5695,6 @@ fn main() -> Result<(), slint::PlatformError> {
         let mut payload = slint::DataTransfer::default();
         payload.set_user_data(Rc::new(PaneDragMarker));
         ui.set_drag_payload(payload);
-    }
-    {
-        let ui_weak = ui.as_weak();
-        let state = state.clone();
-        ui.on_left_crumb_clicked(move |index| {
-            let Some(ui) = ui_weak.upgrade() else { return };
-            // Targets are kept alongside the labels when the breadcrumbs are
-            // rebuilt; an empty target is the elision marker.
-            let path = LEFT_CRUMB_TARGETS
-                .with(|cell| cell.borrow().get(index.max(0) as usize).cloned())
-                .filter(|target| !target.is_empty());
-            let Some(path) = path else { return };
-            reload_local(&ui, &state, &path);
-        });
     }
     {
         let ui_weak = ui.as_weak();
@@ -5293,6 +5951,15 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
+        ui.on_refresh_left(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let path = ui.get_left_path().to_string();
+            reload_local(&ui, &state, &path);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
         ui.on_refresh_right(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             if right_pane_is_local(&ui) {
@@ -5398,31 +6065,6 @@ fn main() -> Result<(), slint::PlatformError> {
                 reload_right_local(&ui, &state, &path);
                 return;
             }
-            let normalized = normalize_remote_path(&path);
-            ui.set_right_path(normalized.clone().into());
-            state.borrow_mut().push_recent_remote_path(normalized);
-            request_remote_reload(&ui, &state);
-        });
-    }
-    {
-        let ui_weak = ui.as_weak();
-        let state = state.clone();
-        ui.on_right_crumb_clicked(move |index| {
-            let Some(ui) = ui_weak.upgrade() else { return };
-            if right_pane_is_local(&ui) {
-                // Local crumbs keep their absolute targets beside the labels
-                // (same contract as the left pane).
-                let path = RIGHT_CRUMB_TARGETS
-                    .with(|cell| cell.borrow().get(index.max(0) as usize).cloned())
-                    .filter(|target| !target.is_empty());
-                let Some(path) = path else { return };
-                reload_right_local(&ui, &state, &path);
-                return;
-            }
-            let crumbs: Vec<SharedString> = ui.get_right_breadcrumbs().iter().collect();
-            let Some(path) = remote_path_from_crumbs(&crumbs, index as usize) else {
-                return;
-            };
             let normalized = normalize_remote_path(&path);
             ui.set_right_path(normalized.clone().into());
             state.borrow_mut().push_recent_remote_path(normalized);
@@ -5802,8 +6444,8 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         ui.on_permissions_right(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            // C++ changeRemotePermissions: capability gate, then exactly one
-            // selected row.
+            // C++ changeRemotePermissions: capability gate, then one or more
+            // selected rows (batch apply).
             let supports = state.borrow().active_session().is_some_and(|record| {
                 capabilities_for_protocol(record.options.protocol).supports_permissions
             });
@@ -5814,31 +6456,59 @@ fn main() -> Result<(), slint::PlatformError> {
                 );
                 return;
             }
-            // C++ changeRemotePermissions: exactly one selected row.
             let rows: Vec<i32> = ui.get_right_selected_rows().iter().collect();
             let parent = pane_entries(&ui, 1).1;
             let rows: Vec<i32> = rows
                 .into_iter()
                 .filter(|row| Some(*row) != parent)
                 .collect();
-            if rows.len() != 1 {
-                crate::connect::show_alert("Permissions", "Select only one item.");
+            if rows.is_empty() {
+                crate::connect::show_alert("Permissions", "Select one or more items.");
                 return;
             }
-            let Some(entry) = ui.get_right_entries().row_data(rows[0] as usize) else {
-                return;
-            };
             let current = ui.get_right_path().to_string();
-            let target = join_remote(&current, &entry.name);
+            let mut targets: Vec<String> = Vec::new();
+            let mut any_dir = false;
+            let mut seed_mode: Option<u32> = None;
+            let mut seed_entry: Option<crate::ui::main_window::FileEntry> = None;
+            for row in rows {
+                let Some(entry) = ui.get_right_entries().row_data(row as usize) else {
+                    continue;
+                };
+                if entry.is_dir {
+                    any_dir = true;
+                }
+                if seed_mode.is_none() {
+                    seed_mode = Some(entry.mode.max(0) as u32);
+                    seed_entry = Some(entry.clone());
+                }
+                targets.push(join_remote(&current, &entry.name));
+            }
+            if targets.is_empty() {
+                return;
+            }
             let Some(session_id) = state.borrow().active_session_id() else {
                 ui.set_status_text("Not connected".into());
                 return;
             };
-            let flow = remote::open_permissions(&ui, entry.clone(), entry.mode.max(0) as u32);
+            let Some(entry) = seed_entry else { return };
+            let mode = seed_mode.unwrap_or(0o644);
+            let flow = if targets.len() == 1 {
+                remote::open_permissions(&ui, entry, mode)
+            } else {
+                let mut batch_entry = entry;
+                batch_entry.is_dir = any_dir;
+                batch_entry.name = if any_dir {
+                    format!("{} items — same mode for all", targets.len()).into()
+                } else {
+                    format!("{} items — same mode for all", targets.len()).into()
+                };
+                remote::open_permissions(&ui, batch_entry, mode)
+            };
             PERMISSION_FLOWS.with(|flows| {
                 flows
                     .borrow_mut()
-                    .push((flow, target, entry.is_dir, session_id));
+                    .push((flow, targets, any_dir, session_id));
             });
         });
     }
@@ -5954,6 +6624,24 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_risk_banner_visible(false);
             }
             ui.set_remote_connected(st.active_tab().is_some_and(|tab| tab.is_connected()));
+            let active_transfers = st
+                .transfer_manager
+                .tasks()
+                .iter()
+                .filter(|t| {
+                    matches!(
+                        t.state,
+                        transfer::TransferState::Queued
+                            | transfer::TransferState::Active
+                            | transfer::TransferState::Paused
+                    )
+                })
+                .count() as i32;
+            drop(st);
+            ui.set_active_transfers(active_transfers);
+            // The Start Page list mirrors the site store, which the modeless
+            // Site Manager (or a new recent server) can change while it is up.
+            refresh_start_page_if_stale(&ui);
         });
     }
 
@@ -5980,22 +6668,35 @@ fn main() -> Result<(), slint::PlatformError> {
     reload_local(&ui, &state, &initial);
     reload_right_local(&ui, &state, &initial);
 
-    // Deferred so the main window is shown before the dialog: mirror the
-    // C++ `prefOpenSiteManagerOnStartup` behavior.
+    // Deferred so the main window is shown before the Start Page or dialog.
+    // `UI/startupMode` picks the workspace (Rust-only Start Page by default);
+    // the legacy `UI/showConnOnStart` maps onto the Site Manager mode.
     let startup_timer = Timer::default();
     startup_timer.start(TimerMode::SingleShot, Duration::from_millis(0), {
         let ui_weak = ui.as_weak();
         let state = state.clone();
-        let open_on_startup = state.borrow().prefs.open_site_manager_on_startup;
+        let startup_mode = settings::Preferences::load().startup_mode_enum();
         move || {
             // Deferred startup purge of stale drag-out staging batches
             // (port of the C++ `QTimer::singleShot(0, ...)` block).
             cleanup_staging_root(&settings::Preferences::load());
-            if !open_on_startup {
-                return;
-            }
             let Some(ui) = ui_weak.upgrade() else { return };
-            site_manager::open(&ui, &state.borrow());
+            match startup_mode {
+                settings::StartupMode::StartPage => {
+                    show_start_page(&ui, &state.borrow(), Some(0));
+                }
+                settings::StartupMode::DualPanel => {
+                    // The blank local/local tab behind the panes is already up.
+                }
+                settings::StartupMode::Terminal => {
+                    // Straight into a terminal: with no site, that is the
+                    // Quick Connect dialog in terminal mode.
+                    connect::open_terminal(&ui, &state.borrow(), None);
+                }
+                settings::StartupMode::SiteManager => {
+                    site_manager::open(&ui, &state.borrow());
+                }
+            }
         }
     });
 
@@ -6021,6 +6722,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
 #[cfg(test)]
 mod console_view_tests;
+#[cfg(test)]
+mod start_page_view_tests;
 
 #[cfg(test)]
 mod layout_tests {
@@ -6066,19 +6769,86 @@ mod layout_tests {
         );
     }
 
-    /// Dragging the splitter must track the cursor 1:1 (the incremental
-    /// anchor-based math exists precisely to avoid half-speed convergence).
+    /// While the Start Page is up it must own the whole workspace (the hidden
+    /// toolbar, tab bar and panes keep their layout slots, so the page is an
+    /// overlay rather than a sibling competing for the flexible space).
     #[test]
-    fn splitter_drag_resizes_panes_1to1() {
+    fn start_page_overlays_the_workspace() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().unwrap();
+        ui.window().dispatch_event(WindowEvent::Resized {
+            size: slint::LogicalSize::new(1200.0, 700.0),
+        });
+        ui.set_start_page_visible(true);
+        ui.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(120.0, 400.0),
+        });
+        let page = (
+            ui.get_start_page_x(),
+            ui.get_start_page_y(),
+            ui.get_start_page_w(),
+            ui.get_start_page_h(),
+        );
+        assert_eq!(page.0, 0.0);
+        assert_eq!(page.2, 1200.0, "the page spans the window: {page:?}");
+        assert!(
+            page.3 > 600.0,
+            "the page fills the workspace between menu and status bar: {page:?}"
+        );
+    }
+
+    /// A terminal-workspace tab hides the local browser, so the pane holding
+    /// the console must take the whole row (the splitter collapses too).
+    #[test]
+    fn full_window_console_collapses_the_left_pane() {
         i_slint_backend_testing::init_no_event_loop();
         let ui = MainWindow::new().unwrap();
         ui.window().dispatch_event(WindowEvent::Resized {
             size: slint::LogicalSize::new(1200.0, 700.0),
         });
         ui.set_left_pane_width(691.0);
+        ui.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(100.0, 100.0),
+        });
+        assert_eq!(ui.get_right_pane_w(), 502.0);
+        ui.set_console_full_window(true);
+        ui.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(100.0, 100.0),
+        });
+        assert_eq!(
+            ui.get_right_pane_w(),
+            1200.0,
+            "the console pane should take the whole row in terminal mode"
+        );
+    }
+
+    /// Dragging the splitter must track the cursor 1:1 (the incremental
+    /// anchor-based math exists precisely to avoid half-speed convergence) and
+    /// the right pane must take the freed space.
+    ///
+    /// The drag starts from a narrow left pane so that both panes stay above
+    /// their content minimum: the pane toolbars' icon rows (plus the pane
+    /// labels) set a hard floor of ~465px for the right pane, and a pane
+    /// clamped by that floor would mask the refill.
+    #[test]
+    fn splitter_drag_resizes_panes_1to1() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().unwrap();
+        const WINDOW_W: f32 = 1200.0;
+        ui.window().dispatch_event(WindowEvent::Resized {
+            size: slint::LogicalSize::new(WINDOW_W, 700.0),
+        });
+        ui.set_left_pane_width(560.0);
+        ui.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(100.0, 100.0),
+        });
+        let right_before = ui.get_right_pane_w();
+        assert!(
+            (right_before - (WINDOW_W - 560.0 - 7.0)).abs() < 2.0,
+            "right pane should fill the window before the drag (got {right_before})"
+        );
         // Panes row starts below menu bar (27px) + main toolbar (38px).
-        // Drag +60px (stays above the right pane's ~430px content minimum).
-        let (x, y) = (691.0 + 3.5, 400.0);
+        let (x, y) = (560.0 + 3.5, 400.0);
         ui.window().dispatch_event(WindowEvent::PointerPressed {
             position: slint::LogicalPosition::new(x, y),
             button: slint::platform::PointerEventButton::Left,
@@ -6094,13 +6864,14 @@ mod layout_tests {
         });
         let left = ui.get_left_pane_width();
         assert!(
-            (left - 751.0).abs() < 2.0,
-            "60px drag should move the divider 60px (expected 751, got {left})"
+            (left - 620.0).abs() < 2.0,
+            "60px drag should move the divider 60px (expected 620, got {left})"
         );
         let right = ui.get_right_pane_w();
         assert!(
-            (right - (1200.0 - 751.0 - 7.0)).abs() < 2.0,
-            "right pane should refill after the drag (got {right})"
+            (right - (right_before - 60.0)).abs() < 2.0,
+            "right pane should give up exactly the dragged 60px (expected {}, got {right})",
+            right_before - 60.0
         );
     }
 
@@ -6116,10 +6887,10 @@ mod layout_tests {
         });
         ui.set_left_pane_width(691.0);
         // Right pane spans x = 698..1200. Row offsets inside the pane:
-        // session tabs 30 + toolbar 32 + breadcrumbs 24 + path 30 -> header
-        // center at y = 65 + 30 + 32 + 24 + 30 + 12.
+        // session tabs 30 + pane toolbar 32 + path 30 -> header center at
+        // y = 65 + 30 + 32 + 30 + 12 (breadcrumbs were removed from chrome).
         let handle_x = 698.0 + (1200.0 - 698.0) - 120.0;
-        let y = 65.0 + 30.0 + 32.0 + 24.0 + 30.0 + 12.0;
+        let y = 65.0 + 30.0 + 32.0 + 30.0 + 12.0;
         ui.window().dispatch_event(WindowEvent::PointerPressed {
             position: slint::LogicalPosition::new(handle_x, y),
             button: slint::platform::PointerEventButton::Left,
@@ -6170,6 +6941,11 @@ mod dnd_tests {
             name: name.into(),
             is_dir,
             size: 0,
+            size_text: if is_dir {
+                "--".into()
+            } else {
+                "0 bytes".into()
+            },
             has_size: true,
             mtime: 0,
             mode: 0,
@@ -6306,6 +7082,11 @@ mod tab_tests {
             name: name.into(),
             is_dir,
             size: 0,
+            size_text: if is_dir {
+                "--".into()
+            } else {
+                "0 bytes".into()
+            },
             has_size: true,
             mtime: 0,
             mode: 0,
@@ -6425,6 +7206,7 @@ mod tab_tests {
                     busy: true,
                     started_at: Instant::now(),
                     no_host_verification: true,
+                    route: crate::routing::RouteChoice::default(),
                 },
             );
             st.tabs[1].session_id = Some(session_id);
@@ -6681,5 +7463,154 @@ mod selection_tests {
             search_status_text("Remote panel", 0, &SearchOutcome::default()),
             "No recursive matches found in Remote panel."
         );
+    }
+}
+
+#[cfg(test)]
+mod start_page_tests {
+    use super::{start_page_site_identity, Protocol, SessionOptions};
+
+    /// The Start Page hides recent servers that are also saved sites by
+    /// comparing this identity: it must ignore the cosmetic spelling of the
+    /// host/user but keep protocol, port and user apart.
+    #[test]
+    fn identity_normalizes_host_and_user_spelling() {
+        let base = SessionOptions {
+            protocol: Protocol::Sftp,
+            host: "Example.COM".to_string(),
+            port: 22,
+            username: " root ".to_string(),
+            ..SessionOptions::default()
+        };
+        assert_eq!(
+            start_page_site_identity(&base),
+            start_page_site_identity(&SessionOptions {
+                host: "example.com".to_string(),
+                username: "root".to_string(),
+                ..base.clone()
+            })
+        );
+        assert_ne!(
+            start_page_site_identity(&base),
+            start_page_site_identity(&SessionOptions {
+                port: 2222,
+                ..base.clone()
+            })
+        );
+        assert_ne!(
+            start_page_site_identity(&base),
+            start_page_site_identity(&SessionOptions {
+                protocol: Protocol::Scp,
+                ..base.clone()
+            })
+        );
+        assert_ne!(
+            start_page_site_identity(&base),
+            start_page_site_identity(&SessionOptions {
+                username: "other".to_string(),
+                ..base.clone()
+            })
+        );
+    }
+
+    /// The Start Page merges saved sites with recent servers: sites keep their
+    /// stored order and shadow a recent entry for the same deployment, while
+    /// recents follow behind carrying the index Rust resolves clicks with.
+    #[test]
+    fn rows_list_saved_sites_before_deduped_recents() {
+        let site = |name: &str, host: &str, username: &str| super::site_manager::SiteEntry {
+            name: name.to_string(),
+            protocol: Protocol::Sftp,
+            host: host.to_string(),
+            port: 22,
+            username: username.to_string(),
+            ..Default::default()
+        };
+        let sites = [
+            site("Prod", "prod.example.com", "deploy"),
+            site("Stage", "stage.example.com", "deploy"),
+        ];
+        let recent = |host: &str, username: &str| {
+            (
+                SessionOptions {
+                    protocol: Protocol::Sftp,
+                    host: host.to_string(),
+                    port: 22,
+                    username: username.to_string(),
+                    ..SessionOptions::default()
+                },
+                format!("{username}@{host}"),
+            )
+        };
+        // Second recent repeats "Prod" (also spelled differently) and must be
+        // dropped; the third one keeps its original recency index.
+        let recents = [
+            recent("other.example.com", "root"),
+            recent("PROD.example.com", "deploy"),
+            recent("stage.example.com", "deploy"),
+        ];
+        let rows = super::start_page_rows_from(&sites, &recents);
+        let shown: Vec<(i32, String, String)> = rows
+            .iter()
+            .map(|row| (row.kind, row.id.to_string(), row.name.to_string()))
+            .collect();
+        assert_eq!(
+            shown,
+            vec![
+                (0, "Prod".to_string(), "Prod".to_string()),
+                (0, "Stage".to_string(), "Stage".to_string()),
+                (1, "0".to_string(), "root@other.example.com".to_string()),
+            ]
+        );
+        assert!(rows[2]
+            .subtitle
+            .starts_with("Recent · root@other.example.com:22 · SFTP"));
+        assert!(rows[0]
+            .subtitle
+            .starts_with("deploy@prod.example.com:22 · SFTP"));
+    }
+
+    /// Rows resolve back to their connection: a saved-site row reports the
+    /// site name, a recent row its stored options (by recency index, which is
+    /// not the row index), and stale selections report "no site".
+    #[test]
+    fn picks_resolve_saved_sites_and_recents() {
+        let site = super::site_manager::SiteEntry {
+            name: "Prod".to_string(),
+            protocol: Protocol::Sftp,
+            host: "prod.example.com".to_string(),
+            port: 22,
+            username: "deploy".to_string(),
+            ..Default::default()
+        };
+        let recent_opt = SessionOptions {
+            protocol: Protocol::Scp,
+            host: "other.example.com".to_string(),
+            port: 22,
+            username: "root".to_string(),
+            ..SessionOptions::default()
+        };
+        let recents = [(recent_opt.clone(), "root@other.example.com".to_string())];
+        let rows = super::start_page_rows_from(&[site], &recents);
+
+        match super::start_page_pick_from(0, &rows, &recents) {
+            super::StartPagePick::SavedSite(name) => assert_eq!(name, "Prod"),
+            _ => panic!("row 0 is the saved site"),
+        }
+        match super::start_page_pick_from(1, &rows, &recents) {
+            super::StartPagePick::Recent(opt) => {
+                assert_eq!(opt.host, "other.example.com");
+                assert!(matches!(opt.protocol, Protocol::Scp));
+            }
+            _ => panic!("row 1 is the recent server"),
+        }
+        assert!(matches!(
+            super::start_page_pick_from(-1, &rows, &recents),
+            super::StartPagePick::None
+        ));
+        assert!(matches!(
+            super::start_page_pick_from(2, &rows, &recents),
+            super::StartPagePick::None
+        ));
     }
 }

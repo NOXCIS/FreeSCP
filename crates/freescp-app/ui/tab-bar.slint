@@ -17,6 +17,10 @@ export struct TabRow {
     active: bool,
     connected: bool,
     busy: bool,
+    // Console tab (Telnet terminal or SSH terminal workspace): the header
+    // shows a terminal glyph instead of the connection dot's file-browser
+    // meaning.
+    terminal: bool,
 }
 
 export component SessionTabBar inherits Rectangle {
@@ -40,113 +44,138 @@ export component SessionTabBar inherits Rectangle {
         spacing: 2px;
         vertical-stretch: 1;
 
-        for tab-row[i] in root.tabs : tab := Rectangle {
-            // Tab width follows the title, clamped so long host names elide
-            // instead of pushing the other tabs out of view.
-            width: min(220px, max(120px, title.preferred-width + subtitle.preferred-width + 52px));
-            height: 26px;
-            background: tab-row.active ? (tab-area.has-hover ? #34343b : #313136)
-                                       : (tab-area.has-hover ? #2c2c31 : #26262a);
-            border-radius: 4px;
+        // Scrollable strip so many tabs do not crush each other or the
+        // pinned new-tab control.
+        Flickable {
+            horizontal-stretch: 1;
+            viewport-height: parent.height;
+            height: parent.height;
+            interactive: true;
 
-            // Drop target first so the title/close hit areas painted in front
-            // still win pointer events; Slint routes drops to the DropArea
-            // regardless of z-order.
-            tab-drop := DropArea {
-                width: parent.width;
-                height: parent.height;
-                can-drop(event) => {
-                    return root.drag-active ? event.proposed-action : DragAction.none;
+            HorizontalLayout {
+                spacing: 2px;
+                padding-top: 2px;
+                padding-bottom: 2px;
+
+                for tab-row[i] in root.tabs : tab := Rectangle {
+                    // Tab width follows the title, clamped so long host names elide
+                    // instead of pushing the other tabs out of view.
+                    width: min(220px, max(120px, title.preferred-width + subtitle.preferred-width + 52px + (tab-row.terminal ? 14px : 0px)));
+                    height: 26px;
+                    background: tab-row.active ? (tab-area.has-hover ? #34343b : #313136)
+                                               : (tab-area.has-hover ? #2c2c31 : #26262a);
+                    border-radius: 4px;
+
+                    // Drop target first so the title/close hit areas painted in front
+                    // still win pointer events; Slint routes drops to the DropArea
+                    // regardless of z-order.
+                    tab-drop := DropArea {
+                        width: parent.width;
+                        height: parent.height;
+                        can-drop(event) => {
+                            return root.drag-active ? event.proposed-action : DragAction.none;
+                        }
+                        dropped(event) => {
+                            root.tab-drop-received(i);
+                            return event.proposed-action;
+                        }
+                    }
+
+                    // Active-tab underline.
+                    Rectangle {
+                        y: parent.height - 2px;
+                        width: parent.width;
+                        height: 2px;
+                        background: tab-row.active ? #4a90d9 : #00000000;
+                        border-radius: 1px;
+                    }
+
+                    // Connection state dot (green connected, amber busy, grey local).
+                    Rectangle {
+                        x: 8px;
+                        y: (parent.height - self.height) / 2;
+                        width: 7px;
+                        height: 7px;
+                        border-radius: 3.5px;
+                        background: tab-row.busy ? #e0a858
+                                  : (tab-row.connected ? #5cb85c : #6f6f77);
+                    }
+
+                    // Terminal tabs announce their workspace kind up front.
+                    Text {
+                        x: 19px;
+                        y: 0px;
+                        width: 16px;
+                        height: parent.height;
+                        text: ">_";
+                        vertical-alignment: center;
+                        color: tab-row.active ? #7fb2ea : #9a9aa2;
+                        font-size: 10px;
+                        visible: tab-row.terminal;
+                    }
+
+                    title := Text {
+                        x: tab-row.terminal ? 36px : 21px;
+                        y: 0px;
+                        width: parent.width - (tab-row.terminal ? 36px : 21px) - 20px;
+                        height: parent.height;
+                        text: tab-row.title;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: tab-row.active ? #e6e6e9 : #c9c9cf;
+                        font-size: 12px;
+                    }
+
+                    subtitle := Text {
+                        // Kept for the width computation only; the bar shows one line.
+                        visible: false;
+                        text: tab-row.subtitle;
+                    }
+
+                    close-area := TouchArea {
+                        x: parent.width - 19px;
+                        y: (parent.height - 18px) / 2;
+                        width: 18px;
+                        height: 18px;
+                        mouse-cursor: MouseCursor.pointer;
+                        Rectangle {
+                            width: parent.width;
+                            height: parent.height;
+                            background: close-area.has-hover ? #4a4a52 : #00000000;
+                            border-radius: 3px;
+                        }
+                        Image {
+                            width: 9px;
+                            height: 9px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            source: @image-url("../../../assets/icons/action-clear.svg");
+                            colorize: close-area.has-hover ? #e6e6e9 : #9a9aa2;
+                        }
+                        clicked => { root.tab-close-requested(i); }
+                    }
+
+                    tab-area := TouchArea {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width - 19px;
+                        height: parent.height;
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => { root.tab-selected(i); }
+                    }
+
+                    Tooltip {
+                        text: tab-row.subtitle == "" ? @markdown("\{tab-row.title}") : @markdown("\{tab-row.title}\n\{tab-row.subtitle}");
+                    }
                 }
-                dropped(event) => {
-                    root.tab-drop-received(i);
-                    return event.proposed-action;
-                }
-            }
-
-            // Active-tab underline.
-            Rectangle {
-                y: parent.height - 2px;
-                width: parent.width;
-                height: 2px;
-                background: tab-row.active ? #4a90d9 : #00000000;
-                border-radius: 1px;
-            }
-
-            // Connection state dot (green connected, amber busy, grey local).
-            Rectangle {
-                x: 8px;
-                y: (parent.height - self.height) / 2;
-                width: 7px;
-                height: 7px;
-                border-radius: 3.5px;
-                background: tab-row.busy ? #e0a858
-                          : (tab-row.connected ? #5cb85c : #6f6f77);
-            }
-
-            title := Text {
-                x: 21px;
-                y: 0px;
-                width: parent.width - 21px - 20px;
-                height: parent.height;
-                text: tab-row.title;
-                vertical-alignment: center;
-                overflow: elide;
-                color: tab-row.active ? #e6e6e9 : #c9c9cf;
-                font-size: 12px;
-            }
-
-            subtitle := Text {
-                // Kept for the width computation only; the bar shows one line.
-                visible: false;
-                text: tab-row.subtitle;
-            }
-
-            close-area := TouchArea {
-                x: parent.width - 19px;
-                y: (parent.height - 18px) / 2;
-                width: 18px;
-                height: 18px;
-                mouse-cursor: MouseCursor.pointer;
-                Rectangle {
-                    width: parent.width;
-                    height: parent.height;
-                    background: close-area.has-hover ? #4a4a52 : #00000000;
-                    border-radius: 3px;
-                }
-                Text {
-                    text: "×";
-                    width: parent.width;
-                    height: parent.height;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    color: close-area.has-hover ? #e6e6e9 : #9a9aa2;
-                    font-size: 13px;
-                }
-                clicked => { root.tab-close-requested(i); }
-            }
-
-            tab-area := TouchArea {
-                x: 0px;
-                y: 0px;
-                width: parent.width - 19px;
-                height: parent.height;
-                mouse-cursor: MouseCursor.pointer;
-                clicked => { root.tab-selected(i); }
-            }
-
-            Tooltip {
-                text: tab-row.subtitle == "" ? @markdown("\{tab-row.title}") : @markdown("\{tab-row.title}\n\{tab-row.subtitle}");
             }
         }
 
+        // Pinned outside the scroll strip so it stays reachable.
         ToolIcon {
-            tooltip: @tr("New tab");
-            source: @image-url("../../../assets/icons/action-new-file.svg");
+            tooltip: @tr("New session…");
+            source: @image-url("../../../assets/icons/action-new-tab.svg");
             clicked => { root.new-tab-requested(); }
         }
-
-        // Filler: keeps the tabs left-aligned when few are open.
-        Rectangle { horizontal-stretch: 1; }
     }
 }

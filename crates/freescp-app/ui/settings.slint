@@ -37,8 +37,11 @@ export component SettingsDialog inherits Window {
     in-out property <string> open-transfers-shortcut; // e.g. "F12"
     in-out property <string> open-history-shortcut; // e.g. "Ctrl+Shift+H"
     in-out property <bool> show-queue-on-enqueue;
-    in-out property <bool> open-site-manager-on-startup;
     in-out property <bool> open-site-manager-on-disconnect;
+    // `UI/startupMode`: index into "Start Page" / "Two-panel" / "Terminal" /
+    // "Site Manager" (Rust-only preference, replaces the old startup
+    // checkbox).
+    in-out property <int> startup-mode-index;
 
     // --- Sites (Sites/* + Protocol/* keys) ---
     in-out property <bool> delete-secrets-on-remove;
@@ -78,6 +81,10 @@ export component SettingsDialog inherits Window {
     // --- Network (Network/* keys) ---
     in-out property <int> session-health-interval-sec; // 60..=86400
     in-out property <int> remote-writeability-ttl-ms; // 1000..=120000
+    // --- Route selection (Rust-only feature) ---
+    in-out property <bool> auto-route-enabled;
+    in-out property <int> route-probe-budget-ms; // 100..=5000
+    in-out property <int> route-cache-ttl-sec; // 0..=3600, 0 = always probe
 
     // --- Local / staging (UI/defaultDownloadDir + Advanced/* keys) ---
     in-out property <string> default-download-dir;
@@ -117,8 +124,8 @@ export component SettingsDialog inherits Window {
     changed open-transfers-shortcut => { root.field-edited(); }
     changed open-history-shortcut => { root.field-edited(); }
     changed show-queue-on-enqueue => { root.field-edited(); }
-    changed open-site-manager-on-startup => { root.field-edited(); }
     changed open-site-manager-on-disconnect => { root.field-edited(); }
+    changed startup-mode-index => { root.field-edited(); }
     changed delete-secrets-on-remove => { root.field-edited(); }
     changed default-protocol => { root.field-edited(); }
     changed default-scp-mode => { root.field-edited(); }
@@ -139,6 +146,9 @@ export component SettingsDialog inherits Window {
     changed default-queue-auto-clear-minutes => { root.field-edited(); }
     changed session-health-interval-sec => { root.field-edited(); }
     changed remote-writeability-ttl-ms => { root.field-edited(); }
+    changed auto-route-enabled => { root.field-edited(); }
+    changed route-probe-budget-ms => { root.field-edited(); }
+    changed route-cache-ttl-sec => { root.field-edited(); }
     changed default-download-dir => { root.field-edited(); }
     changed staging-root => { root.field-edited(); }
     changed auto-clean-staging => { root.field-edited(); }
@@ -194,6 +204,33 @@ export component SettingsDialog inherits Window {
         return "ask";
     }
 
+    // Must be kept in sync with `settings::StartupMode::ALL`.
+    pure function startup-mode-label(index: int) -> string {
+        if index == 1 {
+            return @tr("Two-panel window");
+        }
+        if index == 2 {
+            return @tr("Terminal workspace");
+        }
+        if index == 3 {
+            return @tr("Two-panel + Site Manager");
+        }
+        return @tr("Start Page");
+    }
+
+    pure function startup-mode-code(label: string) -> int {
+        if label == @tr("Two-panel window") {
+            return 1;
+        }
+        if label == @tr("Terminal workspace") {
+            return 2;
+        }
+        if label == @tr("Two-panel + Site Manager") {
+            return 3;
+        }
+        return 0;
+    }
+
     pure function queue-clear-label(value: int) -> string {
         if value == 1 {
             return @tr("Completed");
@@ -222,7 +259,7 @@ export component SettingsDialog inherits Window {
 
     VerticalLayout {
         padding: 12px;
-        spacing: 10px;
+        spacing: 8px;
 
         TabWidget {
             Tab {
@@ -230,7 +267,7 @@ export component SettingsDialog inherits Window {
                 ScrollView {
                     VerticalLayout {
                         padding: 8px;
-                        spacing: 8px;
+                        spacing: 6px;
                         FormRow {
                             label: @tr("Language:");
                             ComboBox {
@@ -268,9 +305,21 @@ export component SettingsDialog inherits Window {
                             text: @tr("Show hidden files");
                             checked <=> root.show-hidden;
                         }
-                        CheckBox {
-                            text: @tr("Open Site Manager on startup");
-                            checked <=> root.open-site-manager-on-startup;
+                        FormRow {
+                            label: @tr("On startup:");
+                            ComboBox {
+                                model: [
+                                    @tr("Start Page"),
+                                    @tr("Two-panel window"),
+                                    @tr("Terminal workspace"),
+                                    @tr("Two-panel + Site Manager"),
+                                ];
+                                current-value: root.startup-mode-label(root.startup-mode-index);
+                                horizontal-stretch: 1;
+                                selected(value) => {
+                                    root.startup-mode-index = root.startup-mode-code(value);
+                                }
+                            }
                         }
                         CheckBox {
                             text: @tr("Open Site Manager on disconnect");
@@ -315,7 +364,7 @@ export component SettingsDialog inherits Window {
                 ScrollView {
                     VerticalLayout {
                         padding: 8px;
-                        spacing: 8px;
+                        spacing: 6px;
                         FormRow {
                             label: @tr("Parallel tasks:");
                             SpinBox {
@@ -334,7 +383,7 @@ export component SettingsDialog inherits Window {
                                 horizontal-stretch: 1;
                             }
                             Text {
-                                text: "KB/s";
+                                text: "KiB/s";
                                 vertical-alignment: center;
                             }
                         }
@@ -392,7 +441,7 @@ export component SettingsDialog inherits Window {
                 ScrollView {
                     VerticalLayout {
                         padding: 8px;
-                        spacing: 8px;
+                        spacing: 6px;
                         FormRow {
                             label: @tr("Default protocol:");
                             ComboBox {
@@ -435,7 +484,7 @@ export component SettingsDialog inherits Window {
                 ScrollView {
                     VerticalLayout {
                         padding: 8px;
-                        spacing: 8px;
+                        spacing: 6px;
                         FormRow {
                             label: @tr("Default known_hosts policy:");
                             ComboBox {
@@ -525,7 +574,7 @@ export component SettingsDialog inherits Window {
                 ScrollView {
                     VerticalLayout {
                         padding: 8px;
-                        spacing: 8px;
+                        spacing: 6px;
                         FormRow {
                             label: @tr("Session health check interval:");
                             SpinBox {
@@ -552,6 +601,39 @@ export component SettingsDialog inherits Window {
                                 vertical-alignment: center;
                             }
                         }
+                        // ---- Route selection (Rust-only feature) ----
+                        CheckBox {
+                            text: @tr("Pick the fastest route automatically (probe alternate routes, prefer LAN).");
+                            checked <=> root.auto-route-enabled;
+                        }
+                        FormRow {
+                            label: @tr("Route probe budget:");
+                            SpinBox {
+                                minimum: 100;
+                                maximum: 5000;
+                                value <=> root.route-probe-budget-ms;
+                                horizontal-stretch: 1;
+                                enabled: root.auto-route-enabled;
+                            }
+                            Text {
+                                text: @tr("ms");
+                                vertical-alignment: center;
+                            }
+                        }
+                        FormRow {
+                            label: @tr("Route probe cache TTL:");
+                            SpinBox {
+                                minimum: 0;
+                                maximum: 3600;
+                                value <=> root.route-cache-ttl-sec;
+                                horizontal-stretch: 1;
+                                enabled: root.auto-route-enabled;
+                            }
+                            Text {
+                                text: @tr("s (0 = always probe)");
+                                vertical-alignment: center;
+                            }
+                        }
                     }
                 }
             }
@@ -561,7 +643,7 @@ export component SettingsDialog inherits Window {
                 ScrollView {
                     VerticalLayout {
                         padding: 8px;
-                        spacing: 8px;
+                        spacing: 6px;
                         FormRow {
                             label: @tr("Download folder:");
                             LineEdit {

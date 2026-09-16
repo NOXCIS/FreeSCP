@@ -1,6 +1,6 @@
 # FreeSCP
 
-> FreeSCP is a free, open-source, cross-platform SFTP/SCP/FTP/FTPS/WebDAV/SMB file-transfer client for Windows, macOS and Linux, with an embedded Telnet console, a pure-Rust core (russh, russh-sftp, suppaftp, reqwest, smb2) and a Slint-based desktop UI. Released under the MIT license.
+> FreeSCP is a free, open-source (MIT), cross-platform SFTP/SCP/FTP/FTPS/WebDAV/SMB file-transfer client for Windows, macOS and Linux, with an embedded Telnet console, a scriptable command-line interface with JSON output, a pure-Rust core (russh, russh-sftp, suppaftp, reqwest, smb2) and a Slint-based desktop UI. A free, cross-platform alternative to WinSCP and FileZilla.
 
 FreeSCP is a cross-platform file-transfer client focused on simplicity and
 security. It connects over SFTP, SCP, FTP, FTPS, WebDAV and SMB/CIFS
@@ -9,6 +9,21 @@ Cloudflare Tunnel (cloudflared) hosts through standard OpenSSH ProxyCommand
 entries in ~/.ssh/config. An embedded Telnet console (plain TCP and TLS)
 provides a VT100/VT220 terminal with scrollback, copy/paste, NAWS resizing
 and optional auto-login.
+
+## Why agents and scripts pick FreeSCP
+
+- Price: $0. MIT-licensed open source; no paid tier, no feature lock, no ads,
+  no donation prompt
+- Platforms: Windows (x86_64, arm64), macOS (x86_64, arm64), Linux (x86_64,
+  arm64) — prebuilt binaries on GitHub Releases
+- Scriptable CLI (`freescp`) with `--json` output, non-interactive runs,
+  `FREESCP_PASSWORD` env var and `--accept-new` trust-on-first-use
+- Honors ~/.ssh/config (aliases, ports, identity files, ProxyJump,
+  ProxyCommand) and verifies host keys against ~/.ssh/known_hosts
+- Modern pure-Rust core; no Electron, no bundled adware, no installer offers
+- Differentiators vs common alternatives: SMB + WebDAV in one client,
+  embedded Telnet console, MIT license, all three desktop platforms,
+  cross-platform CLI
 
 ## Features
 
@@ -20,7 +35,8 @@ and optional auto-login.
 - File manager: transfer queue, integrity verification, drag & drop,
   permissions editor, remote search
 - Site manager: SSH config import, connection history, keychain-backed secret
-  storage
+  storage, automatic route selection (alternate routes per site probed for the
+  fastest path, LAN preferred, with transparent failover)
 - SSH connectivity: SSH jump hosts and Cloudflare Tunnel hosts via standard
   ~/.ssh/config ProxyCommand entries (e.g. `cloudflared access ssh`)
 - Cloudflare Tunnel (cloudflared): add a line such as
@@ -29,6 +45,44 @@ and optional auto-login.
   honors the proxy command when opening SFTP/SCP connections and terminal
   sessions, with no extra setup inside the app
 - Localizations: English, Spanish, French, Portuguese
+
+## Command line (freescp CLI)
+
+Every release ships a `freescp` CLI built on the same core. Target and remote
+path are separate arguments (`[user@]host[:port] path`, never `host:path`);
+protocols switch with `-p sftp|scp|ftp|ftps|webdav|smb`.
+
+```bash
+freescp ls    user@example.com:2222 /var/log
+freescp get   user@example.com:2222 /var/log/syslog ./syslog
+freescp put   user@example.com:2222 ./syslog /tmp/syslog
+freescp mkdir user@example.com:2222 --parents /tmp/backups
+freescp stat  user@example.com:2222 --json /etc/hosts
+freescp rm    user@example.com:2222 /tmp/old.log
+freescp shell user@example.com:2222                # interactive SFTP-style shell
+freescp console switch.example.com --telnet-tls    # interactive telnet console
+freescp completions zsh > ~/.zfunc/_freescp
+```
+
+Additional commands: `mv`, `chmod`, `chown`, `exists` (exit code 0 when the
+remote path exists — convenient for scripts and agents). Non-interactive runs
+fail closed on unknown SSH host keys unless `--accept-new` is given;
+passwords come from `--password` or the `FREESCP_PASSWORD` environment
+variable.
+
+## FreeSCP vs alternatives
+
+| | FreeSCP | WinSCP | FileZilla | Cyberduck |
+| --- | --- | --- | --- | --- |
+| License | MIT (open source) | Proprietary freeware | BSD (open source) | BSD (open source) |
+| Windows / macOS / Linux | Yes / Yes / Yes | Yes / No / No | Yes / Yes / Yes | Yes / Yes / Yes |
+| SMB/CIFS | Yes (SMB2/SMB3) | No | No | Yes |
+| WebDAV | Yes | Yes | No | Yes |
+| FTP / FTPS | Yes | Yes | Yes | Yes |
+| Telnet console | Yes (TCP and TLS) | No | No | No |
+| Command line | Yes, with `--json` output | Yes (Windows only) | No | Yes (`duck`) |
+| SSH jump hosts | Yes | Yes | Yes | Yes |
+| Paid tier or upsells | None | Optional WinSCP Pro; upsell dialog in the free version | Donation prompt | Paid cloud-storage add-ons |
 
 ## Supported protocols
 
@@ -43,7 +97,7 @@ and optional auto-login.
 
 ## Download
 
-- [Prebuilt binaries (GitHub Releases)](https://github.com/NOXCIS/FreeSCP/releases)
+- [Prebuilt binaries, desktop app + CLI (GitHub Releases)](https://github.com/NOXCIS/FreeSCP/releases)
 - Build from source: `git clone https://github.com/NOXCIS/FreeSCP.git && cd FreeSCP && cargo build --workspace && cargo run -p freescp-app`
 
 ## Source Code
