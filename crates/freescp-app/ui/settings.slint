@@ -16,6 +16,7 @@ import {
     CheckBox,
     ComboBox,
     LineEdit,
+    Palette,
     ScrollView,
     SpinBox,
     TabWidget,
@@ -26,8 +27,18 @@ import { Labels } from "labels.slint";
 
 export component SettingsDialog inherits Window {
     title: @tr("Settings");
-    width: 880px;
-    height: 660px;
+    // preferred-* sets the initial size; fixed width/height would lock the
+    // window so the OS cannot resize it (Slint Window contract).
+    preferred-width: 880px;
+    preferred-height: 660px;
+    min-width: 700px;
+    min-height: 500px;
+    background: Palette.background;
+
+    init => {
+        // Match the main window's dark chrome (std-widgets default to system-light).
+        Palette.color-scheme = ColorScheme.dark;
+    }
 
     // --- General (UI/* keys) ---
     in-out property <string> language; // en | es | fr | pt
@@ -257,11 +268,19 @@ export component SettingsDialog inherits Window {
         return 0;
     }
 
-    VerticalLayout {
-        padding: 12px;
-        spacing: 8px;
+    FocusScope {
+        width: 100%;
+        height: 100%;
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => { root.close-requested(); }
+        }
 
-        TabWidget {
+        VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            TabWidget {
             Tab {
                 title: @tr("General");
                 ScrollView {
@@ -740,20 +759,21 @@ export component SettingsDialog inherits Window {
             }
         }
 
-        DialogFooter {
-            spacing: 0px;
-            Button {
-                text: @tr("Close");
-                clicked => {
-                    root.close-requested();
+            DialogFooter {
+                spacing: 0px;
+                Button {
+                    text: @tr("Close");
+                    clicked => {
+                        root.close-requested();
+                    }
                 }
-            }
-            Button {
-                text: @tr("Apply");
-                primary: true;
-                enabled: root.dirty;
-                clicked => {
-                    root.apply-requested();
+                Button {
+                    text: @tr("Apply");
+                    primary: true;
+                    enabled: root.dirty;
+                    clicked => {
+                        root.apply-requested();
+                    }
                 }
             }
         }

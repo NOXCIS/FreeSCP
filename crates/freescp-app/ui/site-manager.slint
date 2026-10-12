@@ -5,8 +5,7 @@
 // re-declared here (re-declaring it would be a compile error). Rust code can
 // call `set_visible(...)`, `show()`, or `hide()` on the component handle.
 
-import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, SpinBox } from "std-widgets.slint";
-import { Palette } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, Palette, ScrollView, SpinBox } from "std-widgets.slint";
 import { PasswordEdit, BrowseEdit } from "widgets.slint";
 import { Labels } from "labels.slint";
 
@@ -61,8 +60,17 @@ export struct RouteRow {
 
 export component SiteManagerDialog inherits Window {
     title: @tr("Site Manager");
-    width: 760px;
-    height: 540px;
+    // preferred-* sets the initial size; fixed width/height would lock the
+    // window so the OS cannot resize it (Slint Window contract).
+    preferred-width: 760px;
+    preferred-height: 540px;
+    min-width: 600px;
+    min-height: 420px;
+    background: Palette.background;
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
 
     // Table model (set from Rust, see src/site_manager.rs).
     in-out property <[SiteRow]> rows;
@@ -244,6 +252,14 @@ export component SiteManagerDialog inherits Window {
             max(0px, root.rows.length * 30px - site-list.height),
         );
     }
+
+    FocusScope {
+        width: 100%;
+        height: 100%;
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => { root.close-requested(); }
+        }
 
     VerticalLayout {
         padding: 12px;
@@ -1403,5 +1419,6 @@ export component SiteManagerDialog inherits Window {
                 }
             }
         }
+    }
     }
 }

@@ -37,6 +37,8 @@ export component ToolIcon inherits TouchArea {
     in property <string> tooltip: "";
     width: 26px;
     mouse-cursor: MouseCursor.pointer;
+    accessible-role: button;
+    accessible-label: root.tooltip;
     Rectangle {
         width: parent.width;
         height: parent.height;
@@ -150,14 +152,13 @@ export component MenuCheckRow inherits TouchArea {
         height: parent.height;
         background: root.has-hover ? #3a3a44 : #00000000;
     }
-    Text {
-        text: "✓";
+    Image {
+        source: @image-url("../../../assets/icons/action-check.svg");
         x: 8px;
-        width: 14px;
-        height: parent.height;
-        vertical-alignment: center;
-        color: #4a90d9;
-        font-size: 12px;
+        y: (parent.height - self.height) / 2;
+        width: 12px;
+        height: 12px;
+        colorize: #4a90d9;
         visible: root.checked;
     }
     Text {
@@ -275,6 +276,7 @@ export component FormRow inherits HorizontalLayout {
         text: root.label;
         width: root.label-width;
         vertical-alignment: center;
+        color: Theme.text;
     }
     @children
 }

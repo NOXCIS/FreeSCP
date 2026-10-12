@@ -109,10 +109,16 @@ impl RouteChoice {
 
 /// Builds the candidate list: the primary endpoint first, then each route
 /// with inherited fields resolved. Every candidate gets `~/.ssh/config`
-/// resolution applied (aliases, ports, identities, ProxyJump), exactly like
-/// the primary does today in `connect::start_connect`.
+/// resolution applied (aliases, ports, identities; ProxyJump only when the
+/// candidate keeps a jump/proxy transport), exactly like the primary does
+/// today in `connect::start_connect`.
+///
+/// When the primary tunnels (jump/proxy) but its resolved `HostName` is a
+/// private/LAN address and no explicit direct route already targets that
+/// host, a synthetic `"LAN"` candidate is appended so Auto can prefer the
+/// local path when it is reachable.
 pub fn build_candidates(opt: &SessionOptions) -> Vec<RouteCandidate> {
-    let mut candidates = Vec::with_capacity(opt.routes.len() + 1);
+    let mut candidates = Vec::with_capacity(opt.routes.len() + 2);
 
     let mut primary = opt.clone();
     primary.routes.clear();
@@ -204,14 +210,85 @@ pub fn build_candidates(opt: &SessionOptions) -> Vec<RouteCandidate> {
             clear_jump(&mut o);
         }
 
-        crate::connect::apply_ssh_config_defaults(&mut o);
+        // Direct routes must not pick up ProxyJump from the Host alias —
+        // that would undo the clear and tunnel the LAN path again.
+        crate::connect::apply_ssh_config_defaults_with(&mut o, use_jump);
         candidates.push(RouteCandidate {
             label,
             probe: probe_target_for(&o),
             options: o,
         });
     }
+
+    maybe_inject_direct_lan(&mut candidates);
     candidates
+}
+
+/// When the primary endpoint tunnels to a private `HostName`, add a direct
+/// LAN candidate so Auto can prefer the local first hop when it answers.
+fn maybe_inject_direct_lan(candidates: &mut Vec<RouteCandidate>) {
+    let Some(primary) = candidates.first() else {
+        return;
+    };
+    let has_tunnel = primary
+        .options
+        .jump_host
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|h| !h.is_empty())
+        || (primary.options.proxy_type != ProxyType::None
+            && !primary.options.proxy_host.trim().is_empty());
+    if !has_tunnel {
+        return;
+    }
+    let host = primary.options.host.trim();
+    let Ok(ip) = host.parse::<std::net::IpAddr>() else {
+        return;
+    };
+    if !freescp_core::route::is_probably_lan(&ip) {
+        return;
+    }
+    let port = if primary.options.port == 0 {
+        22
+    } else {
+        primary.options.port
+    };
+    let already_direct = candidates.iter().any(|c| {
+        let c_port = if c.options.port == 0 {
+            22
+        } else {
+            c.options.port
+        };
+        c.options.host.trim() == host
+            && c_port == port
+            && c.options
+                .jump_host
+                .as_deref()
+                .map(str::trim)
+                .filter(|h| !h.is_empty())
+                .is_none()
+            && (c.options.proxy_type == ProxyType::None || c.options.proxy_host.trim().is_empty())
+    });
+    if already_direct {
+        return;
+    }
+
+    let mut lan = primary.options.clone();
+    clear_jump(&mut lan);
+    clear_proxy(&mut lan);
+    let label = if candidates
+        .iter()
+        .any(|c| c.label.eq_ignore_ascii_case("LAN"))
+    {
+        "LAN direct".to_string()
+    } else {
+        "LAN".to_string()
+    };
+    candidates.push(RouteCandidate {
+        label,
+        probe: probe_target_for(&lan),
+        options: lan,
+    });
 }
 
 fn clear_proxy(o: &mut SessionOptions) {
@@ -747,6 +824,46 @@ mod tests {
         let vpn = &candidates[2];
         assert_eq!(vpn.options.port, 2222);
         assert_eq!(vpn.options.username, "vpnuser");
+    }
+
+    #[test]
+    fn injects_direct_lan_when_primary_jumps_to_private_hostname() {
+        let opt = SessionOptions {
+            host: "10.42.0.226".to_string(),
+            port: 22,
+            username: "root".to_string(),
+            jump_host: Some("GW".to_string()),
+            routes: vec![],
+            ..SessionOptions::default()
+        };
+        let candidates = build_candidates(&opt);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].options.jump_host.as_deref(), Some("GW"));
+        let lan = &candidates[1];
+        assert_eq!(lan.label, "LAN");
+        assert_eq!(lan.options.host, "10.42.0.226");
+        assert_eq!(lan.options.jump_host, None);
+        assert_eq!(lan.options.proxy_type, ProxyType::None);
+        let probe = lan.probe.as_ref().unwrap();
+        assert_eq!(probe.kind, ProbeHopKind::Direct);
+        assert_eq!(probe.host, "10.42.0.226");
+    }
+
+    #[test]
+    fn does_not_duplicate_existing_direct_lan_route() {
+        let opt = SessionOptions {
+            host: "10.42.0.226".to_string(),
+            jump_host: Some("GW".to_string()),
+            routes: vec![freescp_core::route::SessionRoute {
+                label: "LAN".to_string(),
+                host: "10.42.0.226".to_string(),
+                ..Default::default()
+            }],
+            ..SessionOptions::default()
+        };
+        let candidates = build_candidates(&opt);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[1].label, "LAN");
     }
 
     #[test]

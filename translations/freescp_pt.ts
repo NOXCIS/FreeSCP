@@ -3183,6 +3183,28 @@ Remoto: %3</translation>
         <source>Clear finished</source>
         <translation>Limpar finalizadas</translation>
     </message>
+    <message>
+        <source>More...</source>
+        <translation>Mais...</translation>
+    </message>
+    <message>
+        <source>KiB/s (0 = no limit)</source>
+        <translation>KiB/s (0 = sem limite)</translation>
+    </message>
+    <message>
+        <source>No transfers yet.
+Copy, upload, or download a file to fill this queue.</source>
+        <translation>Ainda não há transferências.
+Copie, envie ou descarregue um ficheiro para preencher esta fila.</translation>
+    </message>
+    <message>
+        <source>No transfers match this filter.</source>
+        <translation>Nenhuma transferência corresponde a este filtro.</translation>
+    </message>
+    <message>
+        <source>min</source>
+        <translation>min</translation>
+    </message>
 </context>
 <context>
     <name>SearchDialog</name>

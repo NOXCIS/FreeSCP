@@ -8,6 +8,9 @@
 //! `<config_dir>/freescp/history.toml`. Server entries keep the C++ on-disk
 //! shape: a QUrlQuery-encoded string
 //! (`protocol=sftp&host=...&port=22&user=...`), percent-encoded.
+//!
+//! FreeSCP also remembers the last remote directory per server identity so a
+//! reconnect opens the pane where the previous session left off (Rust-only).
 
 use freescp_core::{
     default_port_for_protocol, default_port_for_telnet, protocol_display_name,
@@ -21,15 +24,30 @@ use std::path::{Component, Path, PathBuf};
 /// `kRecentHistoryMaxEntries` in MainWindow.cpp.
 pub const MAX_RECENT_ENTRIES: usize = 20;
 
+/// Cap on remembered last-directory entries (one per server identity).
+pub const MAX_LAST_REMOTE_PATHS: usize = 50;
+
 const HISTORY_FILE: &str = "history.toml";
 
-/// On-disk shape of the history (mirrors the three QSettings string lists).
+/// One remembered remote working directory, keyed by the same encoding as
+/// [`encode_recent_server`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+struct LastRemotePathEntry {
+    server: String,
+    path: String,
+}
+
+/// On-disk shape of the history (mirrors the three QSettings string lists,
+/// plus FreeSCP's per-server last remote directory).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct HistoryFile {
     recent_local_paths: Vec<String>,
     recent_remote_paths: Vec<String>,
     recent_servers: Vec<String>,
+    /// Newest-first map of server identity → last remote path.
+    last_remote_paths: Vec<LastRemotePathEntry>,
 }
 
 fn history_path() -> PathBuf {
@@ -111,6 +129,57 @@ pub fn add_recent_server(opt: &SessionOptions) {
     if let Err(e) = save_history(&history) {
         tracing::warn!("Could not persist server history: {e}");
     }
+}
+
+/// Remembers the remote pane directory for `opt`'s server identity so the
+/// next filesystem connect to the same host/user/protocol restores it.
+pub fn set_last_remote_path(opt: &SessionOptions, path: &str) {
+    let server = encode_recent_server(opt);
+    if server.is_empty() {
+        return;
+    }
+    let normalized = normalize_remote_path_for_match(path);
+    if normalized.is_empty() {
+        return;
+    }
+    let mut history = load_history();
+    remember_last_remote_path(&mut history.last_remote_paths, &server, &normalized);
+    if let Err(e) = save_history(&history) {
+        tracing::warn!("Could not persist last remote path: {e}");
+    }
+}
+
+/// Last remote directory remembered for `opt`, if any.
+pub fn last_remote_path(opt: &SessionOptions) -> Option<String> {
+    let server = encode_recent_server(opt);
+    if server.is_empty() {
+        return None;
+    }
+    let history = load_history();
+    lookup_last_remote_path(&history.last_remote_paths, &server).map(str::to_string)
+}
+
+/// Prepends / updates a last-path entry and truncates to
+/// [`MAX_LAST_REMOTE_PATHS`].
+fn remember_last_remote_path(list: &mut Vec<LastRemotePathEntry>, server: &str, path: &str) {
+    list.retain(|entry| entry.server != server);
+    list.insert(
+        0,
+        LastRemotePathEntry {
+            server: server.to_string(),
+            path: path.to_string(),
+        },
+    );
+    list.truncate(MAX_LAST_REMOTE_PATHS);
+}
+
+fn lookup_last_remote_path<'a>(
+    list: &'a [LastRemotePathEntry],
+    server: &str,
+) -> Option<&'a str> {
+    list.iter()
+        .find(|entry| entry.server == server)
+        .map(|entry| entry.path.as_str())
 }
 
 /// Recent local paths, newest first (normalized; invalid entries dropped).
@@ -546,5 +615,45 @@ mod tests {
         for raw in ["a b&c=d", "user@host", "sftp://x", "héllo"] {
             assert_eq!(percent_decode(&percent_encode(raw)).as_deref(), Some(raw));
         }
+    }
+
+    #[test]
+    fn last_remote_path_is_per_server_and_mru() {
+        let a = encode_recent_server(&SessionOptions {
+            protocol: Protocol::Sftp,
+            host: "a.example.com".to_string(),
+            port: 22,
+            username: "alice".to_string(),
+            ..SessionOptions::default()
+        });
+        let b = encode_recent_server(&SessionOptions {
+            protocol: Protocol::Sftp,
+            host: "b.example.com".to_string(),
+            port: 22,
+            username: "bob".to_string(),
+            ..SessionOptions::default()
+        });
+        let mut list = Vec::new();
+        remember_last_remote_path(&mut list, &a, "/home/alice/proj");
+        remember_last_remote_path(&mut list, &b, "/var/www");
+        remember_last_remote_path(&mut list, &a, "/home/alice/docs");
+        assert_eq!(lookup_last_remote_path(&list, &a), Some("/home/alice/docs"));
+        assert_eq!(lookup_last_remote_path(&list, &b), Some("/var/www"));
+        assert_eq!(list[0].server, a);
+        assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn last_remote_path_list_is_capped() {
+        let mut list = Vec::new();
+        for i in 0..(MAX_LAST_REMOTE_PATHS + 5) {
+            remember_last_remote_path(
+                &mut list,
+                &format!("protocol=sftp&host=h{i}&port=22&user=u"),
+                &format!("/path/{i}"),
+            );
+        }
+        assert_eq!(list.len(), MAX_LAST_REMOTE_PATHS);
+        assert_eq!(list[0].path, format!("/path/{}", MAX_LAST_REMOTE_PATHS + 4));
     }
 }

@@ -17,7 +17,7 @@
 // checkboxes through the internal `*-bit` mirror properties, guarded by
 // `syncing` like the C++ QSignalBlocker.
 
-import { Button, CheckBox, ComboBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, Palette } from "std-widgets.slint";
 import { DialogFooter } from "widgets.slint";
 
 export component PermissionsDialog inherits Window {
@@ -44,9 +44,18 @@ export component PermissionsDialog inherits Window {
     property <bool> ow-bit: false;
     property <bool> ox-bit: false;
 
-    width: 440px;
-    height: 430px;
-    title: "Change permissions";
+    // preferred-* sets the initial size; fixed width/height would lock the
+    // window so the OS cannot resize it (Slint Window contract).
+    preferred-width: 440px;
+    preferred-height: 430px;
+    min-width: 360px;
+    min-height: 360px;
+    title: @tr("Change permissions");
+    background: Palette.background;
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
 
     // 0o400=256 0o200=128 0o100=64 0o040=32 0o020=16 0o010=8 0o004=4 0o002=2 0o001=1
     pure function compose-mode(ur_: bool, uw_: bool, ux_: bool, gr_: bool, gw_: bool, gx_: bool, or_: bool, ow_: bool, ox_: bool) -> int {
@@ -103,12 +112,20 @@ export component PermissionsDialog inherits Window {
         self.syncing = false;
     }
 
+    FocusScope {
+        width: 100%;
+        height: 100%;
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => { root.close-requested(); }
+        }
+
     VerticalLayout {
         padding: 12px;
         spacing: 8px;
 
         Text {
-            text: root.path == "" ? "Change permissions" : "Permissions for: " + root.path;
+            text: root.path == "" ? @tr("Change permissions") : @tr("Permissions for: ") + root.path;
             font-weight: 600;
             wrap: word-wrap;
         }
@@ -116,11 +133,11 @@ export component PermissionsDialog inherits Window {
         GridLayout {
             spacing: 6px;
 
-            Text { row: 0; col: 1; horizontal-alignment: center; text: "User"; }
-            Text { row: 0; col: 2; horizontal-alignment: center; text: "Group"; }
-            Text { row: 0; col: 3; horizontal-alignment: center; text: "Others"; }
+            Text { row: 0; col: 1; horizontal-alignment: center; text: @tr("User"); }
+            Text { row: 0; col: 2; horizontal-alignment: center; text: @tr("Group"); }
+            Text { row: 0; col: 3; horizontal-alignment: center; text: @tr("Others"); }
 
-            Text { row: 1; col: 0; vertical-alignment: center; text: "Read"; }
+            Text { row: 1; col: 0; vertical-alignment: center; text: @tr("Read"); }
             ur := CheckBox {
                 row: 1; col: 1;                checked: root.ur-bit;
                 toggled => {
@@ -143,7 +160,7 @@ export component PermissionsDialog inherits Window {
                 }
             }
 
-            Text { row: 2; col: 0; vertical-alignment: center; text: "Write"; }
+            Text { row: 2; col: 0; vertical-alignment: center; text: @tr("Write"); }
             uw := CheckBox {
                 row: 2; col: 1;                checked: root.uw-bit;
                 toggled => {
@@ -166,7 +183,7 @@ export component PermissionsDialog inherits Window {
                 }
             }
 
-            Text { row: 3; col: 0; vertical-alignment: center; text: "Execute"; }
+            Text { row: 3; col: 0; vertical-alignment: center; text: @tr("Execute"); }
             ux := CheckBox {
                 row: 3; col: 1;                checked: root.ux-bit;
                 toggled => {
@@ -189,10 +206,18 @@ export component PermissionsDialog inherits Window {
                 }
             }
 
-            Text { row: 4; col: 0; vertical-alignment: center; text: "Preset"; }
+            Text { row: 4; col: 0; vertical-alignment: center; text: @tr("Preset"); }
             presets := ComboBox {
                 row: 4; col: 1; colspan: 3;
-                model: ["Custom", "File (644)", "Executable file (755)", "Private (600)", "Private directory (700)", "Shared (664)", "Shared directory (775)"];
+                model: [
+                    @tr("Custom"),
+                    @tr("File (644)"),
+                    @tr("Executable file (755)"),
+                    @tr("Private (600)"),
+                    @tr("Private directory (700)"),
+                    @tr("Shared (664)"),
+                    @tr("Shared directory (775)"),
+                ];
                 current-index: preset-index(Math.mod(root.mode, 512));
                 selected => {
                     if root.syncing { return; }
@@ -214,12 +239,12 @@ export component PermissionsDialog inherits Window {
         }
 
         Text {
-            text: "Octal mode: " + octal-digits(compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit));
+            text: @tr("Octal mode: ") + octal-digits(compose-mode(root.ur-bit, root.uw-bit, root.ux-bit, root.gr-bit, root.gw-bit, root.gx-bit, root.or-bit, root.ow-bit, root.ox-bit));
             font-weight: 600;
         }
 
         CheckBox {
-            text: "Apply recursively to subfolders";
+            text: @tr("Apply recursively to subfolders");
             checked: root.recursive;
             visible: root.show-recursive;
             toggled => { root.recursive = self.checked; }
@@ -227,14 +252,15 @@ export component PermissionsDialog inherits Window {
 
         DialogFooter {
             Button {
-                text: "Cancel";
+                text: @tr("Cancel");
                 clicked => { root.close-requested(); }
             }
             Button {
-                text: "Apply";
+                text: @tr("Apply");
                 primary: true;
                 clicked => { root.apply-requested(); }
             }
         }
+    }
     }
 }

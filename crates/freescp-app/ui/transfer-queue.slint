@@ -4,8 +4,9 @@
 // (TransferManager) via the `rows` property; per-row cancel/selection and
 // footer actions bubble up through callbacks. Column order matches the C++
 // table: Name, Status, Progress, Transferred, Speed, ETA, Type, Source,
-// Destination, Attempts, Error — with Source/Destination splitting the
-// remaining flexible width.
+// Destination, Attempts, Error, then a fixed trailing actions column for
+// per-row cancel — with Source/Destination splitting the remaining
+// flexible width.
 //
 // Layout note (Slint 1.x): there is no custom-cell TableView element — only
 // the text-only StandardTableView, which cannot bind to `[QueueRow]` — so
@@ -19,7 +20,7 @@
 // close-event handler is declared here.
 
 import { Button, ComboBox, ListView, SpinBox } from "std-widgets.slint";
-import { MenuPopupFrame, MenuRow } from "widgets.slint";
+import { MenuPopupFrame, MenuRow, Theme } from "widgets.slint";
 
 export struct QueueRow {
     id: int,
@@ -33,12 +34,12 @@ export struct QueueRow {
     eta: string,           // "00:42" or ""
     attempts: string,      // "2/3"
     error: string,
-    state: string,         // Queued | Running | Paused | Completed | Error | Canceled
+    state: string,         // Queued | Running | Verifying | Paused | Completed | Error | Canceled
     selected: bool,
 }
 
 export component TransferQueueDialog inherits Window {
-    title: "Transfer queue";
+    title: @tr("Transfer queue");
     preferred-width: 1120px;
     preferred-height: 560px;
     min-width: 900px;
@@ -102,10 +103,13 @@ export component TransferQueueDialog inherits Window {
     property <length> col-type-w: 76px;
     property <length> col-attempts-w: 56px;
     property <length> col-error-w: 130px;
+    // Trailing per-row cancel; kept out of Error so text is not occluded.
+    property <length> col-actions-w: 34px;
     property <length> col-fixed-w:
         root.col-name-w + root.col-status-w + root.col-progress-w
         + root.col-transferred-w + root.col-speed-w + root.col-eta-w
-        + root.col-type-w + root.col-attempts-w + root.col-error-w;
+        + root.col-type-w + root.col-attempts-w + root.col-error-w
+        + root.col-actions-w;
 
     pure function flex-w(w: length) -> length {
         max(70px, (w - root.col-fixed-w) / 2 - 2px);
@@ -120,6 +124,7 @@ export component TransferQueueDialog inherits Window {
     pure function dest-x(w: length) -> length { root.source-x(w) + root.flex-w(w); }
     pure function attempts-x(w: length) -> length { root.dest-x(w) + root.flex-w(w); }
     pure function error-x(w: length) -> length { root.attempts-x(w) + root.col-attempts-w; }
+    pure function actions-x(w: length) -> length { root.error-x(w) + root.col-error-w; }
 
     // Esc hides the modeless dialog, like QDialog's default reject().
     // KeyBinding requires a FocusScope ancestor for the layout.
@@ -138,39 +143,39 @@ export component TransferQueueDialog inherits Window {
 
         HorizontalLayout {
             spacing: 4px;
-            Text { text: "Show:"; vertical-alignment: center; }
-            Button { text: "All"; checkable: true; checked: root.filter == 0; clicked => { root.filter = 0; root.filter-changed(); } }
-            Button { text: "Active"; checkable: true; checked: root.filter == 1; clicked => { root.filter = 1; root.filter-changed(); } }
-            Button { text: "Errors"; checkable: true; checked: root.filter == 2; clicked => { root.filter = 2; root.filter-changed(); } }
-            Button { text: "Completed"; checkable: true; checked: root.filter == 3; clicked => { root.filter = 3; root.filter-changed(); } }
-            Button { text: "Canceled"; checkable: true; checked: root.filter == 4; clicked => { root.filter = 4; root.filter-changed(); } }
+            Text { text: @tr("Show:"); vertical-alignment: center; }
+            Button { text: @tr("All"); checkable: true; checked: root.filter == 0; clicked => { root.filter = 0; root.filter-changed(); } }
+            Button { text: @tr("Active"); checkable: true; checked: root.filter == 1; clicked => { root.filter = 1; root.filter-changed(); } }
+            Button { text: @tr("Errors"); checkable: true; checked: root.filter == 2; clicked => { root.filter = 2; root.filter-changed(); } }
+            Button { text: @tr("Completed"); checkable: true; checked: root.filter == 3; clicked => { root.filter = 3; root.filter-changed(); } }
+            Button { text: @tr("Canceled"); checkable: true; checked: root.filter == 4; clicked => { root.filter = 4; root.filter-changed(); } }
         }
 
         // Header row; x positions must match the row template below.
         header := Rectangle {
             height: 24px;
-            background: #313136;
+            background: Theme.bg-header;
             visible: root.rows.length > 0;
-            Text { text: "Name"; x: 0px; width: root.col-name-w; height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
-            Text { text: "Status"; x: root.status-x(); width: root.col-status-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
-            Text { text: "Progress"; x: root.progress-x(); width: root.col-progress-w; height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
-            Text { text: "Transferred"; x: root.transferred-x(); width: root.col-transferred-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
-            Text { text: "Speed"; x: root.speed-x(); width: root.col-speed-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
-            Text { text: "ETA"; x: root.eta-x(); width: root.col-eta-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
-            Text { text: "Type"; x: root.type-x(); width: root.col-type-w; height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
-            Text { text: "Source"; x: root.source-x(parent.width); width: root.flex-w(parent.width); height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
-            Text { text: "Destination"; x: root.dest-x(parent.width); width: root.flex-w(parent.width); height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
-            Text { text: "Attempts"; x: root.attempts-x(parent.width); width: root.col-attempts-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
-            Text { text: "Error"; x: root.error-x(parent.width); width: root.col-error-w; height: parent.height; vertical-alignment: center; color: #9a9aa2; font-weight: 600; font-size: 12px; }
+            Text { text: @tr("Name"); x: 0px; width: root.col-name-w; height: parent.height; vertical-alignment: center; color: Theme.text-dim; font-weight: 600; font-size: 12px; }
+            Text { text: @tr("Status"); x: root.status-x(); width: root.col-status-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: Theme.text-dim; font-weight: 600; font-size: 12px; }
+            Text { text: @tr("Progress"); x: root.progress-x(); width: root.col-progress-w; height: parent.height; vertical-alignment: center; color: Theme.text-dim; font-weight: 600; font-size: 12px; }
+            Text { text: @tr("Transferred"); x: root.transferred-x(); width: root.col-transferred-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: Theme.text-dim; font-weight: 600; font-size: 12px; }
+            Text { text: @tr("Speed"); x: root.speed-x(); width: root.col-speed-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: Theme.text-dim; font-weight: 600; font-size: 12px; }
+            Text { text: @tr("ETA"); x: root.eta-x(); width: root.col-eta-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: Theme.text-dim; font-weight: 600; font-size: 12px; }
+            Text { text: @tr("Type"); x: root.type-x(); width: root.col-type-w; height: parent.height; vertical-alignment: center; color: Theme.text-dim; font-weight: 600; font-size: 12px; }
+            Text { text: @tr("Source"); x: root.source-x(parent.width); width: root.flex-w(parent.width); height: parent.height; vertical-alignment: center; color: Theme.text-dim; font-weight: 600; font-size: 12px; }
+            Text { text: @tr("Destination"); x: root.dest-x(parent.width); width: root.flex-w(parent.width); height: parent.height; vertical-alignment: center; color: Theme.text-dim; font-weight: 600; font-size: 12px; }
+            Text { text: @tr("Attempts"); x: root.attempts-x(parent.width); width: root.col-attempts-w; height: parent.height; vertical-alignment: center; horizontal-alignment: center; color: Theme.text-dim; font-weight: 600; font-size: 12px; }
+            Text { text: @tr("Error"); x: root.error-x(parent.width); width: root.col-error-w; height: parent.height; vertical-alignment: center; color: Theme.text-dim; font-weight: 600; font-size: 12px; }
         }
 
         if root.rows.length == 0 : Rectangle {
             vertical-stretch: 1;
             Text {
                 text: root.filter == 0
-                    ? "No transfers yet.\nCopy, upload, or download a file to fill this queue."
-                    : "No transfers match this filter.";
-                color: #6f6f77;
+                    ? @tr("No transfers yet.\nCopy, upload, or download a file to fill this queue.")
+                    : @tr("No transfers match this filter.");
+                color: Theme.text-faint;
                 font-size: 13px;
                 wrap: word-wrap;
                 horizontal-alignment: center;
@@ -187,8 +192,8 @@ export component TransferQueueDialog inherits Window {
             for row[i] in root.rows : Rectangle {
                 width: 100%;
                 height: 38px;
-                background: row.selected ? #33506e
-                    : (mod(i, 2) == 0 ? #2c2c31 : #2d2d32);
+                background: row.selected ? Theme.selection
+                    : (mod(i, 2) == 0 ? Theme.bg-stripe : Theme.bg-panel);
 
                 row-area := TouchArea {
                     width: 100%;
@@ -219,55 +224,55 @@ export component TransferQueueDialog inherits Window {
                                 padding: 4px;
                                 MenuRow {
                                     compact: true;
-                                    text: "Pause selected";
+                                    text: @tr("Pause selected");
                                     enabled: root.can-pause-selected;
                                     clicked => { row-popup.close(); root.pause-selected(); }
                                 }
                                 MenuRow {
                                     compact: true;
-                                    text: "Resume selected";
+                                    text: @tr("Resume selected");
                                     enabled: root.can-resume-selected;
                                     clicked => { row-popup.close(); root.resume-selected(); }
                                 }
                                 MenuRow {
                                     compact: true;
-                                    text: "Limit selected";
+                                    text: @tr("Limit selected");
                                     enabled: root.can-limit-selected;
                                     clicked => { row-popup.close(); root.limit-selected(); }
                                 }
                                 MenuRow {
                                     compact: true;
-                                    text: "Cancel selected";
+                                    text: @tr("Cancel selected");
                                     enabled: root.can-cancel-selected;
                                     clicked => { row-popup.close(); root.cancel-selected(); }
                                 }
                                 MenuRow {
                                     compact: true;
-                                    text: "Retry selected";
+                                    text: @tr("Retry selected");
                                     enabled: root.can-retry-selected;
                                     clicked => { row-popup.close(); root.retry-selected(); }
                                 }
-                                Rectangle { height: 1px; background: #3c3c42; }
+                                Rectangle { height: 1px; background: Theme.border; }
                                 MenuRow {
                                     compact: true;
-                                    text: "Open destination";
+                                    text: @tr("Open destination");
                                     enabled: root.can-open-destination-selected;
                                     clicked => { row-popup.close(); root.open-destination-selected(); }
                                 }
                                 MenuRow {
                                     compact: true;
-                                    text: "Copy source path";
+                                    text: @tr("Copy source path");
                                     clicked => { row-popup.close(); root.copy-source-selected(); }
                                 }
                                 MenuRow {
                                     compact: true;
-                                    text: "Copy destination path";
+                                    text: @tr("Copy destination path");
                                     clicked => { row-popup.close(); root.copy-dest-selected(); }
                                 }
-                                Rectangle { height: 1px; background: #3c3c42; }
+                                Rectangle { height: 1px; background: Theme.border; }
                                 MenuRow {
                                     compact: true;
-                                    text: "Clear finished";
+                                    text: @tr("Clear finished");
                                     clicked => { row-popup.close(); root.clear-finished(); }
                                 }
                             }
@@ -283,7 +288,7 @@ export component TransferQueueDialog inherits Window {
                     height: parent.height;
                     vertical-alignment: center;
                     overflow: elide;
-                    color: #e6e6e9;
+                    color: Theme.text;
                     font-size: 12px;
                 }
                 Text {
@@ -295,7 +300,7 @@ export component TransferQueueDialog inherits Window {
                     horizontal-alignment: center;
                     vertical-alignment: center;
                     overflow: elide;
-                    color: #e6e6e9;
+                    color: Theme.text;
                     font-size: 12px;
                 }
 
@@ -307,12 +312,12 @@ export component TransferQueueDialog inherits Window {
                     width: root.col-progress-w - 8px;
                     height: 6px;
                     clip: true;
-                    background: #3c3c42;
+                    background: Theme.border;
                     border-radius: 3px;
                     Rectangle {
                         width: parent.width * clamp(row.progress, 0.0, 1.0);
                         height: 100%;
-                        background: #4a90d9;
+                        background: Theme.accent;
                         border-radius: 3px;
                     }
                 }
@@ -323,7 +328,7 @@ export component TransferQueueDialog inherits Window {
                     width: root.col-progress-w - 8px;
                     height: 14px;
                     horizontal-alignment: right;
-                    color: #9a9aa2;
+                    color: Theme.text-dim;
                     font-size: 10px;
                 }
 
@@ -336,7 +341,7 @@ export component TransferQueueDialog inherits Window {
                     horizontal-alignment: center;
                     vertical-alignment: center;
                     overflow: elide;
-                    color: #9a9aa2;
+                    color: Theme.text-dim;
                     font-size: 11px;
                 }
                 Text {
@@ -348,7 +353,7 @@ export component TransferQueueDialog inherits Window {
                     horizontal-alignment: center;
                     vertical-alignment: center;
                     overflow: elide;
-                    color: #9a9aa2;
+                    color: Theme.text-dim;
                     font-size: 11px;
                 }
                 Text {
@@ -360,7 +365,7 @@ export component TransferQueueDialog inherits Window {
                     horizontal-alignment: center;
                     vertical-alignment: center;
                     overflow: elide;
-                    color: #9a9aa2;
+                    color: Theme.text-dim;
                     font-size: 11px;
                 }
 
@@ -382,7 +387,7 @@ export component TransferQueueDialog inherits Window {
                     height: parent.height;
                     vertical-alignment: center;
                     overflow: elide;
-                    color: #e6e6e9;
+                    color: Theme.text;
                     font-size: 12px;
                 }
 
@@ -394,7 +399,7 @@ export component TransferQueueDialog inherits Window {
                     height: parent.height;
                     vertical-alignment: center;
                     overflow: elide;
-                    color: #e6e6e9;
+                    color: Theme.text;
                     font-size: 12px;
                     Tooltip { text: @markdown("\{row.source}"); }
                 }
@@ -406,7 +411,7 @@ export component TransferQueueDialog inherits Window {
                     height: parent.height;
                     vertical-alignment: center;
                     overflow: elide;
-                    color: #e6e6e9;
+                    color: Theme.text;
                     font-size: 12px;
                     Tooltip { text: @markdown("\{row.dest}"); }
                 }
@@ -418,7 +423,7 @@ export component TransferQueueDialog inherits Window {
                     height: parent.height;
                     horizontal-alignment: center;
                     vertical-alignment: center;
-                    color: #9a9aa2;
+                    color: Theme.text-dim;
                     font-size: 11px;
                 }
                 Text {
@@ -429,7 +434,7 @@ export component TransferQueueDialog inherits Window {
                     height: parent.height;
                     vertical-alignment: center;
                     overflow: elide;
-                    color: #d98a8a;
+                    color: Theme.danger;
                     font-size: 11px;
                     Tooltip { text: @markdown("\{row.error}"); }
                 }
@@ -439,7 +444,7 @@ export component TransferQueueDialog inherits Window {
                     // No per-row cancel in the C++ dialog; terminal rows have
                     // nothing to cancel, so the button stays hidden there.
                     visible: row.state != "Completed" && row.state != "Error" && row.state != "Canceled";
-                    x: parent.width - 34px;
+                    x: root.actions-x(parent.width) + 4px;
                     y: (parent.height - self.height) / 2;
                     width: 26px;
                     height: 22px;
@@ -457,12 +462,12 @@ export component TransferQueueDialog inherits Window {
                 overflow: elide;
                 horizontal-stretch: 1;
             }
-            Button { text: "Pause"; enabled: root.can-pause-all; clicked => { root.pause-all(); } }
-            Button { text: "Resume"; enabled: root.can-resume-all; clicked => { root.resume-all(); } }
-            Button { text: "Cancel all"; enabled: root.can-cancel-all; clicked => { root.cancel-all(); } }
-            Button { text: "Retry"; enabled: root.can-retry; clicked => { root.retry-all(); } }
+            Button { text: @tr("Pause"); enabled: root.can-pause-all; clicked => { root.pause-all(); } }
+            Button { text: @tr("Resume"); enabled: root.can-resume-all; clicked => { root.resume-all(); } }
+            Button { text: @tr("Cancel all"); enabled: root.can-cancel-all; clicked => { root.cancel-all(); } }
+            Button { text: @tr("Retry"); enabled: root.can-retry; clicked => { root.retry-all(); } }
             more-btn := Button {
-                text: "More...";
+                text: @tr("More...");
                 clicked => { more-popup.show(); }
             }
             more-popup := PopupWindow {
@@ -477,31 +482,31 @@ export component TransferQueueDialog inherits Window {
                     more-layout := VerticalLayout {
                         padding: 4px;
                         MenuRow {
-                            text: "Pause selected";
+                            text: @tr("Pause selected");
                             enabled: root.can-pause-selected;
                             compact: true;
                             clicked => { more-popup.close(); root.pause-selected(); }
                         }
                         MenuRow {
-                            text: "Resume selected";
+                            text: @tr("Resume selected");
                             enabled: root.can-resume-selected;
                             compact: true;
                             clicked => { more-popup.close(); root.resume-selected(); }
                         }
                         MenuRow {
-                            text: "Cancel selected";
+                            text: @tr("Cancel selected");
                             enabled: root.can-cancel-selected;
                             compact: true;
                             clicked => { more-popup.close(); root.cancel-selected(); }
                         }
                         MenuRow {
-                            text: "Clear completed";
+                            text: @tr("Clear completed");
                             enabled: root.can-clear-completed;
                             compact: true;
                             clicked => { more-popup.close(); root.clear-completed(); }
                         }
                         MenuRow {
-                            text: "Clear failed/canceled";
+                            text: @tr("Clear failed/canceled");
                             enabled: root.can-clear-failed-cancelled;
                             compact: true;
                             clicked => { more-popup.close(); root.clear-failed-cancelled(); }
@@ -509,37 +514,42 @@ export component TransferQueueDialog inherits Window {
                     }
                 }
             }
-            Button { text: "Close"; clicked => { root.close-requested(); } }
+            Button { text: @tr("Close"); clicked => { root.close-requested(); } }
         }
 
         // Footer row 2: speed limits + auto clear (C++ row 5).
         HorizontalLayout {
             spacing: 6px;
-            Text { text: "Speed:"; vertical-alignment: center; }
+            Text { text: @tr("Speed:"); vertical-alignment: center; }
             SpinBox {
                 minimum: 0;
                 maximum: 1000000;
                 value <=> root.speed-value;
             }
-            Text { text: "KiB/s (0 = no limit)"; vertical-alignment: center; color: #9a9aa2; font-size: 11px; }
+            Text { text: @tr("KiB/s (0 = no limit)"); vertical-alignment: center; color: Theme.text-dim; font-size: 11px; }
             Button {
-                text: "Apply limit";
+                text: @tr("Apply limit");
                 clicked => { root.apply-speed-limit(root.speed-value); }
             }
             Button {
-                text: "Limit selected";
+                text: @tr("Limit selected");
                 enabled: root.can-limit-selected;
                 clicked => { root.limit-selected(); }
             }
             Rectangle { width: 16px; } // spacer
-            Text { text: "Auto clear:"; vertical-alignment: center; }
+            Text { text: @tr("Auto clear:"); vertical-alignment: center; }
             ComboBox {
-                model: ["Off", "Completed", "Failed/Canceled", "All finished"];
+                model: [
+                    @tr("Off"),
+                    @tr("Completed"),
+                    @tr("Failed/Canceled"),
+                    @tr("All finished"),
+                ];
                 current-index <=> root.auto-clear-mode;
                 selected(value) => {
-                    root.auto-clear-mode = value == "Completed" ? 1
-                        : (value == "Failed/Canceled" ? 2
-                        : (value == "All finished" ? 3 : 0));
+                    root.auto-clear-mode = value == @tr("Completed") ? 1
+                        : (value == @tr("Failed/Canceled") ? 2
+                        : (value == @tr("All finished") ? 3 : 0));
                     root.auto-clear-changed();
                 }
             }
@@ -550,7 +560,7 @@ export component TransferQueueDialog inherits Window {
                 value <=> root.auto-clear-minutes;
                 edited(value) => { root.auto-clear-changed(); }
             }
-            Text { text: "min"; vertical-alignment: center; }
+            Text { text: @tr("min"); vertical-alignment: center; }
         }
         }
     }

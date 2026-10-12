@@ -3183,6 +3183,28 @@ Distant : %3</translation>
         <source>Clear finished</source>
         <translation>Nettoyer terminés</translation>
     </message>
+    <message>
+        <source>More...</source>
+        <translation>Plus...</translation>
+    </message>
+    <message>
+        <source>KiB/s (0 = no limit)</source>
+        <translation>KiB/s (0 = sans limite)</translation>
+    </message>
+    <message>
+        <source>No transfers yet.
+Copy, upload, or download a file to fill this queue.</source>
+        <translation>Aucun transfert pour l'instant.
+Copiez, téléversez ou téléchargez un fichier pour remplir cette file.</translation>
+    </message>
+    <message>
+        <source>No transfers match this filter.</source>
+        <translation>Aucun transfert ne correspond à ce filtre.</translation>
+    </message>
+    <message>
+        <source>min</source>
+        <translation>min</translation>
+    </message>
 </context>
 <context>
     <name>SearchDialog</name>

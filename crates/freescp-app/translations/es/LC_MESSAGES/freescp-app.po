@@ -3398,6 +3398,30 @@ msgctxt "TransferQueueDialog"
 msgid "Clear finished"
 msgstr "Limpiar finalizadas"
 
+msgctxt "TransferQueueDialog"
+msgid "More..."
+msgstr "Más..."
+
+msgctxt "TransferQueueDialog"
+msgid "KiB/s (0 = no limit)"
+msgstr "KiB/s (0 = sin límite)"
+
+msgctxt "TransferQueueDialog"
+msgid ""
+"No transfers yet.\n"
+"Copy, upload, or download a file to fill this queue."
+msgstr ""
+"Aún no hay transferencias.\n"
+"Copie, suba o descargue un archivo para llenar esta cola."
+
+msgctxt "TransferQueueDialog"
+msgid "No transfers match this filter."
+msgstr "Ninguna transferencia coincide con este filtro."
+
+msgctxt "TransferQueueDialog"
+msgid "min"
+msgstr "min"
+
 msgctxt "SearchDialog"
 msgid "Search"
 msgstr "Buscar"
@@ -3745,3 +3769,163 @@ msgstr "Copiar a sesión"
 msgctxt "SessionTabBar"
 msgid "New tab"
 msgstr "Nueva pestaña"
+
+#. Same source text as another catalog entry
+msgctxt "AlertDialog"
+msgid "FreeSCP"
+msgstr "FreeSCP"
+
+#. Same source text as another catalog entry
+msgctxt "AlertDialog"
+msgid "No"
+msgstr "No"
+
+#. Same source text as another catalog entry
+msgctxt "AlertDialog"
+msgid "Yes"
+msgstr "Sí"
+
+#. Same source text as another catalog entry
+msgctxt "ConfirmTextDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#. Same source text as another catalog entry
+msgctxt "ConfirmTextDialog"
+msgid "Continue"
+msgstr "Continuar"
+
+#. Same source text as another catalog entry
+msgctxt "ConfirmTextDialog"
+msgid "Critical security risk"
+msgstr "Riesgo crítico de seguridad"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "Domain (workgroup):"
+msgstr "Dominio (grupo de trabajo):"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "HTTP (insecure)"
+msgstr "HTTP (no seguro)"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "HTTPS (recommended)"
+msgstr "HTTPS (recomendado)"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "Log in automatically using the stored credentials"
+msgstr "Iniciar sesión automáticamente con las credenciales guardadas"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "Password"
+msgstr "Contraseña"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "Telnet CA bundle:"
+msgstr "Bundle CA de Telnet:"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "Telnet over TLS (secure telnet, port 992)"
+msgstr "Telnet sobre TLS (telnet seguro, puerto 992)"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "Verify TLS server certificate (recommended)"
+msgstr "Verificar certificado del servidor TLS (recomendado)"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "Verify WebDAV server certificate (recommended)"
+msgstr "Verificar certificado del servidor WebDAV (recomendado)"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "WebDAV CA bundle:"
+msgstr "Bundle CA de WebDAV:"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "WebDAV scheme:"
+msgstr "Esquema WebDAV:"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "smb.example.com"
+msgstr "smb.example.com"
+
+#. Same source text as another catalog entry
+msgctxt "ConnectionDialog"
+msgid "telnet.example.com"
+msgstr "telnet.example.com"
+
+#. Same source text as another catalog entry
+msgctxt "HostKeyDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#. Same source text as another catalog entry
+msgctxt "HostKeyDialog"
+msgid "Confirm SSH fingerprint"
+msgstr "Confirmar huella SSH"
+
+#. Same source text as another catalog entry
+msgctxt "KbdIntPromptDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#. Same source text as another catalog entry
+msgctxt "KbdIntPromptDialog"
+msgid "Password required"
+msgstr "Contraseña requerida"
+
+#. Same source text as another catalog entry
+msgctxt "MainWindow"
+msgid "Retry"
+msgstr "Reintentar"
+
+#. Same source text as another catalog entry
+msgctxt "OverwriteDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#. Same source text as another catalog entry
+msgctxt "OverwriteDialog"
+msgid "Resume"
+msgstr "Reanudar"
+
+#. Same source text as another catalog entry
+msgctxt "PermissionsDialog"
+msgid "Apply"
+msgstr "Aplicar"
+
+#. Same source text as another catalog entry
+msgctxt "PermissionsDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#. Same source text as another catalog entry
+msgctxt "StartPage"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#. Same source text as another catalog entry
+msgctxt "StartPage"
+msgid "FreeSCP"
+msgstr "FreeSCP"
+
+#. Same source text as another catalog entry
+msgctxt "StartPage"
+msgid "Settings…"
+msgstr "Ajustes…"

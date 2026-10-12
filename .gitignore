@@ -11,6 +11,9 @@
 /.cargo-home/
 /.docker-target/
 
+# Local Linux UI audit (Xvfb screenshots + cargo caches)
+/tmp/
+
 # Secrets / env files
 AuthKey_*.p8
 .env

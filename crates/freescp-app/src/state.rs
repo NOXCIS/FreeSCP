@@ -600,9 +600,17 @@ impl AppState {
     /// Prepends `path` to the remote-path history, deduplicating and capping
     /// the list at [`MAX_RECENT_ENTRIES`], and forwards it to
     /// [`crate::history::add_recent_remote_path`] for persistence.
+    ///
+    /// When a filesystem session is active, also remembers `path` as that
+    /// server's last remote directory for the next reconnect.
     pub fn push_recent_remote_path(&mut self, path: String) {
         prepend_recent(&mut self.recent_remote_paths, path.clone());
         crate::history::add_recent_remote_path(&path);
+        if let Some(session_id) = self.active_session_id() {
+            if let Some(record) = self.sessions.get(&session_id) {
+                crate::history::set_last_remote_path(&record.options, &path);
+            }
+        }
     }
 
     /// Records a server in the recent-servers history (in-memory list plus

@@ -196,8 +196,10 @@ export component ConsoleView inherits Rectangle {
     }
 
     console-scope := FocusScope {
-        width: parent.width;
-        height: parent.height;
+        // 100% of the view; `parent.width` would publish the current frame as
+        // this scope's max and (by an absolute size) feed the window ceiling.
+        width: 100%;
+        height: 100%;
 
         key-pressed(event) => {
             // Copy first (works while disconnected for reading the buffer).
@@ -344,9 +346,13 @@ export component ConsoleView inherits Rectangle {
                 root.special-key(24);
                 return accept;
             }
+            // F11 and Ctrl/Cmd+Ctrl+F toggle the app window. Reject them so
+            // the main-window binding runs; they are not sent to the server.
             if (event.text == Key.F11) {
-                root.special-key(25);
-                return accept;
+                return reject;
+            }
+            if (event.modifiers.control && event.modifiers.meta && (event.text == "f" || event.text == "F")) {
+                return reject;
             }
             if (event.text == Key.F12) {
                 root.special-key(26);

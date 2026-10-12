@@ -26,7 +26,7 @@
 //   right pane's permission column differ, and hiding that behind flags made
 //   the old file harder to read than the duplication it removed.
 //
-// Palette (dark-friendly neutral, per assets/screenshots):
+// Palette (dark-friendly neutral, per assets/screenshots; see Theme in widgets.slint):
 //   window   #26262a   panel    #2d2d32   toolbar #313136
 //   border   #3c3c42   row-even #2c2c31   row-odd #2d2d32
 //   hover    #3a3a44   selection #33506e  text    #e6e6e9
@@ -68,10 +68,19 @@ export { SessionPickerDialog, SessionChoice } from "main-window-dialogs.slint";
 
 export component MainWindow inherits Window {
     title: root.title-text;
-    width: 1200px;
-    height: 700px;
+    // preferred-* is the initial size. A fixed width/height would lock the
+    // window (Slint Window contract). Child rows that bind `width: parent.width`
+    // publish that absolute size as their max, so the window inherits its
+    // current frame as a ceiling and cannot grow, zoom, or enter fullscreen.
+    // max-* replaces that ceiling. The minimum is left to the content (toolbars
+    // and columns): an explicit min-* below that minimum is what the window
+    // would report, and the panes would overflow instead of stopping the drag.
+    preferred-width: 1200px;
+    preferred-height: 700px;
+    max-width: 16384px;
+    max-height: 16384px;
     icon: @image-url("../../../assets/program/icon-freescp.svg");
-    background: #26262a;
+    background: Theme.bg-chrome;
     forward-focus: key-scope;
 
     // ---- window chrome ------------------------------------------------------
@@ -296,6 +305,9 @@ export component MainWindow inherits Window {
     in-out property <int> start-page-mode: 0;
     in-out property <bool> start-page-remember: false;
     in-out property <string> start-page-hint: "";
+    // False on cold start so Cancel/Escape cannot dismiss the workspace
+    // picker before the user has a session to return to.
+    in-out property <bool> start-page-can-dismiss: false;
 
     // ---- selection + focus + context menus ----------------------------------
 
@@ -356,6 +368,12 @@ export component MainWindow inherits Window {
     // console or other nested FocusScopes).
     public function focus-file-panes() {
         key-scope.focus();
+    }
+
+    // Give the Start Page its FocusScope so Up/Down/Return/Left/Right reach
+    // the workspace picker instead of sitting unused on the pane KeyBindings.
+    public function focus-start-page() {
+        start-page.focus-page();
     }
 
     callback connect-requested();
@@ -465,12 +483,15 @@ export component MainWindow inherits Window {
     key-scope := FocusScope {
         // FocusScope is not a layout: without explicit bounds neither it nor
         // its child layout fills the window, leaving dead space at the edge.
-        width: parent.width;
-        height: parent.height;
+        // 100% fills the frame. `parent.width` is an absolute size, which
+        // Slint also installs as the element's max and then the window cannot
+        // grow past the size it already has.
+        width: 100%;
+        height: 100%;
         changed width => { root.scope-w = self.width; }
         VerticalLayout {
-            width: parent.width;
-            height: parent.height;
+            width: 100%;
+            height: 100%;
             changed width => { root.vlayout-w = self.width; }
             spacing: 0px;
 
@@ -542,7 +563,18 @@ export component MainWindow inherits Window {
 
             HorizontalLayout {
                 vertical-stretch: 1;
-                changed width => { root.panes-w = self.width; }
+                // Keep both panes at least 260px when the window shrinks.
+                // Splitter drag clamps the same way; without this, a live
+                // resize can leave left-pane-width past the usable max.
+                changed width => {
+                    root.panes-w = self.width;
+                    if (!root.console-full-window) {
+                        root.left-pane-width = clamp(
+                            root.left-pane-width,
+                            260px,
+                            max(self.width - 7px - 260px, 260px));
+                    }
+                }
 
                 // ---------------- left pane (local) -------------------------------
                 left-pane := Rectangle {
@@ -552,12 +584,12 @@ export component MainWindow inherits Window {
                     // width to give up its layout slot (same for the splitter).
                     visible: !root.console-full-window;
                     width: root.console-full-window ? 0px : root.left-pane-width;
-                    background: #2d2d32;
+                    background: Theme.bg-panel;
                     // Drop highlight wins over focus chrome; otherwise show a
                     // visible focused-pane ring so F5/F6/Delete target the
                     // side the user expects.
                     border-width: 2px;
-                    border-color: left-drop.has-drag ? #4a90d9
+                    border-color: left-drop.has-drag ? Theme.accent
                         : (root.focused-pane == 0 ? #5a7fa8 : #00000000);
 
                     // Pane-wide drop target (the drop destination is the pane's
@@ -580,15 +612,15 @@ export component MainWindow inherits Window {
 
                         Rectangle {
                             height: 32px;
-                            background: root.focused-pane == 0 ? #3a4558 : #313136;
+                            background: root.focused-pane == 0 ? #3a4558 : Theme.bg-header;
                             HorizontalLayout {
-                                width: parent.width;
+                                width: 100%;
                                 height: parent.height;
                                 padding-left: 4px;
                                 spacing: 2px;
                                 Text {
                                     text: @tr("Local");
-                                    color: root.focused-pane == 0 ? #c9d7ea : #9a9aa2;
+                                    color: root.focused-pane == 0 ? #c9d7ea : Theme.text-dim;
                                     font-size: 11px;
                                     vertical-alignment: center;
                                 }
@@ -614,7 +646,7 @@ export component MainWindow inherits Window {
                                     source: @image-url("../../../assets/icons/action-search-item.svg");
                                     clicked => { search-left-requested(); }
                                 }
-                                Rectangle { width: 1px; background: #3c3c42; }
+                                Rectangle { width: 1px; background: Theme.border; }
                                 ToolIcon {
                                     enabled: root.left-selection-acts;
                                     tooltip: @tr("Copy to right panel");
@@ -633,7 +665,7 @@ export component MainWindow inherits Window {
                                     source: @image-url("../../../assets/icons/action-delete.svg");
                                     clicked => { delete-left(); }
                                 }
-                                Rectangle { width: 1px; background: #3c3c42; }
+                                Rectangle { width: 1px; background: Theme.border; }
                                 ToolIcon {
                                     enabled: root.left-selection-acts;
                                     tooltip: @tr("Rename (F2)");
@@ -678,7 +710,7 @@ export component MainWindow inherits Window {
                         // visibility menu.
                         Rectangle {
                             height: 24px;
-                            background: #313136;
+                            background: Theme.bg-header;
                             changed width => { root.left-col-basis = self.width; }
                             PaneColumnHeader {
                                 label: @tr("Name");
@@ -783,7 +815,7 @@ export component MainWindow inherits Window {
                             vertical-stretch: 1;
                             Text {
                                 text: @tr("(empty folder)");
-                                color: #6f6f77;
+                                color: Theme.text-faint;
                                 font-size: 12px;
                                 x: 12px;
                                 y: 12px;
@@ -792,7 +824,7 @@ export component MainWindow inherits Window {
                             // no-selection context menu that the C++ view
                             // offers everywhere (Up + New file/New folder).
                             TouchArea {
-                                width: parent.width;
+                                width: 100%;
                                 height: parent.height;
                                 pointer-event(event) => {
                                     if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
@@ -930,7 +962,7 @@ export component MainWindow inherits Window {
                                                 visible: root.left-selection-acts;
                                                 clicked => { left-row-popup.close(); rename-left(); }
                                             }
-                                            Rectangle { height: 1px; background: #3c3c42; visible: root.left-selection-acts; }
+                                            Rectangle { height: 1px; background: Theme.border; visible: root.left-selection-acts; }
                                             MenuRow {
                                                 text: @tr("Copy to right panel");
                                                 visible: root.left-selection-acts;
@@ -962,9 +994,9 @@ export component MainWindow inherits Window {
                 splitter := Rectangle {
                     visible: !root.console-full-window;
                     width: root.console-full-window ? 0px : 7px;
-                    background: root.splitter-dragging ? #4a90d9 : (splitter-area.has-hover ? #4a4a52 : #2f2f34);
+                    background: root.splitter-dragging ? Theme.accent : (splitter-area.has-hover ? #4a4a52 : #2f2f34);
                     splitter-area := TouchArea {
-                        width: parent.width;
+                        width: 100%;
                         height: parent.height;
                         mouse-cursor: MouseCursor.ew-resize;
                         pointer-event(event) => {
@@ -976,7 +1008,10 @@ export component MainWindow inherits Window {
                                 root.splitter-dragging = false;
                             }
                             if (event.kind == PointerEventKind.move && root.splitter-dragging) {
-                                root.left-pane-width = clamp(root.left-pane-width + self.mouse-x - root.splitter-anchor-x, 260px, max(root.width - 260px, 260px));
+                                root.left-pane-width = clamp(
+                                    root.left-pane-width + self.mouse-x - root.splitter-anchor-x,
+                                    260px,
+                                    max(root.panes-w - 7px - 260px, 260px));
                             }
                         }
                     }
@@ -985,9 +1020,9 @@ export component MainWindow inherits Window {
                 // ---------------- right pane (local / remote) ---------------------
                 right-pane := Rectangle {
                     horizontal-stretch: 1;
-                    background: #2d2d32;
+                    background: Theme.bg-panel;
                     border-width: 2px;
-                    border-color: right-drop.has-drag ? #4a90d9
+                    border-color: right-drop.has-drag ? Theme.accent
                         : (root.focused-pane == 1 ? #5a7fa8 : #00000000);
                     changed width => { root.right-pane-w = self.width; }
 
@@ -1011,15 +1046,15 @@ export component MainWindow inherits Window {
 
                         Rectangle {
                             height: 32px;
-                            background: root.focused-pane == 1 ? #3a4558 : #313136;
+                            background: root.focused-pane == 1 ? #3a4558 : Theme.bg-header;
                             HorizontalLayout {
-                                width: parent.width;
+                                width: 100%;
                                 height: parent.height;
                                 padding-left: 4px;
                                 spacing: 2px;
                                 Text {
                                     text: root.right-local-mode ? @tr("Local") : @tr("Remote");
-                                    color: root.focused-pane == 1 ? #c9d7ea : #9a9aa2;
+                                    color: root.focused-pane == 1 ? #c9d7ea : Theme.text-dim;
                                     font-size: 11px;
                                     vertical-alignment: center;
                                 }
@@ -1045,7 +1080,7 @@ export component MainWindow inherits Window {
                                     source: @image-url("../../../assets/icons/action-refresh.svg");
                                     clicked => { refresh-right(); }
                                 }
-                                Rectangle { width: 1px; background: #3c3c42; }
+                                Rectangle { width: 1px; background: Theme.border; }
                                 ToolIcon {
                                     enabled: root.right-selection-acts;
                                     tooltip: @tr("Copy to left panel");
@@ -1080,7 +1115,7 @@ export component MainWindow inherits Window {
                                     source: @image-url("../../../assets/icons/action-new-folder.svg");
                                     clicked => { new-dir-right(); }
                                 }
-                                Rectangle { width: 1px; background: #3c3c42; }
+                                Rectangle { width: 1px; background: Theme.border; }
                                 ToolIcon {
                                     enabled: root.remote-connected;
                                     tooltip: @tr("Download (F7)");
@@ -1134,7 +1169,7 @@ export component MainWindow inherits Window {
                         // any header column for the visibility menu.
                         Rectangle {
                             height: 24px;
-                            background: #313136;
+                            background: Theme.bg-header;
                             changed width => { root.right-col-basis = self.width; }
                             PaneColumnHeader {
                                 label: @tr("Name");
@@ -1243,7 +1278,7 @@ export component MainWindow inherits Window {
                                 spacing: 8px;
                                 Text {
                                     text: @tr("This protocol works in transfer-only mode.\nUse the remote path above as the target folder for uploads.\nFor downloads, choose a remote file path explicitly.");
-                                    color: #9a9aa2;
+                                    color: Theme.text-dim;
                                     font-size: 12px;
                                     wrap: word-wrap;
                                 }
@@ -1320,13 +1355,13 @@ export component MainWindow inherits Window {
                             vertical-stretch: 1;
                             Text {
                                 text: @tr("(empty folder)");
-                                color: #6f6f77;
+                                color: Theme.text-faint;
                                 font-size: 12px;
                                 x: 12px;
                                 y: 12px;
                             }
                             TouchArea {
-                                width: parent.width;
+                                width: 100%;
                                 height: parent.height;
                                 pointer-event(event) => {
                                     if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
@@ -1469,7 +1504,7 @@ export component MainWindow inherits Window {
                                                 visible: root.right-selection-acts;
                                                 clicked => { right-row-popup.close(); copy-right-to-left(); }
                                             }
-                                            Rectangle { height: 1px; background: #3c3c42; visible: root.right-selection-acts; }
+                                            Rectangle { height: 1px; background: Theme.border; visible: root.right-selection-acts; }
                                             MenuRow {
                                                 text: @tr("Upload…");
                                                 visible: root.right-selection-acts && root.remote-connected;
@@ -1505,13 +1540,13 @@ export component MainWindow inherits Window {
                                                 visible: root.right-selection-acts;
                                                 clicked => { right-row-popup.close(); move-right-to-left(); }
                                             }
-                                            Rectangle { height: 1px; background: #3c3c42; visible: root.right-selection-acts && root.remote-connected && root.right-supports-permissions; }
+                                            Rectangle { height: 1px; background: Theme.border; visible: root.right-selection-acts && root.remote-connected && root.right-supports-permissions; }
                                             MenuRow {
                                                 text: @tr("Change permissions…");
                                                 visible: root.right-selection-acts && root.remote-connected && root.right-supports-permissions;
                                                 clicked => { right-row-popup.close(); permissions-right(); }
                                             }
-                                            Rectangle { height: 1px; background: #3c3c42; }
+                                            Rectangle { height: 1px; background: Theme.border; }
                                             MenuRow {
                                                 text: @tr("Refresh");
                                                 clicked => { right-row-popup.close(); refresh-right(); }
@@ -1543,10 +1578,10 @@ export component MainWindow inherits Window {
 
                             Rectangle {
                                 height: 32px;
-                                background: #313136;
+                                background: Theme.bg-header;
 
                                 HorizontalLayout {
-                                    width: parent.width;
+                                    width: 100%;
                                     height: parent.height;
                                     padding-left: 4px;
                                     padding-right: 8px;
@@ -1574,7 +1609,7 @@ export component MainWindow inherits Window {
                                     Rectangle { horizontal-stretch: 1; }
                                     Text {
                                         text: @tr("Connection closed");
-                                        color: #e05858;
+                                        color: Theme.danger;
                                         font-size: 12px;
                                         vertical-alignment: center;
                                         visible: !root.console-connected;
@@ -1610,9 +1645,9 @@ export component MainWindow inherits Window {
 
             status-bar := Rectangle {
                 height: 26px;
-                background: #313136;
+                background: Theme.bg-header;
                 HorizontalLayout {
-                    width: parent.width;
+                    width: 100%;
                     height: parent.height;
                     padding-left: 8px;
                     padding-right: 8px;
@@ -1630,7 +1665,7 @@ export component MainWindow inherits Window {
                         visible: root.secrets-warning-visible;
                         text: @tr("Warning: unencrypted secrets storage active (fallback)");
                         vertical-alignment: center;
-                        color: #e05858;
+                        color: Theme.danger;
                         font-weight: 600;
                         font-size: 12px;
                     }
@@ -1638,7 +1673,7 @@ export component MainWindow inherits Window {
                         visible: root.risk-banner-visible;
                         text: @tr("Risk: host key not verified in this session");
                         vertical-alignment: center;
-                        color: #e05858;
+                        color: Theme.danger;
                         font-weight: 600;
                         font-size: 12px;
                     }
@@ -1646,7 +1681,7 @@ export component MainWindow inherits Window {
                         property <string> tip: @tr("Active connection method for this session");
                         text: root.connection-type-text;
                         vertical-alignment: center;
-                        color: #9a9aa2;
+                        color: Theme.text-dim;
                         font-size: 12px;
                         Tooltip { text: @markdown("\{tip}"); }
                     }
@@ -1654,7 +1689,7 @@ export component MainWindow inherits Window {
                         property <string> tip: @tr("Elapsed time for the current connection session");
                         text: root.connection-elapsed-text;
                         vertical-alignment: center;
-                        color: #9a9aa2;
+                        color: Theme.text-dim;
                         font-size: 12px;
                         Tooltip { text: @markdown("\{tip}"); }
                     }
@@ -1672,7 +1707,7 @@ export component MainWindow inherits Window {
         start-page := StartPage {
             x: 0px;
             y: menu-bar.height;
-            width: parent.width;
+            width: 100%;
             height: parent.height - menu-bar.height - status-bar.height;
             visible: root.start-page-visible;
             sites: root.start-page-sites;
@@ -1680,6 +1715,7 @@ export component MainWindow inherits Window {
             mode: root.start-page-mode;
             remember: root.start-page-remember;
             hint: root.start-page-hint;
+            can-dismiss: root.start-page-can-dismiss;
             row-selected(i) => { root.start-page-selected = i; root.start-page-row-selected(i); }
             open-requested => { root.start-page-open-requested(); }
             dismiss-requested => { root.start-page-dismiss-requested(); }
@@ -1697,8 +1733,8 @@ export component MainWindow inherits Window {
         KeyBinding { keys: @keys(F2); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { if (root.focused-pane == 0) { rename-left(); } else { rename-right(); } } }
         KeyBinding { keys: @keys(F5); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { if (root.focused-pane == 0) { copy-left-to-right(); } else { copy-right-to-left(); } } }
         KeyBinding { keys: @keys(F6); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { if (root.focused-pane == 0) { move-left-to-right(); } else { move-right-to-left(); } } }
-        KeyBinding { keys: @keys(F7); enabled: !root.start-page-visible; activated => { download-requested(); } }
-        KeyBinding { keys: @keys(F8); enabled: !root.start-page-visible; activated => { upload-requested(); } }
+        KeyBinding { keys: @keys(F7); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { download-requested(); } }
+        KeyBinding { keys: @keys(F8); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { upload-requested(); } }
         KeyBinding { keys: @keys(F9); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { if (root.focused-pane == 0) { new-dir-left(); } else { new-dir-right(); } } }
         KeyBinding { keys: @keys(F10); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { if (root.focused-pane == 0) { new-file-left(); } else { new-file-right(); } } }
         KeyBinding { keys: @keys(Delete); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { if (root.focused-pane == 0) { delete-left(); } else { delete-right(); } } }
@@ -1718,6 +1754,17 @@ export component MainWindow inherits Window {
             }
         }
         KeyBinding {
+            keys: @keys(Shift+DownArrow);
+            enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus);
+            activated => {
+                if (root.focused-pane == 0 && root.left-entries.length > 0 && root.left-selected-row < root.left-entries.length - 1) {
+                    left-row-clicked(root.left-selected-row + 1, false, true);
+                } else if (root.focused-pane == 1 && root.right-entries.length > 0 && root.right-selected-row < root.right-entries.length - 1) {
+                    right-row-clicked(root.right-selected-row + 1, false, true);
+                }
+            }
+        }
+        KeyBinding {
             keys: @keys(UpArrow);
             enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus);
             activated => {
@@ -1725,6 +1772,17 @@ export component MainWindow inherits Window {
                     left-row-clicked(root.left-selected-row - 1, false, false);
                 } else if (root.focused-pane == 1 && root.right-selected-row > 0) {
                     right-row-clicked(root.right-selected-row - 1, false, false);
+                }
+            }
+        }
+        KeyBinding {
+            keys: @keys(Shift+UpArrow);
+            enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus);
+            activated => {
+                if (root.focused-pane == 0 && root.left-selected-row > 0) {
+                    left-row-clicked(root.left-selected-row - 1, false, true);
+                } else if (root.focused-pane == 1 && root.right-selected-row > 0) {
+                    right-row-clicked(root.right-selected-row - 1, false, true);
                 }
             }
         }
@@ -1768,8 +1826,8 @@ export component MainWindow inherits Window {
         KeyBinding { keys: @keys(Meta+A); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { pane-select-all(root.focused-pane); } }
         KeyBinding {
             keys: @keys(Escape);
-            enabled: root.start-page-visible
-                || (!root.console-mode || !console-view.has-focus);
+            enabled: (root.start-page-visible && root.start-page-can-dismiss)
+                || (!root.start-page-visible && (!root.console-mode || !console-view.has-focus));
             activated => {
                 if (root.start-page-visible) {
                     root.start-page-dismiss-requested();
@@ -1780,23 +1838,27 @@ export component MainWindow inherits Window {
         }
         KeyBinding { keys: @keys(Control+F); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { if (root.focused-pane == 0) { search-left-requested(); } else { search-right-requested(); } } }
         KeyBinding { keys: @keys(Meta+F); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { if (root.focused-pane == 0) { search-left-requested(); } else { search-right-requested(); } } }
-        KeyBinding { keys: @keys(Control+Comma); activated => { show-settings(); } }
-        KeyBinding { keys: @keys(Meta+Comma); activated => { show-settings(); } }
+        KeyBinding { keys: @keys(Control+Comma); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { show-settings(); } }
+        KeyBinding { keys: @keys(Meta+Comma); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus); activated => { show-settings(); } }
+        // Quit stays global so Cmd/Ctrl+Q still works while the console owns focus.
         KeyBinding { keys: @keys(Control+Q); activated => { quit-requested(); } }
         KeyBinding { keys: @keys(Meta+Q); activated => { quit-requested(); } }
+        // Fullscreen stays available on the Start Page and while the console
+        // owns focus. The console rejects these keys so they are not typed
+        // into the remote shell.
         KeyBinding { keys: @keys(F11); activated => { root.fullscreen-toggle-requested(); } }
         KeyBinding { keys: @keys(Meta+Control+F); activated => { root.fullscreen-toggle-requested(); } }
 
         // Configurable Transfers shortcut (default F12).
-        KeyBinding { keys: @keys(F12); enabled: root.queue-shortcut == "F12"; activated => { show-queue(); } }
-        KeyBinding { keys: @keys(Control+Shift+T); enabled: root.queue-shortcut == "Ctrl+Shift+T"; activated => { show-queue(); } }
-        KeyBinding { keys: @keys(Control+Alt+T); enabled: root.queue-shortcut == "Ctrl+Alt+T"; activated => { show-queue(); } }
-        KeyBinding { keys: @keys(Control+J); enabled: root.queue-shortcut == "Ctrl+J"; activated => { show-queue(); } }
+        KeyBinding { keys: @keys(F12); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus) && root.queue-shortcut == "F12"; activated => { show-queue(); } }
+        KeyBinding { keys: @keys(Control+Shift+T); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus) && root.queue-shortcut == "Ctrl+Shift+T"; activated => { show-queue(); } }
+        KeyBinding { keys: @keys(Control+Alt+T); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus) && root.queue-shortcut == "Ctrl+Alt+T"; activated => { show-queue(); } }
+        KeyBinding { keys: @keys(Control+J); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus) && root.queue-shortcut == "Ctrl+J"; activated => { show-queue(); } }
 
         // Configurable History shortcut (default Ctrl+Shift+H).
-        KeyBinding { keys: @keys(Control+Shift+H); enabled: root.history-shortcut == "Ctrl+Shift+H"; activated => { show-history(); } }
-        KeyBinding { keys: @keys(Control+H); enabled: root.history-shortcut == "Ctrl+H"; activated => { show-history(); } }
-        KeyBinding { keys: @keys(Control+Alt+H); enabled: root.history-shortcut == "Ctrl+Alt+H"; activated => { show-history(); } }
+        KeyBinding { keys: @keys(Control+Shift+H); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus) && root.history-shortcut == "Ctrl+Shift+H"; activated => { show-history(); } }
+        KeyBinding { keys: @keys(Control+H); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus) && root.history-shortcut == "Ctrl+H"; activated => { show-history(); } }
+        KeyBinding { keys: @keys(Control+Alt+H); enabled: !root.start-page-visible && (!root.console-mode || !console-view.has-focus) && root.history-shortcut == "Ctrl+Alt+H"; activated => { show-history(); } }
 
         // Session tabs: new tab / close the active tab / cycle.
         KeyBinding { keys: @keys(Control+T); enabled: !root.start-page-visible; activated => { new-tab-requested(); } }

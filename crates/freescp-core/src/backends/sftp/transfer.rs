@@ -8,10 +8,12 @@
 //!   remote file without truncation and seeks past the already-uploaded
 //!   bytes (in both cases only when the partial size is strictly smaller
 //!   than the source, otherwise the transfer restarts from scratch),
-//! * progress reporting throttled to ~10 Hz plus one final call with
-//!   `done == total` (the C++ client throttled in `TransferManager`),
+//! * progress reporting throttled to ~10 Hz; the true `done == total` tick
+//!   is deferred until after flush/close/integrity so the queue does not
+//!   show 100% while still verifying,
 //! * cancellation polling per chunk (`should_cancel` callback; the backend
 //!   also feeds its `interrupt()` flag into this callback in `sftp.rs`),
+//!   including during post-copy integrity hashing,
 //! * transfer integrity via the shared `crate::integrity` module: remote
 //!   size + SHA-256 are fetched over SFTP, the local file is hashed with
 //!   `file_sha256_hex_async`, and the Optional/Required policy semantics of
@@ -51,8 +53,14 @@ use crate::types::TransferIntegrityPolicy;
 const BUF_SIZE: usize = 64 * 1024;
 /// Progress callback throttle (the UI layer may throttle again).
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+/// Bound remote `fsync` so a hung extension cannot leave the queue at 99%.
+const SYNC_ALL_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Throttled `(done, total)` reporter. Always emits the final `done == total`.
+/// Throttled `(done, total)` reporter.
+///
+/// The copy loop never emits a true `done == total` tick — that is reserved
+/// for [`Self::finish`] after flush/close/integrity so the UI does not show
+/// 100% while the transfer is still Active.
 struct ProgressReporter {
     cb: Option<ProgressCb>,
     last: Option<Instant>,
@@ -67,13 +75,27 @@ impl ProgressReporter {
         let Some(cb) = self.cb.as_ref() else {
             return;
         };
+        // Hold the final byte for `finish()` so integrity / close work is not
+        // mistaken for a completed transfer.
+        let shown = if total > 0 && done >= total {
+            total - 1
+        } else {
+            done
+        };
         let now = Instant::now();
         let due = self
             .last
             .is_none_or(|t| now.duration_since(t) >= PROGRESS_INTERVAL);
-        if due || done >= total {
+        let near_end = total > 0 && shown + 1 == total && done >= total;
+        if due || near_end {
             self.last = Some(now);
-            cb(done, total);
+            cb(shown, total);
+        }
+    }
+
+    fn finish(&mut self, total: u64) {
+        if let Some(cb) = self.cb.take() {
+            cb(total, total);
         }
     }
 }
@@ -162,7 +184,9 @@ pub(crate) async fn get(
     drop(local_file);
     drop(rf); // SFTP close
 
-    verify_integrity(sess, remote, local, remote_size, policy).await
+    verify_integrity(sess, remote, local, remote_size, policy, &should_cancel).await?;
+    reporter.finish(remote_len);
+    Ok(())
 }
 
 /// Upload `local` to `remote`.
@@ -230,11 +254,23 @@ pub(crate) async fn put(
         reporter.report(done, local_len);
     }
     rf.flush().await.map_err(sftp_err)?;
-    let _ = rf.sync_all().await; // best effort (fsync@openssh.com extension)
+    // Best effort (fsync@openssh.com); bound so a hung extension cannot
+    // leave the queue stuck after the last payload byte.
+    let _ = tokio::time::timeout(SYNC_ALL_TIMEOUT, rf.sync_all()).await;
     let final_size = rf.metadata().await.map(|m| m.size).unwrap_or(None);
     drop(rf); // SFTP close
 
-    verify_integrity(sess, remote, local, final_size.or(Some(local_len)), policy).await
+    verify_integrity(
+        sess,
+        remote,
+        local,
+        final_size.or(Some(local_len)),
+        policy,
+        &should_cancel,
+    )
+    .await?;
+    reporter.finish(local_len);
+    Ok(())
 }
 
 /// Open/create `remote` for a fresh (non-resume) upload, mode 0644 — the
@@ -260,11 +296,14 @@ async fn verify_integrity(
     local: &str,
     remote_size: Option<u64>,
     policy: TransferIntegrityPolicy,
+    should_cancel: &Option<CancelCb>,
 ) -> Result<(), ClientError> {
     if policy == TransferIntegrityPolicy::Off {
         return Ok(());
     }
-    let remote_sha = remote_sha256_hex(sess, remote).await;
+    check_cancel(should_cancel)?;
+    let remote_sha = remote_sha256_hex(sess, remote, should_cancel).await?;
+    check_cancel(should_cancel)?;
     match crate::integrity::verify_integrity_async(
         Path::new(local),
         remote_sha.as_deref(),
@@ -292,25 +331,31 @@ async fn verify_integrity(
 /// `Ok(None)` when the remote file cannot be opened or read — the
 /// `crate::integrity` policy layer then applies the Required/Optional
 /// semantics (`RemoteHashUnavailable` vs `NotVerified`).
-async fn remote_sha256_hex(sess: &SftpSession, remote: &str) -> Option<String> {
+/// `Err(Cancelled)` when the user aborts mid-hash.
+async fn remote_sha256_hex(
+    sess: &SftpSession,
+    remote: &str,
+    should_cancel: &Option<CancelCb>,
+) -> Result<Option<String>, ClientError> {
     let mut rf = match sess.open(remote).await {
         Ok(f) => f,
         Err(e) => {
             debug!(remote, error = %e, "remote hash unavailable (open failed)");
-            return None;
+            return Ok(None);
         }
     };
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; BUF_SIZE];
     loop {
+        check_cancel(should_cancel)?;
         match rf.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => hasher.update(&buf[..n]),
             Err(e) => {
                 debug!(remote, error = %e, "remote hash unavailable (read failed)");
-                return None;
+                return Ok(None);
             }
         }
     }
-    Some(hex::encode(hasher.finalize()))
+    Ok(Some(hex::encode(hasher.finalize())))
 }

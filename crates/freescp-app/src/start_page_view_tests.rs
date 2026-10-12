@@ -8,7 +8,10 @@
 //! small layout shifts in the page do not break them.
 
 use crate::ui::main_window::{MainWindow, StartSiteRow};
+use slint::platform::{Key, WindowEvent};
 use slint::{ComponentHandle, LogicalSize, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
+use std::cell::Cell;
+use std::rc::Rc;
 
 /// Colours from `ui/start-page.slint`.
 const PAGE_BG: (u8, u8, u8) = (0x26, 0x26, 0x2a);
@@ -174,8 +177,8 @@ fn selected_row_follows_the_pick() {
 }
 
 /// The footer keeps its actions reachable: the primary "Open" button is
-/// accented, the "Remember my choice" box reflects the property, and the hint
-/// text is rendered next to them.
+/// accented, the "Skip Start Page next launch" box reflects the property, and
+/// the hint text is rendered next to them.
 #[test]
 fn footer_shows_actions_and_the_remember_box() {
     let ui = page(sites(), 1, 0);
@@ -195,4 +198,68 @@ fn footer_shows_actions_and_the_remember_box() {
         checked > unchecked + 50,
         "the remember box should fill when the option is set ({unchecked} -> {checked})"
     );
+}
+
+/// After the page takes focus, arrows walk the site list / workspace cards and
+/// Return fires open — matching the site-manager list keyboard pattern.
+#[test]
+fn keyboard_moves_selection_mode_and_opens() {
+    let ui = page(sites(), 0, -1);
+    ui.window().set_size(LogicalSize::new(1200.0, 700.0));
+    ui.invoke_focus_start_page();
+
+    let opened = Rc::new(Cell::new(0));
+    ui.on_start_page_open_requested({
+        let opened = opened.clone();
+        move || opened.set(opened.get() + 1)
+    });
+    let rows = Rc::new(Cell::new(Vec::<i32>::new()));
+    ui.on_start_page_row_selected({
+        let rows = rows.clone();
+        move |row| rows.set({
+            let mut v = rows.take();
+            v.push(row);
+            v
+        })
+    });
+
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed {
+            text: Key::DownArrow.into(),
+        });
+    assert_eq!(ui.get_start_page_selected(), 0);
+    assert_eq!(rows.take(), vec![0]);
+
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed {
+            text: Key::DownArrow.into(),
+        });
+    assert_eq!(ui.get_start_page_selected(), 1);
+
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed {
+            text: Key::UpArrow.into(),
+        });
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed {
+            text: Key::UpArrow.into(),
+        });
+    assert_eq!(ui.get_start_page_selected(), -1);
+
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed {
+            text: Key::RightArrow.into(),
+        });
+    assert_eq!(ui.get_start_page_mode(), 1);
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed {
+            text: Key::LeftArrow.into(),
+        });
+    assert_eq!(ui.get_start_page_mode(), 0);
+
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Return.into(),
+        });
+    assert_eq!(opened.get(), 1);
 }

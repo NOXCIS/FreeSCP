@@ -20,12 +20,21 @@
 // NOTE: Window already provides a built-in `visible` property; it is not
 // re-declared here. Use `set_visible(...)` / `show()` / `hide()` from Rust.
 
-import { Button, TextEdit } from "std-widgets.slint";
+import { Button, Palette, TextEdit } from "std-widgets.slint";
 
 export component AboutDialog inherits Window {
     title: @tr("About FreeSCP");
-    width: 640px;
-    height: 480px;
+    // preferred-* sets the initial size; fixed width/height would lock the
+    // window so the OS cannot resize it (Slint Window contract).
+    preferred-width: 640px;
+    preferred-height: 480px;
+    min-width: 480px;
+    min-height: 360px;
+    background: Palette.background;
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
 
     // Same text as docs/ABOUT_LIBRARIES_EN.txt and kept byte-identical to
     // `settings::DEFAULT_LIBRARIES_TEXT` (a unit test asserts it): it is the
@@ -45,6 +54,14 @@ export component AboutDialog inherits Window {
     callback open-licenses-requested();
     callback report-issue-requested();
     callback author-link-requested();
+
+    FocusScope {
+        width: 100%;
+        height: 100%;
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => { root.close-requested(); }
+        }
 
     VerticalLayout {
         padding: 16px;
@@ -143,5 +160,6 @@ export component AboutDialog inherits Window {
                 vertical-alignment: center;
             }
         }
+    }
     }
 }

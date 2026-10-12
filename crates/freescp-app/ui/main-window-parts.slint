@@ -17,6 +17,7 @@ import {
     MenuBarButton,
     MenuPopupFrame,
     MenuRow,
+    Theme,
     ToolIcon,
     ToolTextButton,
 } from "widgets.slint";
@@ -68,9 +69,9 @@ export component MainMenuBar inherits Rectangle {
     callback show-shortcuts();
 
     height: 27px;
-    background: #26262a;
+    background: Theme.bg-chrome;
     HorizontalLayout {
-        width: parent.width;
+        width: 100%;
         height: parent.height;
         padding-left: 4px;
         padding-right: 4px;
@@ -99,7 +100,7 @@ export component MainMenuBar inherits Rectangle {
                             text: @tr("Settings…");
                             clicked => { app-menu-popup.close(); show-settings(); }
                         }
-                        Rectangle { height: 1px; background: #3c3c42; }
+                        Rectangle { height: 1px; background: Theme.border; }
                         MenuRow {
                             text: @tr("Quit");
                             clicked => { app-menu-popup.close(); quit-requested(); }
@@ -132,7 +133,7 @@ export component MainMenuBar inherits Rectangle {
                             text: @tr("Open right folder");
                             clicked => { file-menu-popup.close(); choose-right-dir(); }
                         }
-                        Rectangle { height: 1px; background: #3c3c42; }
+                        Rectangle { height: 1px; background: Theme.border; }
                         MenuRow {
                             text: @tr("Connect");
                             enabled: !root.remote-connected && !root.connect-in-progress;
@@ -155,7 +156,7 @@ export component MainMenuBar inherits Rectangle {
                             text: @tr("History") + "  (" + root.history-shortcut + ")";
                             clicked => { file-menu-popup.close(); show-history(); }
                         }
-                        Rectangle { height: 1px; background: #3c3c42; }
+                        Rectangle { height: 1px; background: Theme.border; }
                         MenuRow {
                             text: @tr("Start Page…");
                             clicked => { file-menu-popup.close(); show-start-page(); }
@@ -164,7 +165,7 @@ export component MainMenuBar inherits Rectangle {
                             text: @tr("New terminal session…");
                             clicked => { file-menu-popup.close(); new-terminal-session(); }
                         }
-                        if !root.is-macos : Rectangle { height: 1px; background: #3c3c42; }
+                        if !root.is-macos : Rectangle { height: 1px; background: Theme.border; }
                         if !root.is-macos : MenuRow {
                             text: @tr("Settings…");
                             clicked => { file-menu-popup.close(); show-settings(); }
@@ -243,9 +244,9 @@ export component MainToolbar inherits Rectangle {
     callback show-start-page();
 
     height: 38px;
-    background: #313136;
+    background: Theme.bg-header;
     HorizontalLayout {
-        width: parent.width;
+        width: 100%;
         height: parent.height;
         padding-left: 6px;
         padding-right: 6px;
@@ -271,7 +272,7 @@ export component MainToolbar inherits Rectangle {
             source: @image-url("../../../assets/icons/action-new-tab.svg");
             clicked => { show-start-page(); }
         }
-        Rectangle { width: 1px; background: #3c3c42; }
+        Rectangle { width: 1px; background: Theme.border; }
         ToolTextButton {
             text: @tr("Upload");
             tooltip: @tr("Upload (F8)");
@@ -304,7 +305,7 @@ export component MainToolbar inherits Rectangle {
                 else { move-right-to-left(); }
             }
         }
-        Rectangle { width: 1px; background: #3c3c42; }
+        Rectangle { width: 1px; background: Theme.border; }
         ToolTextButton {
             text: @tr("Sites");
             tooltip: @tr("Saved sites");
@@ -353,9 +354,9 @@ export component CrumbBar inherits Rectangle {
     callback crumb-clicked(int);
 
     height: 24px;
-    background: #2d2d32;
+    background: Theme.bg-panel;
     HorizontalLayout {
-        width: parent.width;
+        width: 100%;
         height: parent.height;
         padding-left: 4px;
         padding-right: 4px;
@@ -393,8 +394,8 @@ export component PathBar inherits HorizontalLayout {
     Rectangle {
         height: 26px;
         horizontal-stretch: 1;
-        background: #202024;
-        border-color: path-input.has-focus ? #4a90d9 : #3c3c42;
+        background: Theme.bg-input;
+        border-color: path-input.has-focus ? Theme.accent : Theme.border;
         border-width: 1px;
         border-radius: 4px;
         path-input := TextInput {
@@ -404,7 +405,7 @@ export component PathBar inherits HorizontalLayout {
             height: parent.height;
             vertical-alignment: center;
             text <=> root.path;
-            color: #e6e6e9;
+            color: Theme.text;
             font-size: 12px;
             key_pressed(event) => { root.pane-focused(); reject }
             accepted => { root.path-entered(self.text); }
@@ -525,7 +526,7 @@ export component PaneColumnHeader inherits TouchArea {
         vertical-alignment: center;
         horizontal-alignment: root.label-right ? right : left;
         overflow: elide;
-        color: #9a9aa2;
+        color: Theme.text-dim;
         font-weight: 600;
         font-size: 12px;
     }
@@ -591,10 +592,10 @@ export component FileRow inherits DragArea {
         mouse-cursor: MouseCursor.pointer;
         property <bool> is-selected: root.selected;
         Rectangle {
-            width: parent.width;
+            width: 100%;
             height: parent.height;
-            background: parent.is-selected ? #33506e
-                : (parent.has-hover ? #34343b : (root.stripe-even ? #2c2c31 : #2d2d32));
+            background: parent.is-selected ? Theme.selection
+                : (parent.has-hover ? Theme.hover : (root.stripe-even ? Theme.bg-stripe : Theme.bg-panel));
         }
         clicked => {
             root.pane-focus-requested(root.pane);
@@ -642,7 +643,7 @@ export component FileRow inherits DragArea {
         height: parent.height;
         vertical-alignment: center;
         overflow: elide;
-        color: #e6e6e9;
+        color: Theme.text;
         font-size: 12px;
     }
     if root.size-visible : Text {
@@ -654,7 +655,7 @@ export component FileRow inherits DragArea {
         vertical-alignment: center;
         horizontal-alignment: right;
         overflow: elide;
-        color: #9a9aa2;
+        color: Theme.text-dim;
         font-size: 12px;
     }
     if root.type-visible : Text {
@@ -665,7 +666,7 @@ export component FileRow inherits DragArea {
         height: parent.height;
         vertical-alignment: center;
         overflow: elide;
-        color: #9a9aa2;
+        color: Theme.text-dim;
         font-size: 12px;
     }
     if root.mtime-visible : Text {
@@ -676,7 +677,7 @@ export component FileRow inherits DragArea {
         height: parent.height;
         vertical-alignment: center;
         overflow: elide;
-        color: #9a9aa2;
+        color: Theme.text-dim;
         font-size: 12px;
     }
     // Folder rows are drop targets of their own.
@@ -696,9 +697,9 @@ export component FileRow inherits DragArea {
             height: 100%;
             // C++ `DragAwareTreeView::paintEvent`: translucent highlight over
             // the row.
-            background: #4a90d95a;
+            background: Theme.accent.with-alpha(0.35);
             border-width: 1px;
-            border-color: #4a90d9;
+            border-color: Theme.accent;
         }
     }
     @children

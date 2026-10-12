@@ -110,10 +110,14 @@ workstreams land modules incrementally, so rows are updated as they land):
   host), each labeled (e.g. `LAN`, `Cloudflare`). With the policy set to
   *Automatic* (default), connecting probes every candidate's first hop with
   concurrent TCP connects under a configurable budget (Settings → Network,
-  default 900 ms), ranks reachable routes by latency with a LAN tie-break
-  (private/link-local IPs) and stickiness to the last good route to avoid
-  flapping, and fails over to the next route on transport-level errors (never
-  on auth/host-key/cancel). Results are cached in `route-cache.toml`
+  default 900 ms), ranks reachable **LAN** routes ahead of reachable
+  WAN/tunnel routes (then by latency within each class), with stickiness to
+  the last good route scoped within that class to avoid flapping, and fails
+  over to the next route on transport-level errors (never on
+  auth/host-key/cancel). When the primary endpoint jumps/proxies to a private
+  `HostName` and no explicit direct route exists, a synthetic `LAN` candidate
+  is added automatically. Direct alternate routes do not re-inherit
+  `ProxyJump` from `~/.ssh/config`. Results are cached in `route-cache.toml`
   (configurable TTL, 60 s failure backoff); `cloudflared`/`ProxyCommand`
   aliases that cannot resolve in DNS are ranked last instead of probed.
   *Manual* policy pins one route. The Site Manager shows a Routes column, a
@@ -200,7 +204,11 @@ shortcuts, and better drag-and-drop support).
   - "Queue auto-clear after" minutes spin is disabled while the mode is Off.
 - **Transfer queue**: full 11-column table (Name, Status, Progress,
   Transferred, Speed, ETA, Type, Source, Destination, Attempts, Error);
-  multi-select rows (Ctrl/Cmd-click); Pause/Resume/Cancel/Retry selected;
+  multi-select rows (Ctrl/Cmd-click); Pause/Resume/Cancel/Retry selected
+  (Retry of a failed/canceled task, and Resume of a paused one, continue
+  from the partial destination file when the backend supports resume — no
+  overwrite re-prompt, the backend's size guard falls back to a clean
+  restart when the partial is not smaller than the source);
   per-task speed limits via "Limit selected"; global speed-limit row with
   Apply; auto-clear row (Off / Completed / Failed-Canceled / All finished +
   minutes, persisted to `queue-ui-state.toml`); row context menu

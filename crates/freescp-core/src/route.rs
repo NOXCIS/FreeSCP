@@ -269,88 +269,75 @@ async fn resolve(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
 // Ranking
 // ---------------------------------------------------------------------------
 
-/// LAN tie-break margin: a LAN route wins over a non-LAN route that is less
-/// than this much faster.
-pub const LAN_TIEBREAK_MARGIN: Duration = Duration::from_millis(5);
-
 /// Sticky last-good margins: the previously used route keeps its front
-/// position unless a challenger is BOTH more than
+/// position within its LAN/WAN class unless a challenger is BOTH more than
 /// [`STICKY_MIN_GAIN_RATIO`] faster AND more than [`STICKY_MIN_GAIN_MS`]
-/// faster (prevents flapping between similar routes).
+/// faster (prevents flapping between similar routes). Reachable LAN routes
+/// always rank ahead of reachable WAN/tunnel routes regardless of sticky.
 pub const STICKY_MIN_GAIN_MS: Duration = Duration::from_millis(5);
 pub const STICKY_MIN_GAIN_RATIO: f64 = 0.2;
 
 /// Orders probe results into the attempt order.
 ///
 /// Rules:
-/// 1. Reachable routes first, sorted by latency (ascending); then unprobeable
-///    routes in input order; then unreachable routes in input order.
-/// 2. LAN tie-break: a LAN route moves ahead of a non-LAN route that is less
-///    than [`LAN_TIEBREAK_MARGIN`] faster (single stable pass, no reordering
-///    chains).
+/// 1. Reachable **LAN** routes first (sorted by latency), then reachable
+///    non-LAN routes (sorted by latency). A reachable LAN path always beats
+///    a WAN/tunnel path — sticky last-good must not pull Cloudflare ahead of
+///    a live LAN endpoint.
+/// 2. Unprobeable routes next (input order), then unreachable (input order).
 /// 3. Stickiness: when `sticky` names a reachable route, it moves to the
-///    front unless some other reachable route beats it by both margins.
+///    front of *its own LAN/WAN class* unless another route in that class
+///    beats it by both [`STICKY_MIN_GAIN_RATIO`] and [`STICKY_MIN_GAIN_MS`].
 pub fn rank_probes(results: &[ProbeResult], sticky: Option<&str>) -> Vec<usize> {
-    let mut reachable: Vec<usize> = Vec::new();
+    let mut lan: Vec<usize> = Vec::new();
+    let mut wan: Vec<usize> = Vec::new();
     let mut unprobeable: Vec<usize> = Vec::new();
     let mut unreachable: Vec<usize> = Vec::new();
     for (idx, result) in results.iter().enumerate() {
         match &result.status {
-            ProbeStatus::Reachable { .. } => reachable.push(idx),
+            ProbeStatus::Reachable { is_lan: true, .. } => lan.push(idx),
+            ProbeStatus::Reachable { .. } => wan.push(idx),
             ProbeStatus::Unprobeable(_) => unprobeable.push(idx),
             ProbeStatus::Unreachable(_) => unreachable.push(idx),
         }
     }
-    reachable.sort_by_key(|&idx| results[idx].latency().unwrap_or(Duration::MAX));
+    lan.sort_by_key(|&idx| results[idx].latency().unwrap_or(Duration::MAX));
+    wan.sort_by_key(|&idx| results[idx].latency().unwrap_or(Duration::MAX));
 
-    // LAN tie-break: single forward pass, swap when the LAN route sits right
-    // behind a non-LAN route it is within the margin of.
-    let mut i = 1;
-    while i < reachable.len() {
-        let (prev, cur) = (reachable[i - 1], reachable[i]);
-        let (prev_lat, cur_lat) = (
-            results[prev].latency().unwrap_or(Duration::MAX),
-            results[cur].latency().unwrap_or(Duration::MAX),
-        );
-        if results[cur].is_lan()
-            && !results[prev].is_lan()
-            && cur_lat.saturating_sub(prev_lat) <= LAN_TIEBREAK_MARGIN
-        {
-            reachable.swap(i - 1, i);
-            i += 1;
-        }
-        i += 1;
+    apply_sticky_within_class(&mut lan, results, sticky);
+    apply_sticky_within_class(&mut wan, results, sticky);
+
+    lan.extend(wan);
+    lan.extend(unprobeable);
+    lan.extend(unreachable);
+    lan
+}
+
+/// Stickiness scoped to one latency-sorted class so a WAN last-good never
+/// outranks a reachable LAN challenger.
+fn apply_sticky_within_class(order: &mut Vec<usize>, results: &[ProbeResult], sticky: Option<&str>) {
+    let Some(sticky) = sticky else {
+        return;
+    };
+    let Some(pos) = order.iter().position(|&idx| results[idx].label == sticky) else {
+        return;
+    };
+    let sticky_lat = results[order[pos]].latency().unwrap_or(Duration::MAX);
+    let best_other = order
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != pos)
+        .map(|(_, &idx)| results[idx].latency().unwrap_or(Duration::MAX))
+        .min()
+        .unwrap_or(Duration::MAX);
+    let sticky_ms = sticky_lat.as_secs_f64() * 1000.0;
+    let other_ms = best_other.as_secs_f64() * 1000.0;
+    let challenger_wins = other_ms < sticky_ms * (1.0 - STICKY_MIN_GAIN_RATIO)
+        && sticky_lat.saturating_sub(best_other) > STICKY_MIN_GAIN_MS;
+    if !challenger_wins {
+        let idx = order.remove(pos);
+        order.insert(0, idx);
     }
-
-    // Stickiness: keep the last-good route in front unless a challenger beats
-    // it by both the ratio and the absolute margins.
-    if let Some(sticky) = sticky {
-        if let Some(pos) = reachable
-            .iter()
-            .position(|&idx| results[idx].label == sticky)
-        {
-            let sticky_lat = results[reachable[pos]].latency().unwrap_or(Duration::MAX);
-            let best_other = reachable
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| *i != pos)
-                .map(|(_, &idx)| results[idx].latency().unwrap_or(Duration::MAX))
-                .min()
-                .unwrap_or(Duration::MAX);
-            let sticky_ms = sticky_lat.as_secs_f64() * 1000.0;
-            let other_ms = best_other.as_secs_f64() * 1000.0;
-            let challenger_wins = other_ms < sticky_ms * (1.0 - STICKY_MIN_GAIN_RATIO)
-                && sticky_lat.saturating_sub(best_other) > STICKY_MIN_GAIN_MS;
-            if !challenger_wins {
-                let idx = reachable.remove(pos);
-                reachable.insert(0, idx);
-            }
-        }
-    }
-
-    reachable.extend(unprobeable);
-    reachable.extend(unreachable);
-    reachable
 }
 
 // ---------------------------------------------------------------------------
@@ -456,30 +443,29 @@ mod tests {
     }
 
     #[test]
-    fn rank_lan_tiebreak_within_margin() {
-        // WAN 5 ms vs LAN 8 ms: LAN is within the 5 ms margin of the WAN
-        // leader, so LAN moves ahead.
+    fn rank_reachable_lan_always_beats_wan() {
+        // Even when WAN is faster on the wire, a reachable LAN endpoint is
+        // preferred — sticky last-good must not undo that.
+        let results = vec![reachable("wan", 5, false), reachable("lan", 40, true)];
+        let order = rank_probes(&results, Some("wan"));
+        assert_eq!(labels(&results, &order), vec!["lan", "wan"]);
+
         let results = vec![reachable("wan", 5, false), reachable("lan", 8, true)];
         let order = rank_probes(&results, None);
         assert_eq!(labels(&results, &order), vec!["lan", "wan"]);
-
-        // WAN 5 ms vs LAN 40 ms: outside the margin, latency wins.
-        let results = vec![reachable("wan", 5, false), reachable("lan", 40, true)];
-        let order = rank_probes(&results, None);
-        assert_eq!(labels(&results, &order), vec!["wan", "lan"]);
     }
 
     #[test]
     fn rank_sticky_keeps_last_good_without_flapping() {
-        let results = vec![reachable("lan", 3, true), reachable("wan", 2, false)];
-        // WAN is faster but not by both margins: sticky LAN keeps the front.
-        let order = rank_probes(&results, Some("lan"));
-        assert_eq!(labels(&results, &order), vec!["lan", "wan"]);
+        // Stickiness is scoped within LAN/WAN class.
+        let results = vec![reachable("lan-a", 3, true), reachable("lan-b", 2, true)];
+        let order = rank_probes(&results, Some("lan-a"));
+        assert_eq!(labels(&results, &order), vec!["lan-a", "lan-b"]);
 
-        // A challenger 20x faster and >5 ms faster takes over.
-        let results = vec![reachable("lan", 300, true), reachable("wan", 2, false)];
-        let order = rank_probes(&results, Some("lan"));
-        assert_eq!(labels(&results, &order), vec!["wan", "lan"]);
+        // A challenger in the same class that is both 20% and >5 ms faster wins.
+        let results = vec![reachable("lan-a", 300, true), reachable("lan-b", 2, true)];
+        let order = rank_probes(&results, Some("lan-a"));
+        assert_eq!(labels(&results, &order), vec!["lan-b", "lan-a"]);
 
         // Sticky pointing at an unreachable route is ignored.
         let results = vec![reachable("wan", 20, false), unreachable("lan")];

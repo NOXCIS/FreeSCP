@@ -673,13 +673,24 @@ fn route_host_display<'a>(route: &'a crate::routing::RouteChoice, primary: &'a s
 /// [`start_connect`] only, after quick-connect site persistence, so saved
 /// sites keep the alias as typed.
 pub(crate) fn apply_ssh_config_defaults(opt: &mut SessionOptions) {
+    apply_ssh_config_defaults_with(opt, true);
+}
+
+/// Like [`apply_ssh_config_defaults`], but when `allow_inherited_jump` is
+/// false a cleared transport stays cleared — `ProxyJump` from `~/.ssh/config`
+/// is not reattached. Used for alternate routes that intentionally connect
+/// direct (LAN) rather than through the site's bastion.
+pub(crate) fn apply_ssh_config_defaults_with(
+    opt: &mut SessionOptions,
+    allow_inherited_jump: bool,
+) {
     if !matches!(opt.protocol, Protocol::Sftp | Protocol::Scp) {
         return;
     }
     let Some(config) = ssh_config::SshConfig::load_user_config() else {
         return;
     };
-    apply_resolved_params(&config.resolve(&opt.host), opt);
+    apply_resolved_params(&config.resolve(&opt.host), opt, allow_inherited_jump);
 
     // Fill jump user/port/key from the bastion's Host block, but keep the
     // jump *alias* as typed. The system `ssh -W` tunnel inherits
@@ -708,7 +719,11 @@ pub(crate) fn apply_ssh_config_defaults(opt: &mut SessionOptions) {
 /// Pure mapping of resolved parameters onto the fields left at their
 /// defaults. Split out of [`apply_ssh_config_defaults`] so the OpenSSH-style
 /// precedence is unit-testable without a real `~/.ssh/config`.
-fn apply_resolved_params(r: &ResolvedSshParams, opt: &mut SessionOptions) {
+fn apply_resolved_params(
+    r: &ResolvedSshParams,
+    opt: &mut SessionOptions,
+    allow_inherited_jump: bool,
+) {
     if let Some(host_name) = &r.host_name {
         if !host_name.is_empty() && *host_name != opt.host {
             tracing::info!("ssh config: host alias {} -> {}", opt.host, host_name);
@@ -728,7 +743,7 @@ fn apply_resolved_params(r: &ResolvedSshParams, opt: &mut SessionOptions) {
     if opt.private_key_path.is_none() {
         opt.private_key_path = r.identity_files.first().cloned();
     }
-    if opt.jump_host.is_none() && opt.proxy_type == ProxyType::None {
+    if allow_inherited_jump && opt.jump_host.is_none() && opt.proxy_type == ProxyType::None {
         if let Some(spec) = r.proxy_jump.as_deref().filter(|p| !p.is_empty()) {
             let (user, host, port) = ssh_config::parse_proxy_jump(spec);
             opt.jump_host = Some(host);
@@ -2114,7 +2129,7 @@ mod ssh_config_resolution_tests {
     #[test]
     fn fills_fields_left_at_their_defaults() {
         let mut opt = base(); // port 22 (default), no user/key/jump
-        apply_resolved_params(&resolved(), &mut opt);
+        apply_resolved_params(&resolved(), &mut opt, true);
         assert_eq!(opt.host, "203.0.113.5");
         assert_eq!(opt.username, "deploy");
         assert_eq!(opt.port, 2222);
@@ -2137,7 +2152,7 @@ mod ssh_config_resolution_tests {
             jump_port: 2200,
             ..base()
         };
-        apply_resolved_params(&resolved(), &mut opt);
+        apply_resolved_params(&resolved(), &mut opt, true);
         assert_eq!(opt.username, "root");
         assert_eq!(opt.port, 2222);
         assert_eq!(opt.private_key_path.as_deref(), Some("/keys/mine"));
@@ -2151,7 +2166,7 @@ mod ssh_config_resolution_tests {
             proxy_type: ProxyType::Socks5,
             ..base()
         };
-        apply_resolved_params(&resolved(), &mut opt);
+        apply_resolved_params(&resolved(), &mut opt, true);
         // The alias still resolves, but the proxy is never combined with a
         // config jump host (transport exclusivity, like the dialogs).
         assert_eq!(opt.host, "203.0.113.5");
@@ -2159,9 +2174,17 @@ mod ssh_config_resolution_tests {
     }
 
     #[test]
+    fn direct_routes_can_refuse_config_proxy_jump() {
+        let mut opt = base();
+        apply_resolved_params(&resolved(), &mut opt, false);
+        assert_eq!(opt.host, "203.0.113.5");
+        assert_eq!(opt.jump_host, None);
+    }
+
+    #[test]
     fn empty_resolution_is_a_noop() {
         let mut opt = base();
-        apply_resolved_params(&ResolvedSshParams::default(), &mut opt);
+        apply_resolved_params(&ResolvedSshParams::default(), &mut opt, true);
         assert_eq!(opt.host, "myserver");
         assert_eq!(opt.port, 22);
         assert_eq!(opt.username, "");

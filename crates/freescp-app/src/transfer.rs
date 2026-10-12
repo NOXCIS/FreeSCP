@@ -1199,6 +1199,11 @@ fn reset_for_retry(rec: &mut TaskRecord) {
     rec.last_time = Instant::now();
     rec.cancel_flag.store(false, Ordering::SeqCst);
     rec.pause_flag.store(false, Ordering::SeqCst);
+    // A retry continues the transfer from the partial destination file the
+    // failed attempt left behind. The backend's resume path only picks this
+    // up when the partial is strictly smaller than the source, so a stale or
+    // complete destination falls back to a clean restart.
+    rec.resume_hint = true;
 }
 
 /// Current wall-clock time in epoch milliseconds (C++
@@ -1443,53 +1448,69 @@ async fn run_one(
     };
 
     let caps = worker.capabilities();
+    // `resume` carries the user's intent (retry of a failed/cancelled task,
+    // or pause/resume): continue the transfer from the partial destination
+    // file. Backends without resume support fall back to a fresh transfer.
+    let resume_intent = resume;
     let mut resume = resume && caps.supports_resume;
 
     // ---- Precheck (port of the worker precheck / conflict prompts) ----
     match direction {
         TransferDirection::Upload => {
             if caps.supports_metadata {
-                match worker.exists(dest).await {
-                    Ok(Some(_)) => {
-                        let name = display_name(source);
-                        let src_info = local_file_info(source);
-                        let dst_info = match worker.stat(dest).await {
-                            Ok(fi) => {
-                                format!("{} bytes, {}", fi.size, local_short_time(fi.mtime as i64))
-                            }
-                            Err(_) => "? bytes, ?".to_string(),
-                        };
-                        let choice = prompt_conflict(
-                            &conflict_hook,
-                            ConflictInfo {
-                                name,
-                                source_info: src_info,
-                                dest_info: dst_info,
-                                direction,
-                                supports_resume: caps.supports_resume,
-                            },
-                        );
-                        if should_cancel() {
-                            return end_run(worker, base, Outcome::Stopped).await;
-                        }
-                        match choice {
-                            ConflictChoice::Skip | ConflictChoice::SkipAll => {
-                                return end_run(worker, base, Outcome::Done).await;
-                            }
-                            ConflictChoice::Cancel => {
+                // A resumed run never asks about the existing destination:
+                // the remote partial (if any) is this task's own output, and
+                // the backend's size guard decides resume vs clean restart.
+                // Prompting here would offer to discard that partial.
+                if !resume_intent {
+                    match worker.exists(dest).await {
+                        Ok(Some(_)) => {
+                            let name = display_name(source);
+                            let src_info = local_file_info(source);
+                            let dst_info = match worker.stat(dest).await {
+                                Ok(fi) => format!(
+                                    "{} bytes, {}",
+                                    fi.size,
+                                    local_short_time(fi.mtime as i64)
+                                ),
+                                Err(_) => "? bytes, ?".to_string(),
+                            };
+                            let choice = prompt_conflict(
+                                &conflict_hook,
+                                ConflictInfo {
+                                    name,
+                                    source_info: src_info,
+                                    dest_info: dst_info,
+                                    direction,
+                                    supports_resume: caps.supports_resume,
+                                },
+                            );
+                            if should_cancel() {
                                 return end_run(worker, base, Outcome::Stopped).await;
                             }
-                            ConflictChoice::Resume if caps.supports_resume => resume = true,
-                            _ => {}
+                            match choice {
+                                ConflictChoice::Skip | ConflictChoice::SkipAll => {
+                                    return end_run(worker, base, Outcome::Done).await;
+                                }
+                                ConflictChoice::Cancel => {
+                                    return end_run(worker, base, Outcome::Stopped).await;
+                                }
+                                ConflictChoice::Resume if caps.supports_resume => resume = true,
+                                _ => {}
+                            }
                         }
-                    }
-                    Ok(None) => {}
-                    Err(err) => {
-                        if should_cancel() {
-                            return end_run(worker, base, Outcome::Stopped).await;
-                        }
-                        return end_run(worker, base, Outcome::Failed(transfer_error_for_ui(&err)))
+                        Ok(None) => {}
+                        Err(err) => {
+                            if should_cancel() {
+                                return end_run(worker, base, Outcome::Stopped).await;
+                            }
+                            return end_run(
+                                worker,
+                                base,
+                                Outcome::Failed(transfer_error_for_ui(&err)),
+                            )
                             .await;
+                        }
                     }
                 }
                 if let Err(msg) = ensure_remote_dir(&mut *worker, &parent_dir(dest)).await {
@@ -1501,7 +1522,11 @@ async fn run_one(
             }
         }
         TransferDirection::Download => {
-            if Path::new(dest).exists() {
+            // A resumed run never asks about the existing destination: the
+            // local partial (if any) is this task's own output, and the
+            // backend's size guard decides resume vs clean restart. Prompting
+            // here would offer to discard that partial.
+            if Path::new(dest).exists() && !resume_intent {
                 let name = display_name(dest);
                 let src_info = match worker.stat(source).await {
                     Ok(fi) => format!("{} bytes, {}", fi.size, local_short_time(fi.mtime as i64)),
@@ -2677,10 +2702,17 @@ fn refresh_dialog(dlg: &transfer_queue::TransferQueueDialog, mgr: &TransferManag
 fn task_to_row(t: &TransferTask, selected: bool) -> QueueRow {
     // Clamp: bytes_done can transiently exceed a stale bytes_total after a
     // resume re-stats the file, and QueueRow.progress is a 0..1 contract.
+    // Only Completed shows a true 1.0 — Active near-end (flush/integrity)
+    // stays below so the bar does not look finished while still Running.
     let progress = if t.state == TransferState::Completed {
         1.0
     } else if t.bytes_total > 0 {
-        ((t.bytes_done as f64 / t.bytes_total as f64) as f32).clamp(0.0, 1.0)
+        let raw = (t.bytes_done as f64 / t.bytes_total as f64) as f32;
+        if t.state == TransferState::Active {
+            raw.clamp(0.0, 0.99)
+        } else {
+            raw.clamp(0.0, 1.0)
+        }
     } else {
         0.0
     };
@@ -2709,7 +2741,7 @@ fn task_to_row(t: &TransferTask, selected: bool) -> QueueRow {
         eta: format_eta(t.eta_secs, t.state == TransferState::Completed).into(),
         attempts: format!("{}/3", t.attempts).into(),
         error: t.error.clone().unwrap_or_default().into(),
-        state: state_display(t.state).into(),
+        state: state_display(t).into(),
         selected,
     }
 }
@@ -2747,10 +2779,18 @@ fn matches_filter(state: TransferState, filter: i32) -> bool {
     }
 }
 
-fn state_display(state: TransferState) -> &'static str {
-    match state {
+fn state_display(task: &TransferTask) -> &'static str {
+    match task.state {
         TransferState::Queued => "Queued",
-        TransferState::Active => "Running",
+        TransferState::Active => {
+            // Post-copy flush/integrity: bytes are in but the worker has not
+            // returned yet — surface that so 99% does not look stalled.
+            if task.bytes_total > 0 && task.bytes_done + 1 >= task.bytes_total {
+                "Verifying"
+            } else {
+                "Running"
+            }
+        }
         TransferState::Paused => "Paused",
         TransferState::Completed => "Completed",
         TransferState::Failed => "Error",
@@ -3168,11 +3208,47 @@ mod tests {
 
     #[test]
     fn state_display_names() {
-        assert_eq!(state_display(TransferState::Queued), "Queued");
-        assert_eq!(state_display(TransferState::Active), "Running");
-        assert_eq!(state_display(TransferState::Completed), "Completed");
-        assert_eq!(state_display(TransferState::Failed), "Error");
-        assert_eq!(state_display(TransferState::Cancelled), "Canceled");
+        fn task(state: TransferState, done: u64, total: u64) -> TransferTask {
+            TransferTask {
+                id: 1,
+                direction: TransferDirection::Upload,
+                source: String::new(),
+                dest: String::new(),
+                name: "f".into(),
+                bytes_done: done,
+                bytes_total: total,
+                state,
+                error: None,
+                created_at: Utc::now(),
+                attempts: 1,
+                speed_bps: 0.0,
+                eta_secs: 0.0,
+                speed_limit_kbps: 0,
+                finished_at_ms: 0,
+            }
+        }
+        assert_eq!(state_display(&task(TransferState::Queued, 0, 0)), "Queued");
+        assert_eq!(
+            state_display(&task(TransferState::Active, 50, 100)),
+            "Running"
+        );
+        assert_eq!(
+            state_display(&task(TransferState::Active, 99, 100)),
+            "Verifying"
+        );
+        assert_eq!(
+            state_display(&task(TransferState::Active, 100, 100)),
+            "Verifying"
+        );
+        assert_eq!(
+            state_display(&task(TransferState::Completed, 100, 100)),
+            "Completed"
+        );
+        assert_eq!(state_display(&task(TransferState::Failed, 0, 0)), "Error");
+        assert_eq!(
+            state_display(&task(TransferState::Cancelled, 0, 0)),
+            "Canceled"
+        );
     }
 
     #[test]
@@ -3217,6 +3293,11 @@ mod tests {
         dirs: Arc<Mutex<HashSet<String>>>,
         connected: bool,
         fail_put: bool,
+        /// `get` fails while this is set (a test flips it before a retry).
+        fail_get: Arc<AtomicBool>,
+        /// `resume` argument of the most recent `get` / `put` call.
+        last_get_resume: Arc<AtomicBool>,
+        last_put_resume: Arc<AtomicBool>,
     }
 
     impl MemoryClient {
@@ -3226,12 +3307,22 @@ mod tests {
                 dirs: Arc::new(Mutex::new(HashSet::from(["/".to_string()]))),
                 connected: false,
                 fail_put: false,
+                fail_get: Arc::new(AtomicBool::new(false)),
+                last_get_resume: Arc::new(AtomicBool::new(false)),
+                last_put_resume: Arc::new(AtomicBool::new(false)),
             }
         }
 
         /// Simulates an upload failure on the destination side.
         fn failing_put(mut self) -> Self {
             self.fail_put = true;
+            self
+        }
+
+        /// Simulates a download failure on the source side (while `fail_get`
+        /// is set; a test clears it to let a retry through).
+        fn failing_get(self) -> Self {
+            self.fail_get.store(true, Ordering::SeqCst);
             self
         }
     }
@@ -3273,8 +3364,14 @@ mod tests {
             local: &str,
             progress: Option<freescp_core::client::ProgressCb>,
             _should_cancel: Option<freescp_core::client::CancelCb>,
-            _resume: bool,
+            resume: bool,
         ) -> Result<(), ClientError> {
+            self.last_get_resume.store(resume, Ordering::SeqCst);
+            if self.fail_get.load(Ordering::SeqCst) {
+                return Err(ClientError::OperationFailed(
+                    "simulated download failure".into(),
+                ));
+            }
             let data = self
                 .files
                 .lock()
@@ -3295,8 +3392,9 @@ mod tests {
             remote: &str,
             progress: Option<freescp_core::client::ProgressCb>,
             _should_cancel: Option<freescp_core::client::CancelCb>,
-            _resume: bool,
+            resume: bool,
         ) -> Result<(), ClientError> {
+            self.last_put_resume.store(resume, Ordering::SeqCst);
             if self.fail_put {
                 return Err(ClientError::OperationFailed(
                     "simulated upload failure".into(),
@@ -3521,6 +3619,232 @@ mod tests {
             Some(&b"existing".to_vec())
         );
         assert!(!staged_dir(id).exists());
+    }
+
+    /// Per-test scratch folder (unique tag + process id), emptied on entry.
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("freescp-t-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// Installs a conflict hook that records every prompt and answers
+    /// `Overwrite`; a resumed run must never consult it.
+    fn overwrite_recording_hook(
+        mgr: &TransferManager,
+        prompts: Arc<Mutex<Vec<String>>>,
+    ) {
+        mgr.set_conflict_hook(Some(Arc::new(move |info| {
+            prompts.lock().unwrap().push(info.name.clone());
+            ConflictChoice::Overwrite
+        })));
+    }
+
+    // ---- Failed/paused transfer resume --------------------------------------
+
+    /// Retrying a failed download continues from the partial file the failed
+    /// attempt left behind, and never re-raises the overwrite prompt (the
+    /// destination is the task's own partial output).
+    #[tokio::test]
+    async fn retry_of_a_failed_download_resumes_the_partial_without_reprompting() {
+        let mgr = manager_with_ids_from(500);
+        let files = Arc::new(Mutex::new(HashMap::new()));
+        seed(&files, "/srv/report.txt", b"hello");
+        let dir = scratch_dir("resume-retry");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("report.txt");
+
+        let client = MemoryClient::new(files).failing_get();
+        let fail_get = client.fail_get.clone();
+        let last_get_resume = client.last_get_resume.clone();
+        let id = mgr.enqueue_download(
+            Box::new(client),
+            "/srv/report.txt".to_string(),
+            dest.to_string_lossy().into_owned(),
+            false,
+            None,
+        );
+        let task = wait_for_final_state(&mgr, id).await;
+        assert_eq!(task.state, TransferState::Failed);
+
+        // The interrupted attempt left a partial destination file behind.
+        std::fs::write(&dest, b"he").unwrap();
+        fail_get.store(false, Ordering::SeqCst);
+
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        overwrite_recording_hook(&mgr, prompts.clone());
+        mgr.retry_task(id);
+        let task = wait_for_final_state(&mgr, id).await;
+
+        assert_eq!(task.state, TransferState::Completed);
+        assert!(prompts.lock().unwrap().is_empty());
+        assert!(last_get_resume.load(Ordering::SeqCst));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// "Retry" requeues every failed transfer with the resume hint armed.
+    #[tokio::test]
+    async fn retry_failed_resumes_every_failed_transfer() {
+        let mgr = manager_with_ids_from(600);
+        let files = Arc::new(Mutex::new(HashMap::new()));
+        seed(&files, "/srv/a.txt", b"alpha");
+        seed(&files, "/srv/b.txt", b"beta");
+        let dir = scratch_dir("resume-retry-all");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let client_a = MemoryClient::new(files.clone()).failing_get();
+        let fail_a = client_a.fail_get.clone();
+        let resume_a = client_a.last_get_resume.clone();
+        let id_a = mgr.enqueue_download(
+            Box::new(client_a),
+            "/srv/a.txt".to_string(),
+            dir.join("a.txt").to_string_lossy().into_owned(),
+            false,
+            None,
+        );
+        let client_b = MemoryClient::new(files).failing_get();
+        let fail_b = client_b.fail_get.clone();
+        let resume_b = client_b.last_get_resume.clone();
+        let id_b = mgr.enqueue_download(
+            Box::new(client_b),
+            "/srv/b.txt".to_string(),
+            dir.join("b.txt").to_string_lossy().into_owned(),
+            false,
+            None,
+        );
+        wait_for_final_state(&mgr, id_a).await;
+        wait_for_final_state(&mgr, id_b).await;
+
+        std::fs::write(dir.join("a.txt"), b"al").unwrap();
+        std::fs::write(dir.join("b.txt"), b"be").unwrap();
+        fail_a.store(false, Ordering::SeqCst);
+        fail_b.store(false, Ordering::SeqCst);
+
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        overwrite_recording_hook(&mgr, prompts.clone());
+        mgr.retry_failed();
+
+        let task_a = wait_for_final_state(&mgr, id_a).await;
+        let task_b = wait_for_final_state(&mgr, id_b).await;
+        assert_eq!(task_a.state, TransferState::Completed);
+        assert_eq!(task_b.state, TransferState::Completed);
+        assert!(prompts.lock().unwrap().is_empty());
+        assert!(resume_a.load(Ordering::SeqCst));
+        assert!(resume_b.load(Ordering::SeqCst));
+        assert_eq!(std::fs::read(dir.join("a.txt")).unwrap(), b"alpha");
+        assert_eq!(std::fs::read(dir.join("b.txt")).unwrap(), b"beta");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Resuming a paused download continues its partial file without asking
+    /// about the destination (the paused task never even started here: the
+    /// queue is held so no worker runs with stale, non-resuming arguments).
+    #[tokio::test]
+    async fn resuming_a_paused_download_skips_the_overwrite_prompt() {
+        let mgr = manager_with_ids_from(700);
+        let files = Arc::new(Mutex::new(HashMap::new()));
+        seed(&files, "/srv/report.txt", b"hello");
+        let dir = scratch_dir("resume-paused");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("report.txt");
+
+        mgr.pause_all();
+        let client = MemoryClient::new(files);
+        let last_get_resume = client.last_get_resume.clone();
+        let id = mgr.enqueue_download(
+            Box::new(client),
+            "/srv/report.txt".to_string(),
+            dest.to_string_lossy().into_owned(),
+            false,
+            None,
+        );
+        mgr.pause_task(id);
+        assert_eq!(
+            mgr.tasks()
+                .into_iter()
+                .find(|t| t.id == id)
+                .unwrap()
+                .state,
+            TransferState::Paused
+        );
+
+        // The pause left the partial destination file on disk.
+        std::fs::write(&dest, b"he").unwrap();
+
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        overwrite_recording_hook(&mgr, prompts.clone());
+        mgr.resume_task(id);
+        mgr.resume_all();
+        let task = wait_for_final_state(&mgr, id).await;
+
+        assert_eq!(task.state, TransferState::Completed);
+        assert!(prompts.lock().unwrap().is_empty());
+        assert!(last_get_resume.load(Ordering::SeqCst));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A fresh download of an existing file still prompts, and Overwrite
+    /// restarts from scratch (no resume).
+    #[tokio::test]
+    async fn fresh_download_of_an_existing_file_prompts_and_overwrite_restarts() {
+        let mgr = manager_with_ids_from(800);
+        let files = Arc::new(Mutex::new(HashMap::new()));
+        seed(&files, "/srv/report.txt", b"hello");
+        let dir = scratch_dir("fresh-overwrite");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("report.txt");
+        std::fs::write(&dest, b"old").unwrap();
+
+        let client = MemoryClient::new(files);
+        let last_get_resume = client.last_get_resume.clone();
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        overwrite_recording_hook(&mgr, prompts.clone());
+        let id = mgr.enqueue_download(
+            Box::new(client),
+            "/srv/report.txt".to_string(),
+            dest.to_string_lossy().into_owned(),
+            false,
+            None,
+        );
+        let task = wait_for_final_state(&mgr, id).await;
+
+        assert_eq!(task.state, TransferState::Completed);
+        assert_eq!(prompts.lock().unwrap().len(), 1);
+        assert!(!last_get_resume.load(Ordering::SeqCst));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A fresh download conflict answered with "Resume" also resumes the
+    /// partial file.
+    #[tokio::test]
+    async fn fresh_download_conflict_resume_choice_resumes() {
+        let mgr = manager_with_ids_from(900);
+        let files = Arc::new(Mutex::new(HashMap::new()));
+        seed(&files, "/srv/report.txt", b"hello");
+        let dir = scratch_dir("fresh-resume");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("report.txt");
+        std::fs::write(&dest, b"he").unwrap();
+
+        let client = MemoryClient::new(files);
+        let last_get_resume = client.last_get_resume.clone();
+        mgr.set_conflict_hook(Some(Arc::new(|_info| ConflictChoice::Resume)));
+        let id = mgr.enqueue_download(
+            Box::new(client),
+            "/srv/report.txt".to_string(),
+            dest.to_string_lossy().into_owned(),
+            false,
+            None,
+        );
+        let task = wait_for_final_state(&mgr, id).await;
+
+        assert_eq!(task.state, TransferState::Completed);
+        assert!(last_get_resume.load(Ordering::SeqCst));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Disconnecting one tab must cancel only that session's transfers; the

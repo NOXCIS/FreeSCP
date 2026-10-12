@@ -22,7 +22,7 @@
 // mapping contract: connecting, status-message, webdav-scheme (int mirror of
 // webdav-https because ComboBox current-index is an int).
 
-import { Button, CheckBox, ComboBox, LineEdit, ProgressIndicator, ScrollView, SpinBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, Palette, ProgressIndicator, ScrollView, SpinBox } from "std-widgets.slint";
 import { BrowseEdit, PasswordEdit } from "widgets.slint";
 
 // HostKeyDialog, KbdIntPromptDialog, ConfirmTextDialog and AlertDialog live in
@@ -31,9 +31,18 @@ import { BrowseEdit, PasswordEdit } from "widgets.slint";
 export * from "security-dialogs.slint";
 
 export component ConnectionDialog inherits Window {
-    title: "Connect";
-    width: 560px;
-    height: 500px;
+    title: @tr("Connect");
+    // preferred-* sets the initial size; fixed width/height would lock the
+    // window so the OS cannot resize it (Slint Window contract).
+    preferred-width: 560px;
+    preferred-height: 500px;
+    min-width: 440px;
+    min-height: 400px;
+    background: Palette.background;
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
 
     // ---- Session fields (contract) ----------------------------------------
     in-out property <int> protocol: 0;
@@ -118,6 +127,20 @@ export component ConnectionDialog inherits Window {
         root.webdav-scheme-changed();
     }
 
+    FocusScope {
+        width: 100%;
+        height: 100%;
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => {
+                if root.connecting {
+                    root.cancel-requested();
+                } else {
+                    root.close-requested();
+                }
+            }
+        }
+
     VerticalLayout {
         padding: 12px;
         spacing: 6px;
@@ -134,24 +157,24 @@ export component ConnectionDialog inherits Window {
                     padding: 2px;
 
                     // Lead with connection identity; Save options sit below auth.
-                    Text { text: "Protocol:"; vertical-alignment: center; }
+                    Text { text: @tr("Protocol:"); vertical-alignment: center; }
                     ComboBox {
                         model: ["SFTP", "SCP", "FTP", "FTPS", "WebDAV", "SMB", "Telnet"];
                         current-index <=> root.protocol;
                         width: 340px;
                     }
-                    Text { text: "Host / Port:"; vertical-alignment: center; }
+                    Text { text: @tr("Host / Port:"); vertical-alignment: center; }
                     HorizontalLayout {
                         spacing: 6px;
                         LineEdit {
                             text <=> root.host;
-                            placeholder-text: root.protocol == 0 ? "sftp.example.com"
-                                : root.protocol == 1 ? "scp.example.com"
-                                : root.protocol == 2 ? "ftp.example.com"
-                                : root.protocol == 3 ? "ftps.example.com"
-                                : root.protocol == 4 ? "webdav.example.com"
-                                : root.protocol == 5 ? "smb.example.com"
-                                : "telnet.example.com";
+                            placeholder-text: root.protocol == 0 ? @tr("sftp.example.com")
+                                : root.protocol == 1 ? @tr("scp.example.com")
+                                : root.protocol == 2 ? @tr("ftp.example.com")
+                                : root.protocol == 3 ? @tr("ftps.example.com")
+                                : root.protocol == 4 ? @tr("webdav.example.com")
+                                : root.protocol == 5 ? @tr("smb.example.com")
+                                : @tr("telnet.example.com");
                             horizontal-stretch: 1;
                             width: 240px;
                         }
@@ -162,27 +185,27 @@ export component ConnectionDialog inherits Window {
                             width: 100px;
                         }
                     }
-                    Text { text: "User:"; vertical-alignment: center; }
+                    Text { text: @tr("User:"); vertical-alignment: center; }
                     LineEdit {
                         text <=> root.username;
-                        placeholder-text: "user";
+                        placeholder-text: @tr("user");
                         width: 340px;
                     }
-                    Text { text: "Authentication:"; vertical-alignment: center; visible: root.protocol <= 1; }
+                    Text { text: @tr("Authentication:"); vertical-alignment: center; visible: root.protocol <= 1; }
                     ComboBox {
-                        model: ["Password", "Private key"];
+                        model: [@tr("Password"), @tr("Private key")];
                         current-index <=> root.auth-mode;
                         width: 340px;
                         visible: root.protocol <= 1;
                     }
-                    Text { text: "Password:"; vertical-alignment: center; visible: root.protocol >= 2 || root.auth-mode == 0; }
+                    Text { text: @tr("Password:"); vertical-alignment: center; visible: root.protocol >= 2 || root.auth-mode == 0; }
                     PasswordEdit {
                         text <=> root.password;
                         show <=> root.show-password;
                         visible: root.protocol >= 2 || root.auth-mode == 0;
                         horizontal-stretch: 1;
                     }
-                    Text { text: "Private key path:"; vertical-alignment: center; visible: root.protocol <= 1 && root.auth-mode == 1; }
+                    Text { text: @tr("Private key path:"); vertical-alignment: center; visible: root.protocol <= 1 && root.auth-mode == 1; }
                     BrowseEdit {
                         text <=> root.private-key-path;
                         placeholder: "~/.ssh/id_ed25519";
@@ -190,42 +213,45 @@ export component ConnectionDialog inherits Window {
                         horizontal-stretch: 1;
                         browse-requested => { root.browse-path-requested("private-key"); }
                     }
-                    Text { text: "Key passphrase:"; vertical-alignment: center; visible: root.protocol <= 1 && root.auth-mode == 1; }
+                    Text { text: @tr("Key passphrase:"); vertical-alignment: center; visible: root.protocol <= 1 && root.auth-mode == 1; }
                     PasswordEdit {
                         text <=> root.private-key-passphrase;
                         show <=> root.show-key-passphrase;
                         visible: root.protocol <= 1 && root.auth-mode == 1;
                         horizontal-stretch: 1;
                     }
-                    Text { text: "SCP mode:"; vertical-alignment: center; visible: root.protocol == 1; }
+                    Text { text: @tr("SCP mode:"); vertical-alignment: center; visible: root.protocol == 1; }
                     ComboBox {
-                        model: ["Automatic (SCP with SFTP fallback)", "SCP only (disable SFTP fallback)"];
+                        model: [@tr("Automatic (SCP with SFTP fallback)"), @tr("SCP only (disable SFTP fallback)")];
                         current-index <=> root.scp-mode;
                         width: 340px;
                         visible: root.protocol == 1;
                     }
                     Text { text: ""; }
                     CheckBox {
-                        text: "Save to saved sites";
+                        text: @tr("Save to saved sites");
                         checked <=> root.save-site;
                     }
-                    Text { text: "Site name:"; vertical-alignment: center; visible: root.save-site; }
+                    Text { text: @tr("Site name:"); vertical-alignment: center; visible: root.save-site; }
                     LineEdit {
                         text <=> root.site-name;
-                        placeholder-text: "My server";
+                        placeholder-text: @tr("My server");
                         width: 340px;
                         visible: root.save-site;
                     }
                     Text { text: ""; }
                     CheckBox {
-                        text: "Save passwords/passphrases";
+                        text: @tr("Save passwords/passphrases");
                         checked <=> root.save-credentials;
                         enabled: root.save-site;
                     }
                 }
 
                 Button {
-                    text: root.advanced-expanded ? "Advanced ▴" : "Advanced ▾";
+                    text: @tr("Advanced…");
+                    icon: root.advanced-expanded
+                        ? @image-url("../../../assets/icons/action-chevron-up.svg")
+                        : @image-url("../../../assets/icons/action-chevron-down.svg");
                     clicked => { root.advanced-expanded = !root.advanced-expanded; }
                 }
 
@@ -234,19 +260,19 @@ export component ConnectionDialog inherits Window {
                     width: parent.width;
                     padding: 2px;
 
-                    Text { text: "Proxy:"; vertical-alignment: center; }
+                    Text { text: @tr("Proxy:"); vertical-alignment: center; }
                     ComboBox {
-                        model: ["Direct (no proxy)", "SOCKS5", "HTTP CONNECT"];
+                        model: [@tr("Direct (no proxy)"), "SOCKS5", "HTTP CONNECT"];
                         current-index <=> root.proxy-type;
                         width: 340px;
                     }
-                    Text { text: "Proxy host / port:"; vertical-alignment: center; visible: root.proxy-type != 0; }
+                    Text { text: @tr("Proxy host / port:"); vertical-alignment: center; visible: root.proxy-type != 0; }
                     HorizontalLayout {
                         spacing: 6px;
                         visible: root.proxy-type != 0;
                         LineEdit {
                             text <=> root.proxy-host;
-                            placeholder-text: "proxy.example.com";
+                            placeholder-text: @tr("proxy.example.com");
                             horizontal-stretch: 1;
                             width: 240px;
                         }
@@ -257,14 +283,14 @@ export component ConnectionDialog inherits Window {
                             width: 100px;
                         }
                     }
-                    Text { text: "Proxy user:"; vertical-alignment: center; visible: root.proxy-type != 0; }
+                    Text { text: @tr("Proxy user:"); vertical-alignment: center; visible: root.proxy-type != 0; }
                     LineEdit {
                         text <=> root.proxy-username;
-                        placeholder-text: "optional";
+                        placeholder-text: @tr("optional");
                         width: 340px;
                         visible: root.proxy-type != 0;
                     }
-                    Text { text: "Proxy password:"; vertical-alignment: center; visible: root.proxy-type != 0; }
+                    Text { text: @tr("Proxy password:"); vertical-alignment: center; visible: root.proxy-type != 0; }
                     PasswordEdit {
                         text <=> root.proxy-password;
                         show <=> root.show-proxy-password;
@@ -273,17 +299,17 @@ export component ConnectionDialog inherits Window {
                     }
                     Text { text: ""; visible: root.protocol <= 1; }
                     CheckBox {
-                        text: "Use SSH jump host (bastion)";
+                        text: @tr("Use SSH jump host (bastion)");
                         checked <=> root.jump-enabled;
                         visible: root.protocol <= 1;
                     }
-                    Text { text: "Jump host / port:"; vertical-alignment: center; visible: root.protocol <= 1 && root.jump-enabled; }
+                    Text { text: @tr("Jump host / port:"); vertical-alignment: center; visible: root.protocol <= 1 && root.jump-enabled; }
                     HorizontalLayout {
                         spacing: 6px;
                         visible: root.protocol <= 1 && root.jump-enabled;
                         LineEdit {
                             text <=> root.jump-host;
-                            placeholder-text: "bastion.example.com";
+                            placeholder-text: @tr("bastion.example.com");
                             horizontal-stretch: 1;
                             width: 240px;
                         }
@@ -294,22 +320,22 @@ export component ConnectionDialog inherits Window {
                             width: 100px;
                         }
                     }
-                    Text { text: "Jump user:"; vertical-alignment: center; visible: root.protocol <= 1 && root.jump-enabled; }
+                    Text { text: @tr("Jump user:"); vertical-alignment: center; visible: root.protocol <= 1 && root.jump-enabled; }
                     LineEdit {
                         text <=> root.jump-username;
-                        placeholder-text: "optional";
+                        placeholder-text: @tr("optional");
                         width: 340px;
                         visible: root.protocol <= 1 && root.jump-enabled;
                     }
-                    Text { text: "Jump private key:"; vertical-alignment: center; visible: root.protocol <= 1 && root.jump-enabled; }
+                    Text { text: @tr("Jump private key:"); vertical-alignment: center; visible: root.protocol <= 1 && root.jump-enabled; }
                     BrowseEdit {
                         text <=> root.jump-key-path;
-                        placeholder: "optional";
+                        placeholder: @tr("optional");
                         visible: root.protocol <= 1 && root.jump-enabled;
                         horizontal-stretch: 1;
                         browse-requested => { root.browse-path-requested("jump-key"); }
                     }
-                    Text { text: "known_hosts:"; vertical-alignment: center; visible: root.protocol <= 1; }
+                    Text { text: @tr("known_hosts:"); vertical-alignment: center; visible: root.protocol <= 1; }
                     BrowseEdit {
                         text <=> root.known-hosts-path;
                         placeholder: "~/.ssh/known_hosts";
@@ -317,85 +343,85 @@ export component ConnectionDialog inherits Window {
                         horizontal-stretch: 1;
                         browse-requested => { root.browse-path-requested("known-hosts"); }
                     }
-                    Text { text: "Policy:"; vertical-alignment: center; visible: root.protocol <= 1; }
+                    Text { text: @tr("Policy:"); vertical-alignment: center; visible: root.protocol <= 1; }
                     ComboBox {
-                        model: ["Strict", "Accept new (TOFU)", "No verification (double confirmation, expires in 15 min)"];
+                        model: [@tr("Strict"), @tr("Accept new (TOFU)"), @tr("No verification (double confirmation, expires in 15 min)")];
                         current-index <=> root.known-hosts-policy;
                         width: 340px;
                         visible: root.protocol <= 1;
                     }
-                    Text { text: "Integrity:"; vertical-alignment: center; visible: root.protocol == 0; }
+                    Text { text: @tr("Integrity:"); vertical-alignment: center; visible: root.protocol == 0; }
                     ComboBox {
-                        model: ["Off (not recommended)", "Optional (recommended)", "Required (strict)"];
+                        model: [@tr("Off (not recommended)"), @tr("Optional (recommended)"), @tr("Required (strict)")];
                         current-index <=> root.integrity;
                         width: 340px;
                         visible: root.protocol == 0;
                     }
                     Text { text: ""; visible: root.protocol == 3; }
                     CheckBox {
-                        text: "Verify FTPS server certificate (recommended)";
+                        text: @tr("Verify FTPS server certificate (recommended)");
                         checked <=> root.ftps-verify-peer;
                         visible: root.protocol == 3;
                     }
-                    Text { text: "FTPS CA bundle:"; vertical-alignment: center; visible: root.protocol == 3; }
+                    Text { text: @tr("FTPS CA bundle:"); vertical-alignment: center; visible: root.protocol == 3; }
                     BrowseEdit {
                         text <=> root.ftps-ca-path;
-                        placeholder: "System CA bundle";
+                        placeholder: @tr("System CA bundle");
                         visible: root.protocol == 3;
                         horizontal-stretch: 1;
                         browse-requested => { root.browse-path-requested("ftps-ca"); }
                     }
-                    Text { text: "WebDAV scheme:"; vertical-alignment: center; visible: root.protocol == 4; }
+                    Text { text: @tr("WebDAV scheme:"); vertical-alignment: center; visible: root.protocol == 4; }
                     ComboBox {
-                        model: ["HTTPS (recommended)", "HTTP (insecure)"];
+                        model: [@tr("HTTPS (recommended)"), @tr("HTTP (insecure)")];
                         current-index <=> root.webdav-scheme;
                         width: 340px;
                         visible: root.protocol == 4;
                     }
                     Text { text: ""; visible: root.protocol == 4 && root.webdav-https; }
                     CheckBox {
-                        text: "Verify WebDAV server certificate (recommended)";
+                        text: @tr("Verify WebDAV server certificate (recommended)");
                         checked <=> root.webdav-verify-peer;
                         visible: root.protocol == 4 && root.webdav-https;
                     }
-                    Text { text: "WebDAV CA bundle:"; vertical-alignment: center; visible: root.protocol == 4 && root.webdav-https; }
+                    Text { text: @tr("WebDAV CA bundle:"); vertical-alignment: center; visible: root.protocol == 4 && root.webdav-https; }
                     BrowseEdit {
                         text <=> root.webdav-ca-path;
-                        placeholder: "System CA bundle";
+                        placeholder: @tr("System CA bundle");
                         visible: root.protocol == 4 && root.webdav-https;
                         horizontal-stretch: 1;
                         browse-requested => { root.browse-path-requested("webdav-ca"); }
                     }
-                    Text { text: "Domain (workgroup):"; vertical-alignment: center; visible: root.protocol == 5; }
+                    Text { text: @tr("Domain (workgroup):"); vertical-alignment: center; visible: root.protocol == 5; }
                     LineEdit {
                         text <=> root.smb-domain;
-                        placeholder-text: "optional";
+                        placeholder-text: @tr("optional");
                         width: 340px;
                         visible: root.protocol == 5;
                     }
                     Text { text: ""; visible: root.protocol == 6; }
                     CheckBox {
-                        text: "Telnet over TLS (secure telnet, port 992)";
+                        text: @tr("Telnet over TLS (secure telnet, port 992)");
                         checked <=> root.telnet-tls;
                         visible: root.protocol == 6;
                     }
                     Text { text: ""; visible: root.protocol == 6 && root.telnet-tls; }
                     CheckBox {
-                        text: "Verify TLS server certificate (recommended)";
+                        text: @tr("Verify TLS server certificate (recommended)");
                         checked <=> root.telnet-verify-peer;
                         visible: root.protocol == 6 && root.telnet-tls;
                     }
-                    Text { text: "Telnet CA bundle:"; vertical-alignment: center; visible: root.protocol == 6 && root.telnet-tls; }
+                    Text { text: @tr("Telnet CA bundle:"); vertical-alignment: center; visible: root.protocol == 6 && root.telnet-tls; }
                     BrowseEdit {
                         text <=> root.telnet-ca-path;
-                        placeholder: "System CA bundle";
+                        placeholder: @tr("System CA bundle");
                         visible: root.protocol == 6 && root.telnet-tls;
                         horizontal-stretch: 1;
                         browse-requested => { root.browse-path-requested("telnet-ca"); }
                     }
                     Text { text: ""; visible: root.protocol == 6; }
                     CheckBox {
-                        text: "Log in automatically using the stored credentials";
+                        text: @tr("Log in automatically using the stored credentials");
                         checked <=> root.telnet-auto-login;
                         visible: root.protocol == 6;
                     }
@@ -418,7 +444,7 @@ export component ConnectionDialog inherits Window {
             }
             Rectangle { } // spacer: pushes the buttons to the right
             Button {
-                text: root.connecting ? "Cancel connection" : "Cancel";
+                text: root.connecting ? @tr("Cancel connection") : @tr("Cancel");
                 clicked => {
                     if root.connecting {
                         root.cancel-requested();
@@ -428,12 +454,13 @@ export component ConnectionDialog inherits Window {
                 }
             }
             Button {
-                text: "Connect";
+                text: @tr("Connect");
                 primary: true;
                 enabled: !root.connecting;
                 clicked => { root.connect-requested(); }
             }
         }
+    }
     }
 }
 

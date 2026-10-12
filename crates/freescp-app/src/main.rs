@@ -708,6 +708,23 @@ pub(crate) fn reload_right_local(
 /// writeability cache for the current directory (port of the C++ background
 /// probe).
 fn request_remote_reload(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppState>>) {
+    request_remote_reload_inner(ui, state, false);
+}
+
+/// Like [`request_remote_reload`], but if the restored path is missing the
+/// pane falls back to `/` once (used right after connect).
+fn request_remote_reload_restoring(
+    ui: &crate::ui::main_window::MainWindow,
+    state: &Rc<RefCell<AppState>>,
+) {
+    request_remote_reload_inner(ui, state, true);
+}
+
+fn request_remote_reload_inner(
+    ui: &crate::ui::main_window::MainWindow,
+    state: &Rc<RefCell<AppState>>,
+    fallback_to_root: bool,
+) {
     let Some(session_id) = state.borrow().active_session_id() else {
         ui.set_status_text("Not connected".into());
         return;
@@ -785,6 +802,19 @@ fn request_remote_reload(ui: &crate::ui::main_window::MainWindow, state: &Rc<Ref
         };
         ui.set_right_listing_busy(false);
         if let Some(message) = status_err {
+            // A restored last-path that no longer exists should not strand
+            // the pane: drop to the remote root once.
+            if fallback_to_root && path != "/" {
+                tracing::info!(
+                    "restored remote path {path} is unavailable; falling back to /"
+                );
+                if let Some(tab) = state.borrow_mut().active_tab_mut() {
+                    tab.right.path = "/".to_string();
+                }
+                ui.set_right_path("/".into());
+                request_remote_reload_inner(&ui, &state, false);
+                return;
+            }
             ui.set_right_listing_error(message.clone().into());
             ui.set_status_text(message.into());
             return;
@@ -866,13 +896,20 @@ fn capture_window_geometry(ui: &crate::ui::main_window::MainWindow, state: &Rc<R
     let window = ui.window();
     let scale = window.scale_factor();
     let mut st = state.borrow_mut();
-    let position = window.position();
-    let logical = position.to_logical(scale);
-    st.window_state.x = Some(logical.x as i32);
-    st.window_state.y = Some(logical.y as i32);
-    let size = window.size().to_logical(scale);
-    st.window_state.width = Some(size.width.max(0.0) as u32);
-    st.window_state.height = Some(size.height.max(0.0) as u32);
+    // Fullscreen reports the display size. Saving that would reopen the next
+    // session as a screen-sized window, and a live capture would forget the
+    // windowed frame the user returns to.
+    if !window.is_fullscreen() {
+        let position = window.position();
+        let logical = position.to_logical(scale);
+        st.window_state.x = Some(logical.x as i32);
+        st.window_state.y = Some(logical.y as i32);
+        let size = window.size().to_logical(scale);
+        if size.width >= 100.0 && size.height >= 100.0 {
+            st.window_state.width = Some(size.width as u32);
+            st.window_state.height = Some(size.height as u32);
+        }
+    }
     st.window_state.split_x = Some(ui.get_left_pane_width().max(0.0) as i32);
     st.window_state.left_col_widths = Some([
         ui.get_left_size_width().round().max(48.0) as i32,
@@ -1614,17 +1651,34 @@ impl PaneSelection {
                 }
             }
             SelectionMode::Extend => {
-                let anchor = if self.anchor >= 0 && (self.anchor as usize) < len {
-                    self.anchor
-                } else {
-                    row
-                };
-                let (lo, hi) = (anchor.min(row), anchor.max(row));
-                // The range is exactly the Qt behavior minus the parent row,
-                // which must never be part of a multi-selection.
+                // Qt ExtendedSelection: keep the range origin at the far end of
+                // the existing contiguous selection (or the current row), move
+                // the focus/`anchor` scalar to `row`, and select the span.
+                let origin = Self::extend_origin(&self.rows, self.anchor, row, len);
+                let (lo, hi) = (origin.min(row), origin.max(row));
                 self.rows = (lo..=hi).filter(|r| Some(*r) != parent_row).collect();
                 self.anchor = row;
             }
+        }
+    }
+
+    /// Origin for a Shift-extend: the end of the current contiguous selection
+    /// opposite the focused row. Falls back to the focused row (or `row`).
+    fn extend_origin(rows: &[i32], current: i32, row: i32, len: usize) -> i32 {
+        let current_ok = current >= 0 && (current as usize) < len;
+        if rows.is_empty() {
+            return if current_ok { current } else { row };
+        }
+        let lo = rows[0];
+        let hi = *rows.last().unwrap_or(&lo);
+        if current_ok && current == hi {
+            lo
+        } else if current_ok && current == lo {
+            hi
+        } else if current_ok {
+            current
+        } else {
+            lo
         }
     }
 
@@ -3727,7 +3781,14 @@ fn start_page_pick_from(
 /// (Re)builds the Start Page site list and shows the page, replacing the tab
 /// bar, toolbar and panes. `mode` preselects a workspace card when the caller
 /// has one in mind (startup), and keeps the current choice otherwise.
-fn show_start_page(ui: &crate::ui::main_window::MainWindow, state: &AppState, mode: Option<i32>) {
+/// `dismissible` gates Cancel/Escape — false on cold start so the picker
+/// cannot be dismissed before there is a session underneath.
+fn show_start_page(
+    ui: &crate::ui::main_window::MainWindow,
+    state: &AppState,
+    mode: Option<i32>,
+    dismissible: bool,
+) {
     let rows = start_page_rows();
     let selected = if rows.is_empty() { -1 } else { 0 };
     ui.set_start_page_sites(Rc::new(VecModel::from(rows)).into());
@@ -3735,8 +3796,11 @@ fn show_start_page(ui: &crate::ui::main_window::MainWindow, state: &AppState, mo
     if let Some(mode) = mode {
         ui.set_start_page_mode(mode);
     }
+    ui.set_start_page_can_dismiss(dismissible);
     ui.set_start_page_visible(true);
     update_start_page_hint(ui);
+    // Nested FocusScope owns Up/Down/Return while the page is up.
+    ui.invoke_focus_start_page();
     state.set_status("Start Page: pick a workspace and a site");
 }
 
@@ -3789,15 +3853,17 @@ fn update_start_page_hint(ui: &crate::ui::main_window::MainWindow) {
     let terminal = ui.get_start_page_mode() == 1;
     let has_site = ui.get_start_page_selected() >= 0;
     let hint = match (terminal, has_site) {
-        (false, true) => "Open the selected site in a two-panel window",
-        (false, false) => "Open a local two-panel window",
-        (true, true) => "Open a login shell (SSH) on the selected site",
-        (true, false) => "Ask for a connection, then open a login shell (SSH)",
+        (false, true) => tr_main_window("Open the selected site in a two-panel window", &[]),
+        (false, false) => tr_main_window("Open a local two-panel window", &[]),
+        (true, true) => tr_main_window("Open a login shell (SSH) on the selected site", &[]),
+        (true, false) => {
+            tr_main_window("Ask for a connection, then open a login shell (SSH)", &[])
+        }
     };
     let hint = if ui.get_start_page_remember() {
-        format!("{hint} · choice remembered")
+        tr_main_window("%1 · next launch skips Start Page", &[hint])
     } else {
-        hint.to_string()
+        hint
     };
     if ui.get_start_page_hint().as_str() != hint {
         ui.set_start_page_hint(hint.into());
@@ -4030,7 +4096,9 @@ fn activate_tab(
         (dirty, tab.session_id)
     };
     if dirty && session_id.is_some() {
-        request_remote_reload(ui, state);
+        // Background connect may have restored a last path that no longer
+        // exists; fall back to `/` the same way an active connect does.
+        request_remote_reload_restoring(ui, state);
     }
 }
 
@@ -4086,12 +4154,21 @@ fn close_tab(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppStat
             return;
         }
     }
-    let (was_active, disconnected, local_root, was_last) = {
+    // Persist the live pane path before the tab (and its session) go away.
+    if state.borrow().active_tab == index {
+        stash_active_tab(ui, state);
+    }
+    let (was_active, disconnected, local_root, was_last, closed_remote_path) = {
         let mut st = state.borrow_mut();
         let home = home_dir_string();
         if st.tabs.len() <= 1 {
             // Never close the last tab: reset it to a blank local/local tab.
             let id = st.tabs[0].id;
+            let closed_remote_path = if !st.tabs[0].right_is_local {
+                Some(st.tabs[0].right.path.clone())
+            } else {
+                None
+            };
             let session = st.tabs[0]
                 .session_id
                 .take()
@@ -4104,18 +4181,26 @@ fn close_tab(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppStat
                     flow.dismiss();
                 }
             });
-            (true, session, home, true)
+            (true, session, home, true, closed_remote_path)
         } else {
             let was_active = st.active_tab == index;
             let Some((tab, session)) = st.remove_tab(index) else {
                 return;
             };
+            let closed_remote_path = if !tab.right_is_local {
+                Some(tab.right.path.clone())
+            } else {
+                None
+            };
             // A terminal tab takes its console down with it.
             crate::console::remove(tab.id);
-            (was_active, session, tab.right.path.clone(), false)
+            (was_active, session, tab.right.path.clone(), false, closed_remote_path)
         }
     };
     if let Some(record) = disconnected {
+        if let Some(path) = closed_remote_path.as_deref() {
+            history::set_last_remote_path(&record.options, path);
+        }
         // Transfers that targeted the closed tab's session die with it.
         state
             .borrow()
@@ -4155,7 +4240,7 @@ fn close_tab(ui: &crate::ui::main_window::MainWindow, state: &Rc<RefCell<AppStat
     // Closing the last tab returns to the Start Page: with no session and no
     // files open there is nothing to show in the panes (Rust-only flow).
     if was_last {
-        show_start_page(ui, &state.borrow(), None);
+        show_start_page(ui, &state.borrow(), None, true);
     }
 }
 
@@ -4530,7 +4615,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         // Link the session to its tab: the requested one when it
                         // is tab-idle, else the active tab when free, else a
                         // fresh tab (a tab never hosts two sessions).
-                        let (session_id, tab_active) = {
+                        let (session_id, tab_active, initial_remote) = {
                             let mut st = state.borrow_mut();
                             let session_id = st.alloc_session_id();
                             // A console tab never hosts a file session, so it is
@@ -4573,6 +4658,10 @@ fn main() -> Result<(), slint::PlatformError> {
                                 },
                                 route.status_suffix()
                             );
+                            // Reopen where this server left off; missing paths
+                            // fall back to `/` in request_remote_reload_restoring.
+                            let initial_remote =
+                                history::last_remote_path(&opt).unwrap_or_else(|| "/".to_string());
                             if let Some(tab_state) = st.tabs.get_mut(index) {
                                 tab_state.session_id = Some(session_id);
                                 tab_state.connecting = false;
@@ -4580,7 +4669,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 tab_state.scp_panel = scp_only;
                                 tab_state.supports_permissions = supports_permissions;
                                 tab_state.status = status.clone();
-                                tab_state.right.path = "/".to_string();
+                                tab_state.right.path = initial_remote.clone();
                                 tab_state.right.entries.clear();
                                 tab_state.right.selected_rows.clear();
                                 tab_state.right.selected_flags.clear();
@@ -4592,7 +4681,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             st.transfer_manager.set_session_options(Some(opt.clone()));
                             st.writeability.clear();
                             st.push_recent_server(&opt);
-                            (session_id, active)
+                            (session_id, active, initial_remote)
                         };
                         sync_tab_bar(&ui, &state);
                         if tab_active {
@@ -4603,7 +4692,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             // a metadata/chmod contract (SSH family, FTP).
                             ui.set_right_supports_permissions(supports_permissions);
                             ui.set_scp_panel_visible(scp_only);
-                            ui.set_right_path("/".into());
+                            ui.set_right_path(initial_remote.into());
                             ui.set_title_text(
                                 crate::connect::tr(
                                     "FreeSCP — local/remote (%1)",
@@ -4618,7 +4707,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             // as soon as the remote session is up.
                             let left_path = ui.get_left_path().to_string();
                             reload_local(&ui, &state, &left_path);
-                            request_remote_reload(&ui, &state);
+                            request_remote_reload_restoring(&ui, &state);
                         }
                         set_tab_status(
                             &state,
@@ -4855,6 +4944,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         ui.on_connect_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
+            // File → Connect / toolbar Connect leave the Start Page up unless
+            // we dismiss it here; Open/Dismiss are the only other hide paths.
+            hide_start_page(&ui, &state);
             // A second attempt while one is in flight must not reserve a tab:
             // `connect::open` refuses it, and the tab bar would otherwise stay
             // on "Connecting…" for an attempt that never started.
@@ -4890,7 +4982,7 @@ fn main() -> Result<(), slint::PlatformError> {
             // New session: Start Page is where the user picks workspace mode
             // (two-panel vs terminal) and a site / quick connect — not a blank
             // local/local tab.
-            show_start_page(&ui, &state.borrow(), None);
+            show_start_page(&ui, &state.borrow(), None, true);
         });
     }
     {
@@ -4929,7 +5021,8 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             // Disconnect only the active tab's session; other tabs keep
             // their connections (and their queued transfers).
-            let (session_id, client, local_root) = {
+            let remote_path = ui.get_right_path().to_string();
+            let (session_id, client, local_root, session_opt) = {
                 let mut st = state.borrow_mut();
                 let Some(tab) = st.active_tab_mut() else {
                     return;
@@ -4941,11 +5034,14 @@ fn main() -> Result<(), slint::PlatformError> {
                 tab.remote_dirty = false;
                 let local_root = tab.right_local_root.clone().unwrap_or_else(home_dir_string);
                 tab.right.path = local_root.clone();
-                let client = session_id
-                    .and_then(|id| st.sessions.remove(&id))
-                    .and_then(|mut record| record.client.take());
-                (session_id, client, local_root)
+                let record = session_id.and_then(|id| st.sessions.remove(&id));
+                let session_opt = record.as_ref().map(|r| r.options.clone());
+                let client = record.and_then(|mut record| record.client.take());
+                (session_id, client, local_root, session_opt)
             };
+            if let Some(opt) = session_opt.as_ref() {
+                history::set_last_remote_path(opt, &remote_path);
+            }
             if let Some(session_id) = session_id {
                 state
                     .borrow()
@@ -5322,7 +5418,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         ui.on_start_page_show_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            show_start_page(&ui, &state.borrow(), None);
+            show_start_page(&ui, &state.borrow(), None, true);
         });
     }
     {
@@ -5330,6 +5426,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         ui.on_start_page_dismiss_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
+            if !ui.get_start_page_can_dismiss() {
+                return;
+            }
             hide_start_page(&ui, &state);
             state.borrow().set_status("Back to session");
         });
@@ -5339,6 +5438,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         ui.on_new_terminal_session_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
+            // Same as Connect: dismiss Start Page so a successful shell is not
+            // covered after File → New terminal session….
+            hide_start_page(&ui, &state);
             if connect::connect_in_progress() {
                 connect::open_terminal(&ui, &state.borrow(), None);
                 return;
@@ -5524,9 +5626,14 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     {
         let ui_weak = ui.as_weak();
+        let state = state.clone();
         ui.on_fullscreen_toggle_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             let fullscreen = ui.window().is_fullscreen();
+            if !fullscreen {
+                // Remember the windowed frame before the OS expands it.
+                capture_window_geometry(&ui, &state);
+            }
             ui.window().set_fullscreen(!fullscreen);
         });
     }
@@ -6683,7 +6790,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = ui_weak.upgrade() else { return };
             match startup_mode {
                 settings::StartupMode::StartPage => {
-                    show_start_page(&ui, &state.borrow(), Some(0));
+                    show_start_page(&ui, &state.borrow(), Some(0), false);
                 }
                 settings::StartupMode::DualPanel => {
                     // The blank local/local tab behind the panes is already up.
@@ -6767,6 +6874,86 @@ mod layout_tests {
             "right pane should fill the window (expected {}, got {right})",
             1200.0 - left - 7.0
         );
+    }
+
+    /// Growing and shrinking the frame must reflow both panes. A layout that
+    /// reports its current width as its maximum leaves dead space (or clips)
+    /// after an OS resize or fullscreen.
+    #[test]
+    fn window_content_follows_resize() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().unwrap();
+        for (width, height) in [(1800.0, 1100.0), (1400.0, 800.0)] {
+            ui.window().dispatch_event(WindowEvent::Resized {
+                size: slint::LogicalSize::new(width, height),
+            });
+            ui.window().dispatch_event(WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(100.0, 100.0),
+            });
+            let scope = ui.get_scope_w();
+            let panes = ui.get_panes_w();
+            let right = ui.get_right_pane_w();
+            let left = ui.get_left_pane_width();
+            assert!(
+                (scope - width).abs() < 2.0,
+                "scope should match the window ({width}), got {scope}"
+            );
+            assert!(
+                (panes - width).abs() < 2.0,
+                "panes row should match the window ({width}), got {panes}"
+            );
+            assert!(
+                (right - (width - left - 7.0)).abs() < 2.0,
+                "right pane should fill the rest at {width} (left {left}, right {right})"
+            );
+        }
+    }
+
+    /// A window whose root pins width/height to a constant is non-resizable:
+    /// macOS then removes the drag edges, the green zoom button, and
+    /// fullscreen. `Window::set_size` is the same request the winit backend
+    /// handles when the OS resizes, so the frame, the root scope, and the
+    /// console grid must all follow both a grow and a shrink. The console
+    /// subtree is exercised separately because its layout slots also sit on
+    /// the path up to the window.
+    #[test]
+    fn window_set_size_is_not_clamped() {
+        i_slint_backend_testing::init_no_event_loop();
+        for console_mode in [false, true] {
+            let ui = MainWindow::new().unwrap();
+            ui.set_console_mode(console_mode);
+            let mut console_grid = Vec::new();
+            for (width, height) in [(1600.0, 1000.0), (900.0, 500.0)] {
+                ui.window().set_size(slint::LogicalSize::new(width, height));
+                // Force a layout pass after the resize, like the splitter repro.
+                ui.window().dispatch_event(WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(100.0, 100.0),
+                });
+                let size = ui.window().size();
+                assert!(
+                    (size.width as f32 - width).abs() < 2.0
+                        && (size.height as f32 - height).abs() < 2.0,
+                    "window should take the requested {width}x{height} \
+                     (console={console_mode}), got {size:?}"
+                );
+                let scope = ui.get_scope_w();
+                assert!(
+                    (scope - width).abs() < 2.0,
+                    "root scope should follow the frame at {width} \
+                     (console={console_mode}), got {scope}"
+                );
+                console_grid.push((ui.get_console_grid_cols(), ui.get_console_grid_rows()));
+            }
+            if console_mode {
+                // The console sits at the end of the same parent chain: it must
+                // reflow with the frame instead of freezing at the old size.
+                let (grown, shrunk) = (console_grid[0], console_grid[1]);
+                assert!(
+                    shrunk.0 > 0 && shrunk.0 < grown.0 && shrunk.1 < grown.1,
+                    "console grid should shrink with the window: {grown:?} -> {shrunk:?}"
+                );
+            }
+        }
     }
 
     /// While the Start Page is up it must own the whole workspace (the hidden
@@ -7365,9 +7552,14 @@ mod selection_tests {
         sel.click(5, SelectionMode::Extend, PARENT, 8);
         assert_eq!(sel.rows, vec![2, 3, 4, 5]);
         assert_eq!(sel.anchor, 5);
+        // Origin stays at 2 (Qt ExtendedSelection); shrinking toward it.
         sel.click(4, SelectionMode::Extend, PARENT, 8);
-        assert_eq!(sel.rows, vec![4, 5]);
+        assert_eq!(sel.rows, vec![2, 3, 4]);
         assert_eq!(sel.anchor, 4);
+        // Growing again from the same origin.
+        sel.click(6, SelectionMode::Extend, PARENT, 8);
+        assert_eq!(sel.rows, vec![2, 3, 4, 5, 6]);
+        assert_eq!(sel.anchor, 6);
     }
 
     #[test]
@@ -7375,13 +7567,13 @@ mod selection_tests {
         let mut sel = PaneSelection::default();
         sel.click(2, SelectionMode::Replace, PARENT, 8);
         sel.click(5, SelectionMode::Extend, PARENT, 8);
-        // Shift-extending onto ".." keeps the range and excludes the parent.
+        // Shift-extending onto ".." uses origin 2 and excludes the parent.
         sel.click(0, SelectionMode::Extend, PARENT, 8);
-        assert_eq!(sel.rows, vec![1, 2, 3, 4, 5]);
+        assert_eq!(sel.rows, vec![1, 2]);
         assert_eq!(sel.anchor, 0);
         // Ctrl-clicking ".." cannot add it, so the set is left alone.
         sel.click(0, SelectionMode::Toggle, PARENT, 8);
-        assert_eq!(sel.rows, vec![1, 2, 3, 4, 5]);
+        assert_eq!(sel.rows, vec![1, 2]);
         assert_eq!(sel.anchor, 0);
         // A plain click on ".." is a single (non-actionable) selection.
         sel.click(0, SelectionMode::Replace, PARENT, 8);

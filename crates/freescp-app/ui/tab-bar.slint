@@ -7,7 +7,7 @@
 // source pane is read from the main window's `drag-source-pane` property, so
 // the tab only reports which tab was targeted.
 
-import { ToolIcon } from "widgets.slint";
+import { ToolIcon, Theme } from "widgets.slint";
 
 // One tab-bar row. `subtitle` carries the protocol/host summary (empty while
 // the tab browses local folders only).
@@ -23,6 +23,35 @@ export struct TabRow {
     terminal: bool,
 }
 
+// Compact ◀/▶ control overlaid on the overflow strip (does not affect layout
+// width, which would otherwise create a tabs-overflow binding loop).
+component TabScrollButton inherits TouchArea {
+    in property <string> label;
+    width: 18px;
+    height: 26px;
+    mouse-cursor: MouseCursor.pointer;
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: root.has-hover ? Theme.hover : Theme.bg-chrome;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: Theme.border;
+    }
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.label;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        color: root.enabled
+            ? (root.has-hover ? Theme.text : Theme.text-dim)
+            : Theme.text-faint;
+        font-size: 10px;
+    }
+}
+
 export component SessionTabBar inherits Rectangle {
     in property <[TabRow]> tabs;
     in property <int> active-tab: 0;
@@ -36,7 +65,23 @@ export component SessionTabBar inherits Rectangle {
     callback tab-drop-received(int);
 
     height: 30px;
-    background: #26262a;
+    background: Theme.bg-chrome;
+
+    // Content wider than the visible Flickable → show scroll affordances.
+    // Affordances are overlays (not layout siblings) so this check cannot
+    // feed back into tabs-flick.width.
+    property <bool> tabs-overflow: tabs-flick.viewport-width > tabs-flick.width + 0.5px;
+    property <bool> can-scroll-left: root.tabs-overflow && tabs-flick.viewport-x < -0.5px;
+    property <bool> can-scroll-right: root.tabs-overflow
+        && tabs-flick.viewport-x > (tabs-flick.width - tabs-flick.viewport-width) + 0.5px;
+    property <length> scroll-step: min(160px, max(80px, tabs-flick.width / 2));
+
+    function scroll-tabs(delta: length) {
+        tabs-flick.viewport-x = max(
+            min(0px, tabs-flick.width - tabs-flick.viewport-width),
+            min(0px, tabs-flick.viewport-x + delta),
+        );
+    }
 
     HorizontalLayout {
         padding-left: 4px;
@@ -45,129 +90,166 @@ export component SessionTabBar inherits Rectangle {
         vertical-stretch: 1;
 
         // Scrollable strip so many tabs do not crush each other or the
-        // pinned new-tab control.
-        Flickable {
+        // pinned new-tab control. Edge fades + ◀▶ sit on top of the strip.
+        Rectangle {
             horizontal-stretch: 1;
-            viewport-height: parent.height;
             height: parent.height;
-            interactive: true;
+            background: Theme.bg-chrome;
+            clip: true;
 
-            HorizontalLayout {
-                spacing: 2px;
-                padding-top: 2px;
-                padding-bottom: 2px;
+            tabs-flick := Flickable {
+                width: 100%;
+                height: parent.height;
+                viewport-width: tab-strip.preferred-width;
+                viewport-height: self.height;
+                interactive: true;
 
-                for tab-row[i] in root.tabs : tab := Rectangle {
-                    // Tab width follows the title, clamped so long host names elide
-                    // instead of pushing the other tabs out of view.
-                    width: min(220px, max(120px, title.preferred-width + subtitle.preferred-width + 52px + (tab-row.terminal ? 14px : 0px)));
-                    height: 26px;
-                    background: tab-row.active ? (tab-area.has-hover ? #34343b : #313136)
-                                               : (tab-area.has-hover ? #2c2c31 : #26262a);
-                    border-radius: 4px;
+                tab-strip := HorizontalLayout {
+                    spacing: 2px;
+                    padding-top: 2px;
+                    padding-bottom: 2px;
 
-                    // Drop target first so the title/close hit areas painted in front
-                    // still win pointer events; Slint routes drops to the DropArea
-                    // regardless of z-order.
-                    tab-drop := DropArea {
-                        width: parent.width;
-                        height: parent.height;
-                        can-drop(event) => {
-                            return root.drag-active ? event.proposed-action : DragAction.none;
-                        }
-                        dropped(event) => {
-                            root.tab-drop-received(i);
-                            return event.proposed-action;
-                        }
-                    }
+                    for tab-row[i] in root.tabs : tab := Rectangle {
+                        // Tab width follows the title, clamped so long host names elide
+                        // instead of pushing the other tabs out of view.
+                        width: min(220px, max(120px, title.preferred-width + subtitle.preferred-width + 52px + (tab-row.terminal ? 14px : 0px)));
+                        height: 26px;
+                        background: tab-row.active ? (tab-area.has-hover ? #34343b : Theme.bg-header)
+                                                   : (tab-area.has-hover ? Theme.bg-stripe : Theme.bg-chrome);
+                        border-radius: 4px;
 
-                    // Active-tab underline.
-                    Rectangle {
-                        y: parent.height - 2px;
-                        width: parent.width;
-                        height: 2px;
-                        background: tab-row.active ? #4a90d9 : #00000000;
-                        border-radius: 1px;
-                    }
-
-                    // Connection state dot (green connected, amber busy, grey local).
-                    Rectangle {
-                        x: 8px;
-                        y: (parent.height - self.height) / 2;
-                        width: 7px;
-                        height: 7px;
-                        border-radius: 3.5px;
-                        background: tab-row.busy ? #e0a858
-                                  : (tab-row.connected ? #5cb85c : #6f6f77);
-                    }
-
-                    // Terminal tabs announce their workspace kind up front.
-                    Text {
-                        x: 19px;
-                        y: 0px;
-                        width: 16px;
-                        height: parent.height;
-                        text: ">_";
-                        vertical-alignment: center;
-                        color: tab-row.active ? #7fb2ea : #9a9aa2;
-                        font-size: 10px;
-                        visible: tab-row.terminal;
-                    }
-
-                    title := Text {
-                        x: tab-row.terminal ? 36px : 21px;
-                        y: 0px;
-                        width: parent.width - (tab-row.terminal ? 36px : 21px) - 20px;
-                        height: parent.height;
-                        text: tab-row.title;
-                        vertical-alignment: center;
-                        overflow: elide;
-                        color: tab-row.active ? #e6e6e9 : #c9c9cf;
-                        font-size: 12px;
-                    }
-
-                    subtitle := Text {
-                        // Kept for the width computation only; the bar shows one line.
-                        visible: false;
-                        text: tab-row.subtitle;
-                    }
-
-                    close-area := TouchArea {
-                        x: parent.width - 19px;
-                        y: (parent.height - 18px) / 2;
-                        width: 18px;
-                        height: 18px;
-                        mouse-cursor: MouseCursor.pointer;
-                        Rectangle {
+                        // Drop target first so the title/close hit areas painted in front
+                        // still win pointer events; Slint routes drops to the DropArea
+                        // regardless of z-order.
+                        tab-drop := DropArea {
                             width: parent.width;
                             height: parent.height;
-                            background: close-area.has-hover ? #4a4a52 : #00000000;
-                            border-radius: 3px;
+                            can-drop(event) => {
+                                return root.drag-active ? event.proposed-action : DragAction.none;
+                            }
+                            dropped(event) => {
+                                root.tab-drop-received(i);
+                                return event.proposed-action;
+                            }
                         }
-                        Image {
-                            width: 9px;
-                            height: 9px;
-                            x: (parent.width - self.width) / 2;
+
+                        // Active-tab underline.
+                        Rectangle {
+                            y: parent.height - 2px;
+                            width: parent.width;
+                            height: 2px;
+                            background: tab-row.active ? Theme.accent : #00000000;
+                            border-radius: 1px;
+                        }
+
+                        // Connection state dot (green connected, amber busy, grey local).
+                        Rectangle {
+                            x: 8px;
                             y: (parent.height - self.height) / 2;
-                            source: @image-url("../../../assets/icons/action-clear.svg");
-                            colorize: close-area.has-hover ? #e6e6e9 : #9a9aa2;
+                            width: 7px;
+                            height: 7px;
+                            border-radius: 3.5px;
+                            background: tab-row.busy ? Theme.warning
+                                      : (tab-row.connected ? Theme.success : Theme.text-faint);
                         }
-                        clicked => { root.tab-close-requested(i); }
-                    }
 
-                    tab-area := TouchArea {
-                        x: 0px;
-                        y: 0px;
-                        width: parent.width - 19px;
-                        height: parent.height;
-                        mouse-cursor: MouseCursor.pointer;
-                        clicked => { root.tab-selected(i); }
-                    }
+                        // Terminal tabs announce their workspace kind up front.
+                        if tab-row.terminal : Image {
+                            x: 19px;
+                            y: (parent.height - self.height) / 2;
+                            width: 12px;
+                            height: 12px;
+                            source: @image-url("../../../assets/icons/mode-terminal.svg");
+                            colorize: tab-row.active ? #7fb2ea : Theme.text-dim;
+                        }
 
-                    Tooltip {
-                        text: tab-row.subtitle == "" ? @markdown("\{tab-row.title}") : @markdown("\{tab-row.title}\n\{tab-row.subtitle}");
+                        title := Text {
+                            x: tab-row.terminal ? 36px : 21px;
+                            y: 0px;
+                            width: parent.width - (tab-row.terminal ? 36px : 21px) - 20px;
+                            height: parent.height;
+                            text: tab-row.title;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            color: tab-row.active ? Theme.text : #c9c9cf;
+                            font-size: 12px;
+                        }
+
+                        subtitle := Text {
+                            // Kept for the width computation only; the bar shows one line.
+                            visible: false;
+                            text: tab-row.subtitle;
+                        }
+
+                        close-area := TouchArea {
+                            x: parent.width - 19px;
+                            y: (parent.height - 18px) / 2;
+                            width: 18px;
+                            height: 18px;
+                            mouse-cursor: MouseCursor.pointer;
+                            Rectangle {
+                                width: parent.width;
+                                height: parent.height;
+                                background: close-area.has-hover ? #4a4a52 : #00000000;
+                                border-radius: 3px;
+                            }
+                            Image {
+                                width: 9px;
+                                height: 9px;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                source: @image-url("../../../assets/icons/action-clear.svg");
+                                colorize: close-area.has-hover ? Theme.text : Theme.text-dim;
+                            }
+                            clicked => { root.tab-close-requested(i); }
+                        }
+
+                        tab-area := TouchArea {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.width - 19px;
+                            height: parent.height;
+                            mouse-cursor: MouseCursor.pointer;
+                            clicked => { root.tab-selected(i); }
+                        }
+
+                        Tooltip {
+                            text: tab-row.subtitle == "" ? @markdown("\{tab-row.title}") : @markdown("\{tab-row.title}\n\{tab-row.subtitle}");
+                        }
                     }
                 }
+            }
+
+            // Soft chrome fades when the strip is scrolled away from an edge.
+            if root.can-scroll-left : Rectangle {
+                x: 0px;
+                y: 0px;
+                width: 24px;
+                height: parent.height;
+                background: @linear-gradient(90deg, Theme.bg-chrome, #00000000);
+            }
+            if root.can-scroll-right : Rectangle {
+                x: parent.width - 24px;
+                y: 0px;
+                width: 24px;
+                height: parent.height;
+                background: @linear-gradient(90deg, #00000000, Theme.bg-chrome);
+            }
+
+            // ◀ ▶ sit on the edges so they never steal HorizontalLayout width.
+            if root.tabs-overflow : TabScrollButton {
+                x: 2px;
+                y: (parent.height - self.height) / 2;
+                label: "◀";
+                enabled: root.can-scroll-left;
+                clicked => { root.scroll-tabs(root.scroll-step); }
+            }
+            if root.tabs-overflow : TabScrollButton {
+                x: parent.width - self.width - 2px;
+                y: (parent.height - self.height) / 2;
+                label: "▶";
+                enabled: root.can-scroll-right;
+                clicked => { root.scroll-tabs(-root.scroll-step); }
             }
         }
 

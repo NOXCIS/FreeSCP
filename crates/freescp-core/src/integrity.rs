@@ -204,7 +204,12 @@ pub fn verify_integrity(
         return Ok(IntegrityOutcome::Skipped);
     }
     let local_size = std::fs::metadata(local_path).map(|metadata| metadata.len());
-    let local_hex = file_sha256_hex(local_path);
+    let needs_local_hash = remote_sha256.is_some_and(|s| !s.trim().is_empty());
+    let local_hex = if needs_local_hash {
+        file_sha256_hex(local_path)
+    } else {
+        Ok(String::new())
+    };
     evaluate(
         local_path,
         local_size,
@@ -217,6 +222,10 @@ pub fn verify_integrity(
 
 /// Async variant of [`verify_integrity`] (uses [`file_sha256_hex_async`] and
 /// `tokio::fs::metadata`); identical semantics.
+///
+/// The local SHA-256 is only computed when a usable remote hash was supplied
+/// — otherwise hashing the whole file after a transfer is wasted work and can
+/// leave the queue looking stuck near 100%.
 pub async fn verify_integrity_async(
     local_path: &Path,
     remote_sha256: Option<&str>,
@@ -229,7 +238,13 @@ pub async fn verify_integrity_async(
     let local_size = tokio::fs::metadata(local_path)
         .await
         .map(|metadata| metadata.len());
-    let local_hex = file_sha256_hex_async(local_path).await;
+    let needs_local_hash = remote_sha256.is_some_and(|s| !s.trim().is_empty());
+    let local_hex = if needs_local_hash {
+        file_sha256_hex_async(local_path).await
+    } else {
+        // `evaluate` ignores this when there is no usable remote hash.
+        Ok(String::new())
+    };
     evaluate(
         local_path,
         local_size,

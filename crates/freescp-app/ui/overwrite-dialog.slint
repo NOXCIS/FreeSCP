@@ -7,13 +7,18 @@
 // channel while this window is shown, mirroring the C++ condition-variable
 // wait in the transfer manager.
 
-import { Button } from "std-widgets.slint";
+import { Button, Palette } from "std-widgets.slint";
 import { DialogFooter } from "widgets.slint";
 
 export component OverwriteDialog inherits Window {
     title: @tr("Overwrite confirmation");
-    width: 560px;
-    height: 360px;
+    // preferred-* sets the initial size; fixed width/height would lock the
+    // window so the OS cannot resize it (Slint Window contract).
+    preferred-width: 560px;
+    preferred-height: 360px;
+    min-width: 440px;
+    min-height: 280px;
+    background: Palette.background;
 
     in-out property <string> message: "";
     in-out property <string> source-info: "";
@@ -28,58 +33,71 @@ export component OverwriteDialog inherits Window {
     // Abort the remaining transfer batch (distinct from Skip this file).
     callback cancel();
 
-    VerticalLayout {
-        padding: 16px;
-        spacing: 8px;
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
 
-        Text {
-            text: root.message;
-            wrap: word-wrap;
+    FocusScope {
+        width: 100%;
+        height: 100%;
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => { root.cancel(); }
         }
-        if root.source-info != "" : Text {
-            text: @tr("Source: ") + root.source-info;
-            wrap: word-wrap;
-            font-size: 12px;
-            color: #404040;
-        }
-        if root.dest-info != "" : Text {
-            text: @tr("Destination: ") + root.dest-info;
-            wrap: word-wrap;
-            font-size: 12px;
-            color: #404040;
-        }
-        Text {
-            text: @tr("Skip leaves this file unchanged. Cancel stops the rest of the transfer.");
-            color: #6f6f77;
-            font-size: 12px;
-            wrap: word-wrap;
-        }
-        Rectangle { vertical-stretch: 1; }
-        DialogFooter {
-            Button {
-                text: @tr("Cancel");
-                clicked => { root.cancel(); }
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 8px;
+
+            Text {
+                text: root.message;
+                wrap: word-wrap;
             }
-            Button {
-                text: @tr("Skip");
-                primary: true;
-                clicked => { root.skip(); }
+            if root.source-info != "" : Text {
+                text: @tr("Source: ") + root.source-info;
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Palette.control-foreground;
             }
-            if root.can-resume : Button {
-                text: @tr("Resume");
-                clicked => { root.resume(); }
+            if root.dest-info != "" : Text {
+                text: @tr("Destination: ") + root.dest-info;
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Palette.control-foreground;
             }
-            Button {
-                text: @tr("Overwrite");
-                clicked => { root.overwrite(); }
+            Text {
+                text: @tr("Skip leaves this file unchanged. Cancel stops the rest of the transfer.");
+                color: Palette.control-foreground;
+                font-size: 12px;
+                wrap: word-wrap;
             }
-            Button {
-                text: @tr("Skip all");
-                clicked => { root.skip-all(); }
-            }
-            Button {
-                text: @tr("Overwrite all");
-                clicked => { root.overwrite-all(); }
+            Rectangle { vertical-stretch: 1; }
+            DialogFooter {
+                Button {
+                    text: @tr("Cancel");
+                    clicked => { root.cancel(); }
+                }
+                Button {
+                    text: @tr("Skip");
+                    primary: true;
+                    clicked => { root.skip(); }
+                }
+                if root.can-resume : Button {
+                    text: @tr("Resume");
+                    clicked => { root.resume(); }
+                }
+                Button {
+                    text: @tr("Overwrite");
+                    clicked => { root.overwrite(); }
+                }
+                Button {
+                    text: @tr("Skip all");
+                    clicked => { root.skip-all(); }
+                }
+                Button {
+                    text: @tr("Overwrite all");
+                    clicked => { root.overwrite-all(); }
+                }
             }
         }
     }
